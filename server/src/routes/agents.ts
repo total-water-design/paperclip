@@ -5273,14 +5273,43 @@ export function agentRoutes(
     }
   });
 
+  router.get("/companies/:companyId/heartbeat-runs/stats", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    res.json(await heartbeat.stats(companyId, req.query.agentId as string | undefined));
+  });
+
+  router.get("/companies/:companyId/heartbeat-runs/latest-failed", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    const runs = await heartbeat.latestFailed(companyId);
+    res.json(await Promise.all(runs.map((run) => runRedactions.redactForRun(companyId, run.id, run))));
+  });
+
   router.get("/companies/:companyId/heartbeat-runs", async (req, res) => {
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);
     const agentId = req.query.agentId as string | undefined;
     const limitParam = req.query.limit as string | undefined;
-    const limit = limitParam ? Math.max(1, Math.min(1000, parseInt(limitParam, 10) || 200)) : undefined;
+    const offsetParam = req.query.offset as string | undefined;
+    let limit = 200;
+    if (limitParam !== undefined) {
+      limit = Number(limitParam);
+      if (!Number.isInteger(limit) || limit < 1 || limit > 1000) {
+        res.status(400).json({ error: "Invalid limit. Must be an integer between 1 and 1000." });
+        return;
+      }
+    }
+    let offset: number | undefined;
+    if (offsetParam !== undefined) {
+      offset = Number(offsetParam);
+      if (!Number.isInteger(offset) || offset < 0) {
+        res.status(400).json({ error: "Invalid offset. Must be a non-negative integer." });
+        return;
+      }
+    }
     const summary = req.query.summary === "true" || req.query.summary === "1";
-    const runs = await heartbeat.list(companyId, agentId, limit, { summary });
+    const runs = await heartbeat.list(companyId, agentId, limit, { summary, offset });
     res.json(await Promise.all(runs.map((run) => runRedactions.redactForRun(companyId, run.id, run))));
   });
 
