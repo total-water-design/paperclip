@@ -881,12 +881,12 @@ export function AgentDetail() {
   const { data: heartbeats } = useQuery({
     queryKey: [...queryKeys.heartbeats(resolvedCompanyId!, agent?.id ?? undefined), "limit", 200],
     queryFn: () => heartbeatsApi.list(resolvedCompanyId!, agent?.id ?? undefined, 200),
-    enabled: !!resolvedCompanyId && !!agent?.id && shouldLoadHeartbeats,
+    enabled: !!resolvedCompanyId && !!agent?.id && needsDashboardData,
   });
   const { data: heartbeatStats } = useQuery({
     queryKey: [...queryKeys.heartbeats(resolvedCompanyId!, agent?.id ?? undefined), "stats"],
     queryFn: () => heartbeatsApi.stats(resolvedCompanyId!, agent?.id ?? undefined),
-    enabled: !!resolvedCompanyId && !!agent?.id && shouldLoadHeartbeats,
+    enabled: !!resolvedCompanyId && !!agent?.id && needsDashboardData,
   });
 
   const { data: allIssues } = useQuery({

@@ -19742,15 +19742,29 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         WHERE company_id = ${companyId}
         ORDER BY agent_id, created_at DESC, id DESC
       `);
-      const failedIds = (latestRows as Array<Record<string, unknown>>)
-        .filter((row) => row.status === "failed" || row.status === "timed_out")
-        .map((row) => row.id as string);
-      if (failedIds.length === 0) return [];
+      // Filter to only those whose most recent run was a failure.
+      // db.execute may return rows as a plain array (postgres-js) or wrapped in
+      // { rows: [] } (node-postgres); normalise before filtering.
+      const rawRows: Array<Record<string, unknown>> = Array.isArray(latestRows)
+        ? (latestRows as Array<Record<string, unknown>>)
+        : ((latestRows as { rows?: Array<Record<string, unknown>> }).rows ?? []);
+      const failedIds = rawRows
+        .filter((r) => r.status === "failed" || r.status === "timed_out")
+        .map((r) => r.id as string);
+
+      if (failedIds.length === 0) {
+        return [];
+      }
+
+      // Re-select the failed run ids through the SAME typed projection + summarization
+      // path that list() uses, so latestFailed() returns the same bounded,
+      // encoding-safe, correctly-shaped objects.
       const rows = await db
         .select({ ...heartbeatRunSummaryListColumns, ...heartbeatRunListContextColumns })
         .from(heartbeatRuns)
-        .where(inArray(heartbeatRuns.id, failedIds))
-        .orderBy(desc(heartbeatRuns.createdAt), desc(heartbeatRuns.id));
+        .where(and(eq(heartbeatRuns.companyId, companyId), inArray(heartbeatRuns.id, failedIds)))
+        .orderBy(desc(heartbeatRuns.createdAt), desc(heartbeatRuns.id))
+        .limit(500);
       return rows.map((row) => {
         const {
           contextIssueId, contextTaskId, contextTaskKey, contextCommentId,
