@@ -18,4 +18,7 @@ from runtime_chemistry_upgrade import install_runtime_chemistry  # noqa: E402
 
 CHEMISTRY_UPGRADE = install_runtime_chemistry()
 
-from app import app  # noqa: E402
+from app import app, CALCS  # noqa: E402
+from ccro_runtime import register_ccro_runtime  # noqa: E402
+
+register_ccro_runtime(app, CALCS)

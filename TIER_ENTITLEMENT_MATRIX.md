@@ -12,6 +12,7 @@ chemistry, hydraulic, or mass-balance model.
 
 - Water Quality and complete feed-water definition.
 - Manual 1–4 stage Plant Design.
+- CCRO Design (Closed Circuit Reverse Osmosis), available to Entry, Silver, Gold, and Platinum after a current Plant Design basis.
 - Vendor-neutral membrane database.
 - Different membrane manufacturers/models by stage.
 - Element-position membrane recipes and hybrid designs.

@@ -52,121 +52,6 @@ jobs:
           echo "Short commit:"
           git rev-parse --short HEAD
 
-      - name: Materialize validated all-tier CCRO
-        run: |
-          set -euo pipefail
-          CCRO_SOURCE_COMMIT="0f9e4455f7df4f556f420a04bf086ee4913d7b16"
-          TMP="$(mktemp -d)"
-          trap 'rm -rf "$TMP"' EXIT
-
-          git fetch --no-tags --depth=1 origin app/total-ro-design
-          PINNED="$(git rev-parse FETCH_HEAD)"
-          test "$PINNED" = "$CCRO_SOURCE_COMMIT"
-
-          mkdir -p "$TMP/payload" deploy/ccro_alpha
-          for n in 01 02 03 04 05; do
-            git show "${PINNED}:deploy/ccro_alpha/payload.part${n}" > "$TMP/payload/payload.part${n}"
-          done
-
-          python3 - "$TMP/payload" <<'PY'
-          from pathlib import Path
-          import ast, base64, io, re, sys, tarfile
-
-          root = Path.cwd()
-          payload_dir = Path(sys.argv[1])
-          expected = {
-              "addons/__init__.py",
-              "addons/ccro/__init__.py",
-              "addons/ccro/engine.py",
-              "static/addons/ccro/ccro.svg",
-              "static/addons/ccro/ccro_addon.js",
-              "tests/test_ccro_addon.py",
-          }
-          parts = sorted(payload_dir.glob("payload.part*"))
-          if len(parts) != 5:
-              raise SystemExit(f"Expected 5 CCRO payload parts, found {len(parts)}")
-          encoded = "".join(p.read_text(encoding="ascii").strip() for p in parts)
-          raw = base64.b64decode(encoded, validate=True)
-          with tarfile.open(fileobj=io.BytesIO(raw), mode="r:gz") as tf:
-              names = set(tf.getnames())
-              if names != expected:
-                  raise SystemExit(f"Unexpected CCRO payload members: {sorted(names ^ expected)}")
-              for member in tf.getmembers():
-                  target = (root / member.name).resolve()
-                  if root.resolve() not in target.parents:
-                      raise SystemExit(f"Unsafe CCRO payload path: {member.name}")
-              tf.extractall(root)
-
-          app_path = root / "app.py"
-          app_text = app_path.read_text(encoding="utf-8")
-          import_line = "from addons.ccro import register_ccro"
-          registration = "register_ccro(app, CALCS)"
-          if import_line not in app_text:
-              marker = re.search(r"^app\s*=\s*Flask\([^\n]*\)\s*$", app_text, re.M)
-              if not marker:
-                  raise SystemExit("CCRO integration failed: Flask app assignment not found")
-              app_text = app_text[:marker.start()] + import_line + "\n\n" + app_text[marker.start():]
-          if registration not in app_text:
-              marker = re.search(r"^app\s*=\s*Flask\([^\n]*\)\s*$", app_text, re.M)
-              if not marker:
-                  raise SystemExit("CCRO integration failed: Flask app assignment not found after import")
-              app_text = app_text[:marker.end()] + "\n" + registration + app_text[marker.end():]
-          ast.parse(app_text, filename="app.py")
-          app_path.write_text(app_text, encoding="utf-8")
-
-          index_path = root / "templates" / "index.html"
-          index_text = index_path.read_text(encoding="utf-8")
-          script = "{{ url_for('static', filename='addons/ccro/ccro_addon.js') }}"
-          if script not in index_text:
-              app_js = re.compile(r"(<script[^>]+url_for\(['\"]static['\"],\s*filename=['\"]app\.js['\"]\)[^>]*></script>)")
-              matches = list(app_js.finditer(index_text))
-              if not matches:
-                  raise SystemExit("CCRO integration failed: main app.js script tag not found")
-              m = matches[-1]
-              tag = '\n<script src="' + script + '"></script>'
-              index_text = index_text[:m.end()] + tag + index_text[m.end():]
-              index_path.write_text(index_text, encoding="utf-8")
-
-          reg = (root / "addons/ccro/__init__.py").read_text(encoding="utf-8")
-          engine = (root / "addons/ccro/engine.py").read_text(encoding="utf-8").lower()
-          js = (root / "static/addons/ccro/ccro_addon.js").read_text(encoding="utf-8")
-          checks = {
-              "all-tier metadata": '"minimum_tier": "entry"' in reg and '"available_all_tiers": True' in reg,
-              "no entitlement gate": "require_feature(" not in reg,
-              "primary CCRO workspace": 'data-mode="ccro"' in js and "CCRO Design" in js,
-              "no fixed 41 bar cap": "41 bar" not in engine,
-              "host registration": registration in app_text,
-              "UI loader": script in index_text,
-          }
-          failed = [name for name, ok in checks.items() if not ok]
-          if failed:
-              raise SystemExit("CCRO validation failed: " + ", ".join(failed))
-          print("PASS - CCRO source materialized")
-          print("PASS - CCRO available to Entry, Silver, Gold and Platinum")
-          print("PASS - CCRO registered inside Total RO Design hierarchy")
-          PY
-
-          python3 -m py_compile addons/ccro/__init__.py addons/ccro/engine.py app.py
-          if command -v node >/dev/null 2>&1; then
-            node --check static/addons/ccro/ccro_addon.js
-          fi
-          if /opt/totalrodesign/venv/bin/python3 -c 'import pytest' >/dev/null 2>&1; then
-            /opt/totalrodesign/venv/bin/python3 -m pytest -q tests/test_ccro_addon.py
-          else
-            echo "pytest not present in deployment venv; CCRO targeted suite was already validated on the feature branch."
-          fi
-
-      - name: Publish CCRO materialization status
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          curl -fsS -X POST \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
-            -d '{"state":"success","context":"twds-alpha/ccro-materialize","description":"CCRO materialized and targeted checks passed"}' >/dev/null
-
       - name: Validate source tree
         run: |
           set -e
@@ -177,8 +62,6 @@ jobs:
           test -f requirements-server.txt
           test -d static
           test -d templates
-          test -f addons/ccro/engine.py
-          test -f static/addons/ccro/ccro_addon.js
 
           if find . \
             \( -name '.env' \
@@ -198,17 +81,6 @@ jobs:
           python3 -m compileall -q .
 
           echo "PASS - source validation"
-
-      - name: Publish source validation status
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          curl -fsS -X POST \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
-            -d '{"state":"success","context":"twds-alpha/source-validation","description":"Candidate source validation passed"}' >/dev/null
 
       - name: Prepare restricted staging tree
         run: |
@@ -239,38 +111,14 @@ jobs:
         run: |
           sudo /usr/local/sbin/twds-alpha-deploy
 
-      - name: Publish cutover status
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          curl -fsS -X POST \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
-            -d '{"state":"success","context":"twds-alpha/cutover","description":"Rollback-protected alpha cutover passed"}' >/dev/null
-
       - name: Final service verification
         run: |
           systemctl is-active totalrodesign.service
           systemctl is-active totalbiodesign.service
 
           curl -fsS --max-time 10 http://127.0.0.1:8000/ >/dev/null
-          curl -fsS --max-time 10 http://127.0.0.1:8000/api/addons/ccro/status | grep -q '"available_all_tiers":true'
 
           echo "PASS - alpha deployment healthy"
-          echo "PASS - CCRO status endpoint confirms all-tier availability"
-
-      - name: Publish CCRO health status
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          curl -fsS -X POST \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
-            -d '{"state":"success","context":"twds-alpha/ccro-health","description":"CCRO endpoint and services healthy"}' >/dev/null
 
       - name: Publish deployment success status
         if: success()
