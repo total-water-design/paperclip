@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  statuses: write
 
 concurrency:
   group: twds-alpha-deployment
@@ -26,6 +27,17 @@ jobs:
     timeout-minutes: 15
 
     steps:
+      - name: Publish deployment pending status
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          curl -fsS -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            -d '{"state":"pending","context":"twds-alpha/deployment","description":"Alpha deployment in progress"}' >/dev/null
+
       - name: Checkout latest alpha
         uses: actions/checkout@v5
         with:
@@ -107,3 +119,27 @@ jobs:
           curl -fsS --max-time 10 http://127.0.0.1:8000/ >/dev/null
 
           echo "PASS - alpha deployment healthy"
+
+      - name: Publish deployment success status
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          curl -fsS -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            -d '{"state":"success","context":"twds-alpha/deployment","description":"Alpha deployed and health checks passed"}' >/dev/null
+
+      - name: Publish deployment failure status
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          curl -fsS -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            -d '{"state":"failure","context":"twds-alpha/deployment","description":"Alpha deployment or health verification failed"}' >/dev/null
