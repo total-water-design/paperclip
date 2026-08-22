@@ -1,0 +1,106 @@
+name: Deploy Alpha
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: twds-alpha-deployment
+  cancel-in-progress: false
+
+jobs:
+  deploy-alpha:
+    name: Deploy alpha to EC2
+    runs-on:
+      - self-hosted
+      - Linux
+      - X64
+      - twds-alpha
+      - ec2
+
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout latest alpha
+        uses: actions/checkout@v4
+        with:
+          ref: alpha
+          fetch-depth: 1
+
+      - name: Identify deployment
+        run: |
+          echo "Deploying commit:"
+          git rev-parse HEAD
+          echo
+          echo "Short commit:"
+          git rev-parse --short HEAD
+
+      - name: Validate source tree
+        run: |
+          set -e
+
+          test -f app.py
+          test -f auth.py
+          test -f wsgi.py
+          test -f requirements-server.txt
+          test -d static
+          test -d templates
+
+          if find . \
+            \( -name '.env' \
+               -o -name '*.db' \
+               -o -name '*.sqlite' \
+               -o -name '*.sqlite3' \
+               -o -name '*.pem' \
+               -o -name '*.key' \
+               -o -name 'instance' \
+            \) \
+            -not -path './.git/*' \
+            -print | grep -q .; then
+              echo "ERROR: forbidden runtime or secret files detected."
+              exit 1
+          fi
+
+          python3 -m compileall -q .
+
+          echo "PASS - source validation"
+
+      - name: Prepare restricted staging tree
+        run: |
+          set -e
+
+          STAGE=/opt/twds-deploy/staging
+
+          rsync -a --delete \
+            --exclude='.git/' \
+            --exclude='.github/' \
+            --exclude='instance/' \
+            --exclude='__pycache__/' \
+            --exclude='*.pyc' \
+            --exclude='.env' \
+            --exclude='*.db' \
+            --exclude='*.sqlite' \
+            --exclude='*.sqlite3' \
+            --exclude='*.pem' \
+            --exclude='*.key' \
+            "$GITHUB_WORKSPACE/" "$STAGE/"
+
+          git rev-parse HEAD > "$STAGE/.deployment_commit"
+
+          echo "Staging prepared."
+          echo "Commit: $(cat "$STAGE/.deployment_commit")"
+
+      - name: Deploy with backup and rollback protection
+        run: |
+          sudo /usr/local/sbin/twds-alpha-deploy
+
+      - name: Final service verification
+        run: |
+          systemctl is-active totalrodesign.service
+          systemctl is-active totalbiodesign.service
+
+          curl -fsS --max-time 10 http://127.0.0.1:8000/ >/dev/null
+
+          echo "PASS - alpha deployment healthy"
