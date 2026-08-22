@@ -2,11 +2,19 @@
 <html lang="en" data-theme="light">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#071A2B">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="TWDS">
   <title>{% block title %}Total Water Design Suite{% endblock %}</title>
   <link rel="icon" href="{{ url_for('static', filename='branding/suite/total_water_design_suite_icon_32.png') }}">
+  <link rel="apple-touch-icon" href="{{ url_for('static', filename='branding/suite/total_water_design_suite_icon_256.png') }}">
+  <link rel="manifest" href="{{ url_for('static', filename='manifest.webmanifest') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='auth.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='mobile.css') }}">
 </head>
 <body class="auth-page">
   <main class="auth-shell">
@@ -42,5 +50,6 @@
       <footer class="auth-footer">Part of the Total Water Design Suite · support@totalrodesign.com</footer>
     </section>
   </main>
+  <script src="{{ url_for('static', filename='mobile.js') }}" defer></script>
 </body>
 </html>
