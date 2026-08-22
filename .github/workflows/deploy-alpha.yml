@@ -16,49 +16,69 @@ concurrency:
 
 jobs:
   deploy-alpha:
-    name: Deploy alpha to EC2
+    name: Deploy exact alpha commit to EC2
     runs-on:
       - self-hosted
       - Linux
       - X64
       - twds-alpha
       - ec2
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
-      - name: Publish deployment pending status
+      - name: Publish deployment pending statuses
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          curl -fsS -X POST \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
-            -d '{"state":"pending","context":"twds-alpha/deployment","description":"Alpha deployment in progress"}' >/dev/null
+          set -euo pipefail
+          post_status() {
+            local context="$1" description="$2"
+            python3 - "$context" "$description" <<'PY' >/tmp/twds-status.json
+          import json,sys
+          print(json.dumps({"state":"pending","context":sys.argv[1],"description":sys.argv[2][:140]}))
+          PY
+            curl -fsS -X POST \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+              --data-binary @/tmp/twds-status.json >/dev/null
+          }
+          post_status twds-alpha/deployment "Exact Alpha deployment in progress"
+          post_status twds-alpha/release-health "Post-deployment Suite verification pending"
+          post_status twds-alpha/ccro-final "CCRO/source and post-deployment verification pending"
 
       - name: Checkout exact triggering Alpha commit
         uses: actions/checkout@v5
         with:
           ref: ${{ github.sha }}
-          fetch-depth: 1
+          fetch-depth: 0
 
-      - name: Identify deployment
+      - name: Identify exact release candidate
         run: |
           set -euo pipefail
           ACTUAL="$(git rev-parse HEAD)"
-          echo "Deploying commit: $ACTUAL"
+          echo "Release candidate: $ACTUAL"
           test "$ACTUAL" = "$GITHUB_SHA"
+          echo "Previous Alpha: $(git rev-parse HEAD^1)"
 
-      - name: Validate source tree
+      - name: Validate source tree and reconciled engines
         run: |
-          set -e
+          set -euo pipefail
           test -f app.py
           test -f auth.py
           test -f wsgi.py
           test -f requirements-server.txt
           test -d static
           test -d templates
+          test -f pump_db.py
+          test -f vcmp_pump.py
+          test -f hhecp_pump.py
+          test -f pd_pump.py
+          test -f shared_pump_engine.py
+          test -f addons/ccro/__init__.py
+          test -f addons/ccro/engine.py
+          test -f static/addons/ccro/ccro_addon.js
 
           if find . \
             \( -name '.env' \
@@ -74,10 +94,40 @@ jobs:
               echo "ERROR: forbidden runtime or secret files detected."
               exit 1
           fi
+
           python3 -m compileall -q .
+
+          PYTHONPATH="$GITHUB_WORKSPACE" /opt/totalrodesign/venv/bin/python3 - <<'PY'
+          import pump_db
+          legacy = pump_db.select_pump(55.0, 18.0, density_kg_m3=998.0, top_n=1)
+          assert legacy['ok']
+          assert legacy['selected']['technology'] == 'VCMP'
+          assert 'rpm_basis' in legacy['selected']
+          hhecp = pump_db.select_pump(600.0, 50.0, technologies=('hhecp',), top_n=1)
+          assert hhecp['ok'] and hhecp['selected']['technology'] == 'HHECP'
+          pd = pump_db.select_pump(
+              55.0, 18.0,
+              available_inlet_bar=2.0,
+              technologies=('pd',),
+              max_duty_units=10,
+              top_n=1,
+          )
+          assert pd['ok'] and pd['selected']['technology'] == 'PD'
+          print('PASS - shared pump reconciliation; legacy VCMP default preserved')
+          PY
+
+          python3 - <<'PY'
+          from pathlib import Path
+          text = Path('addons/ccro/__init__.py').read_text(encoding='utf-8')
+          assert '"minimum_tier": "entry"' in text
+          assert '"available_all_tiers": True' in text
+          assert 'require_feature(' not in text
+          print('PASS - tracked CCRO all-tier source contract')
+          PY
+
           echo "PASS - source validation"
 
-      - name: Prepare restricted staging tree
+      - name: Prepare restricted staging tree for exact commit
         run: |
           set -euo pipefail
           STAGE=/opt/twds-deploy/staging
@@ -101,42 +151,163 @@ jobs:
       - name: Deploy with backup and rollback protection
         run: sudo /usr/local/sbin/twds-alpha-deploy
 
-      - name: Final service verification
+      - name: Verify AWS Alpha; rollback previous Alpha on extended failure
+        id: release_health
         run: |
-          set -euo pipefail
-          systemctl is-active totalrodesign.service
-          systemctl is-active totalbiodesign.service
-          if systemctl list-unit-files --type=service 2>/dev/null | grep -q '^totalzlddesign\.service'; then
-            systemctl is-active totalzlddesign.service
-          else
-            echo "Total ZLD Design service is not deployed; skipping service check."
-          fi
-          curl -fsS --max-time 10 http://127.0.0.1:8000/ >/dev/null
-          curl -fsS --max-time 10 http://127.0.0.1:8000/healthz >/dev/null
-          LOGIN_CODE="$(curl -sS --max-time 10 -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/login)"
-          test "$LOGIN_CODE" = "200"
-          echo "PASS - alpha deployment healthy"
+          set -u
+          FAIL=0
+          fail() { echo "FAIL - $*"; FAIL=1; }
+          pass() { echo "PASS - $*"; }
+          expect_code() {
+            local label="$1" method="$2" path="$3" allowed="$4"
+            local out="$(mktemp)"
+            local code
+            if [ "$method" = POST ]; then
+              code="$(curl -sS --max-time 15 -H 'Content-Type: application/json' -d '{}' -o "$out" -w '%{http_code}' "http://127.0.0.1:8000${path}" || true)"
+            else
+              code="$(curl -sS --max-time 15 -o "$out" -w '%{http_code}' "http://127.0.0.1:8000${path}" || true)"
+            fi
+            if echo " $allowed " | grep -q " $code "; then
+              pass "$label ${path} HTTP $code"
+            else
+              fail "$label ${path} unexpected HTTP ${code:-000}"
+              head -c 800 "$out" 2>/dev/null || true
+              echo
+            fi
+          }
 
-      - name: Publish deployment success status
+          systemctl is-active --quiet totalrodesign.service && pass "Total RO Design service active" || fail "Total RO Design service inactive"
+          systemctl is-active --quiet totalbiodesign.service && pass "Total Bio Design service active" || fail "Total Bio Design service inactive"
+          if systemctl list-unit-files --type=service 2>/dev/null | grep -q '^totalzlddesign\.service'; then
+            systemctl is-active --quiet totalzlddesign.service && pass "Total ZLD Design service active" || fail "Total ZLD Design service exists but is inactive"
+          else
+            pass "Total ZLD Design service not deployed; check skipped"
+          fi
+
+          expect_code "Suite root" GET / "200"
+          expect_code "Health endpoint" GET /healthz "200"
+          expect_code "Login" GET /login "200"
+          expect_code "Total RO launch" GET /ro "200 301 302 401 403"
+          expect_code "Suite dashboard" GET /suite "200 301 302 401 403"
+          expect_code "Project API" GET /api/projects "200 301 302 401 403"
+          expect_code "Compute API" GET /api/compute/capabilities "200 401 403"
+          expect_code "CCRO API" GET /api/addons/ccro/status "200 401 403"
+          expect_code "Chemistry calculation API" POST /api/chemistry/analyze "200 400 401 403"
+          expect_code "Flowsheet calculation API" POST /api/flowsheet/solve "200 400 401 403 409"
+
+          LOGIN_HTML="$(mktemp)"
+          LOGIN_JAR="$(mktemp)"
+          LOGIN_OUT="$(mktemp)"
+          LOGIN_GET="$(curl -sS --max-time 10 -c "$LOGIN_JAR" -o "$LOGIN_HTML" -w '%{http_code}' http://127.0.0.1:8000/login || true)"
+          TOKEN="$(sed -n 's/.*name="csrf_token" value="\([^"]*\)".*/\1/p' "$LOGIN_HTML" | head -1)"
+          if [ "$LOGIN_GET" = "200" ] && [ -n "$TOKEN" ]; then
+            LOGIN_POST="$(curl -sS --max-time 20 -b "$LOGIN_JAR" -c "$LOGIN_JAR" -o "$LOGIN_OUT" -w '%{http_code}' \
+              --data-urlencode "csrf_token=$TOKEN" \
+              --data-urlencode 'email=alpha-release-health-nonexistent@invalid.example' \
+              --data-urlencode 'password=AlphaReleaseHealth-NotARealPassword-2026!' \
+              http://127.0.0.1:8000/login || true)"
+            case "$LOGIN_POST" in
+              200|302) pass "Authentication/PostgreSQL query path completed without server error" ;;
+              429) pass "Authentication endpoint rate limiter active; service remains responsive" ;;
+              *) fail "Authentication/PostgreSQL probe HTTP ${LOGIN_POST:-000}" ;;
+            esac
+          else
+            fail "Could not obtain login page/CSRF token for authentication database probe"
+          fi
+
+          HTTPS_ROOT="$(curl -ksS --max-time 15 --resolve totalwaterdesign.com:443:127.0.0.1 -o /dev/null -w '%{http_code}' https://totalwaterdesign.com/ || true)"
+          case "$HTTPS_ROOT" in
+            200|301|302) pass "HTTPS Suite entry through Nginx HTTP $HTTPS_ROOT" ;;
+            *) fail "HTTPS Suite entry through Nginx HTTP ${HTTPS_ROOT:-000}" ;;
+          esac
+          BIO_ROUTE="$(curl -ksS --max-time 15 --resolve totalwaterdesign.com:443:127.0.0.1 -o /dev/null -w '%{http_code}' https://totalwaterdesign.com/apps/bio/ || true)"
+          case "$BIO_ROUTE" in
+            200|301|302|401|403) pass "Total Bio Design launch route HTTP $BIO_ROUTE" ;;
+            *) fail "Total Bio Design launch route HTTP ${BIO_ROUTE:-000}" ;;
+          esac
+
+          if [ "$FAIL" -eq 0 ]; then
+            echo "PASS - extended Alpha release health"
+            exit 0
+          fi
+
+          echo "Extended release validation failed. Restoring previous Alpha through the same protected deployment mechanism."
+          PREVIOUS_SHA="$(git rev-parse "$GITHUB_SHA^1")"
+          TMP="$(mktemp -d)"
+          trap 'rm -rf "$TMP"' EXIT
+          git archive "$PREVIOUS_SHA" | tar -x -C "$TMP"
+          STAGE=/opt/twds-deploy/staging
+          rsync -a --delete \
+            --exclude='.git/' \
+            --exclude='.github/' \
+            --exclude='instance/' \
+            --exclude='__pycache__/' \
+            --exclude='*.pyc' \
+            --exclude='.env' \
+            --exclude='*.db' \
+            --exclude='*.sqlite' \
+            --exclude='*.sqlite3' \
+            --exclude='*.pem' \
+            --exclude='*.key' \
+            "$TMP/" "$STAGE/"
+          printf '%s\n' "$PREVIOUS_SHA" > "$STAGE/.deployment_commit"
+
+          set +e
+          sudo /usr/local/sbin/twds-alpha-deploy
+          ROLLBACK_RC=$?
+          set -e
+          if [ "$ROLLBACK_RC" -eq 0 ] \
+             && systemctl is-active --quiet totalrodesign.service \
+             && systemctl is-active --quiet totalbiodesign.service \
+             && curl -fsS --max-time 10 http://127.0.0.1:8000/ >/dev/null; then
+            echo "ROLLBACK SUCCESS - previous Alpha $PREVIOUS_SHA restored and healthy"
+          else
+            echo "ROLLBACK FAILURE - manual intervention required"
+          fi
+          exit 1
+
+      - name: Publish deployment and release-health success
         if: success()
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          curl -fsS -X POST \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
-            -d '{"state":"success","context":"twds-alpha/deployment","description":"Exact Alpha commit deployed; rollback-protected checks passed"}' >/dev/null
+          set -euo pipefail
+          post_success() {
+            local context="$1" description="$2"
+            python3 - "$context" "$description" <<'PY' >/tmp/twds-status.json
+          import json,sys
+          print(json.dumps({"state":"success","context":sys.argv[1],"description":sys.argv[2][:140]}))
+          PY
+            curl -fsS -X POST \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+              --data-binary @/tmp/twds-status.json >/dev/null
+          }
+          post_success twds-alpha/deployment "Exact Alpha commit deployed; protected cutover and extended checks passed"
+          post_success twds-alpha/release-health "AWS Alpha services, routes, auth/DB and HTTPS checks passed"
+          post_success twds-alpha/ccro-final "Tracked all-tier CCRO source present; protected endpoint/release health passed"
 
-      - name: Publish deployment failure status
+      - name: Publish deployment and release-health failure
         if: failure()
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          curl -fsS -X POST \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
-            -d '{"state":"failure","context":"twds-alpha/deployment","description":"Alpha deployment or health verification failed"}' >/dev/null
+          set -euo pipefail
+          post_failure() {
+            local context="$1" description="$2"
+            python3 - "$context" "$description" <<'PY' >/tmp/twds-status.json
+          import json,sys
+          print(json.dumps({"state":"failure","context":sys.argv[1],"description":sys.argv[2][:140]}))
+          PY
+            curl -fsS -X POST \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+              --data-binary @/tmp/twds-status.json >/dev/null
+          }
+          post_failure twds-alpha/deployment "Alpha deployment or release validation failed; rollback protection invoked where applicable"
+          post_failure twds-alpha/release-health "One or more required AWS Alpha release-health checks failed"
+          post_failure twds-alpha/ccro-final "CCRO/source or final Alpha release verification did not complete successfully"
