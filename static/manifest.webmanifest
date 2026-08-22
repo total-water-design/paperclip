@@ -13,6 +13,12 @@
   "categories": ["productivity", "utilities", "business"],
   "icons": [
     {
+      "src": "/static/branding/suite/total_water_design_suite_icon_192.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
       "src": "/static/branding/suite/total_water_design_suite_icon_256.png",
       "sizes": "256x256",
       "type": "image/png",
