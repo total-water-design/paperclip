@@ -1,0 +1,72 @@
+name: Stage Advanced Chemistry
+
+on:
+  push:
+    branches:
+      - alpha
+    paths:
+      - .github/workflows/stage-advanced-chemistry.yml
+
+permissions:
+  contents: write
+
+jobs:
+  stage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout alpha
+        uses: actions/checkout@v5
+        with:
+          ref: alpha
+          fetch-depth: 0
+
+      - name: Create isolated chemistry branch
+        run: |
+          set -euo pipefail
+          git checkout -B chemistry-upgrade-work
+
+      - name: Execute patch block from reviewed workflow
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re, textwrap
+          src=Path('.github/workflows/apply-advanced-weak-species-once.yml').read_text(encoding='utf-8')
+          blocks=re.findall(r"python3 - <<'PY'\n(.*?)\n          PY",src,re.S)
+          if len(blocks)<2:
+              raise SystemExit(f'Expected patch and smoke-test Python blocks; found {len(blocks)}')
+          code=textwrap.dedent(blocks[0])
+          exec(compile(code,'advanced-chemistry-patch','exec'),{})
+          PY
+          python3 -m py_compile chemistry_analysis.py calculations.py water_chemistry.py solver/root_scalar.py
+          git diff --check
+
+      - name: Save staged patch before physics smoke tests
+        run: |
+          set -euo pipefail
+          git config user.name "Total Water Design Suite Automation"
+          git config user.email "admin@totalrodesign.com"
+          git add chemistry_analysis.py calculations.py
+          git commit -m "Stage coupled weak-species chemistry upgrade"
+          git push --force-with-lease origin HEAD:chemistry-upgrade-work || git push --force origin HEAD:chemistry-upgrade-work
+
+      - name: Run physics smoke tests
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re, textwrap
+          src=Path('.github/workflows/apply-advanced-weak-species-once.yml').read_text(encoding='utf-8')
+          blocks=re.findall(r"python3 - <<'PY'\n(.*?)\n          PY",src,re.S)
+          code=textwrap.dedent(blocks[1])
+          exec(compile(code,'advanced-chemistry-smoke','exec'),{})
+          PY
+
+      - name: Mark staging validation passed
+        run: |
+          set -euo pipefail
+          printf 'Advanced weak-species chemistry smoke tests passed.\n' > CHEMISTRY_UPGRADE_VALIDATED.txt
+          git add CHEMISTRY_UPGRADE_VALIDATED.txt
+          git commit -m "Validate advanced weak-species chemistry"
+          git push origin HEAD:chemistry-upgrade-work
