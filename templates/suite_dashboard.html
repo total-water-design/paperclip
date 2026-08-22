@@ -27,12 +27,13 @@
       <div class="suite-product-group-title"><span>{{ heading }}</span><small>{{ description }}</small></div>
       <div class="suite-dashboard-grid">
         {% for product in products if product.category == category %}
-        <article class="suite-dashboard-card status-{{ product.status }} {% if product.accessible %}accessible{% endif %}" style="--product-accent:{{ product.accent }}">
+        {% set admin_preview = current_user.is_admin and product.product_id in ['bio', 'zld'] %}
+        <article class="suite-dashboard-card status-{{ product.status }} {% if product.accessible or admin_preview %}accessible{% endif %}" style="--product-accent:{{ product.accent }}">
           <div class="suite-dashboard-card-icon"><img src="{{ url_for('static', filename=product.icon_asset) }}" alt="{{ product.name }} icon"></div>
           <div class="suite-dashboard-card-copy">
             <div class="suite-dashboard-card-head"><h2>{{ product.name }}</h2><span class="suite-status-badge">{{ status_label(product.status) }}</span></div>
             <p>{{ product.description }}</p>
-            {% if product.accessible %}
+            {% if product.accessible or admin_preview %}
               <div class="suite-entitlement-row">
                 <span>{% if product.status == 'available' %}Subscription{% else %}Access{% endif %}</span>
                 <strong>{% if product.status == 'available' %}{{ product.entitlement.tier|title }}{% else %}Administrator preview{% endif %}</strong>
