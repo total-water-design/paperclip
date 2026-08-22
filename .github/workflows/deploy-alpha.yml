@@ -2,6 +2,9 @@ name: Deploy Alpha
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - alpha
 
 permissions:
   contents: read
@@ -24,7 +27,7 @@ jobs:
 
     steps:
       - name: Checkout latest alpha
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: alpha
           fetch-depth: 1
