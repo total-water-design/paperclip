@@ -20,5 +20,11 @@ CHEMISTRY_UPGRADE = install_runtime_chemistry()
 
 from app import app, CALCS  # noqa: E402
 from ccro_runtime import register_ccro_runtime  # noqa: E402
+from mobile_access import init_mobile_access  # noqa: E402
 
 register_ccro_runtime(app, CALCS)
+
+# The phone-browser gate is disabled unless TOTALRO_REQUIRE_MOBILE_APP_ON_PHONE
+# is explicitly enabled. Native attestation verifiers will be injected here
+# when the signed iOS and Android shells are introduced.
+init_mobile_access(app)
