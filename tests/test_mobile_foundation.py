@@ -15,7 +15,11 @@ class MobileFoundationTests(unittest.TestCase):
         self.assertEqual(manifest["start_url"], "/")
         self.assertEqual(manifest["scope"], "/")
         self.assertEqual(manifest["display"], "standalone")
-        self.assertGreaterEqual(len(manifest.get("icons", [])), 2)
+        icon_sizes = {icon.get("sizes") for icon in manifest.get("icons", [])}
+        self.assertIn("192x192", icon_sizes)
+        self.assertIn("512x512", icon_sizes)
+        self.assertTrue((ROOT / "static" / "branding" / "suite" / "total_water_design_suite_icon_192.svg").exists())
+        self.assertTrue((ROOT / "static" / "branding" / "suite" / "total_water_design_suite_icon_512.png").exists())
 
     def test_primary_surfaces_load_mobile_layer(self):
         templates = [
@@ -42,6 +46,7 @@ class MobileFoundationTests(unittest.TestCase):
         ))
         self.assertIn("fetch(request)", worker)
         self.assertIn("caches.match(request)", worker)
+        self.assertIn("total_water_design_suite_icon_192.svg", worker)
 
     def test_mobile_layer_has_no_solver_or_project_api_calls(self):
         mobile_js = (ROOT / "static" / "mobile.js").read_text(encoding="utf-8")
@@ -58,6 +63,7 @@ class MobileFoundationTests(unittest.TestCase):
         self.assertIn("@media (max-width:600px)", css)
         self.assertIn("env(safe-area-inset-top", css)
         self.assertIn("min-height:var(--twds-mobile-touch)", css)
+        self.assertIn("min(calc(100vw - 20px),760px)", css)
 
 
 if __name__ == "__main__":
