@@ -1,0 +1,97 @@
+name: Apply Chemistry Patch Work Branch
+
+on:
+  push:
+    branches:
+      - alpha
+    paths:
+      - .github/workflows/apply-chemistry-patch-work.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout chemistry work branch
+        uses: actions/checkout@v5
+        with:
+          ref: chemistry-upgrade-work
+          fetch-depth: 0
+
+      - name: Apply reviewed integration patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git apply --check chemistry_upgrade.patch
+          git apply chemistry_upgrade.patch
+          git diff --check
+
+      - name: Compile chemistry stack
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile advanced_chemistry.py chemistry_analysis.py calculations.py water_chemistry.py solver/root_scalar.py
+
+      - name: Run chemistry physics smoke tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import math
+          import chemistry_analysis as ca
+          import calculations
+          from water_chemistry import SPECIES
+
+          comp={k:0.0 for k in SPECIES}
+          comp.update({
+              'sodium':229.89769,
+              'chloride':354.53,
+              'calcium':40.078,
+              'sulfate':96.06,
+              'bicarbonate':61.0168,
+              'ammonium':18.03846,
+          })
+
+          # Acid/base response must move in the physically correct direction.
+          a8=ca.weak_species_speciation(comp,25.0,8.0)['ammonia']
+          a10=ca.weak_species_speciation(comp,25.0,10.0)['ammonia']
+          assert a10['neutral_fraction'] > a8['neutral_fraction'] >= 0.0
+
+          ca8=ca.metal_hydroxo_speciation(comp,25.0,8.0)['calcium']
+          ca10=ca.metal_hydroxo_speciation(comp,25.0,10.0)['calcium']
+          assert ca10['hydrolyzed_fraction'] > ca8['hydrolyzed_fraction'] >= 0.0
+          assert ca10['label'] == 'CaOH+'
+
+          # Neutral NH3 must pass independently from highly rejected NH4+.
+          nh=ca.ammonia_membrane_transport(comp,25.0,10.0,0.99,0.0)
+          assert nh['permeate_total_ammonia_mg_l_as_nh4'] > comp['ammonium']*0.01
+
+          # pH+TA -> CT, then TA+CT -> pH should close at the tightened root.
+          ta=ca.analytical_alkalinity_mol_kg(comp,25.0)
+          feed=ca.solve_carbonate_state(comp,25.0,ph=8.0,total_alkalinity_mol_kg=ta)
+          back=ca.solve_carbonate_state(
+              comp,25.0,
+              total_alkalinity_mol_kg=feed['total_alkalinity_mol_kg'],
+              total_inorganic_carbon_mol_kg=feed['total_inorganic_carbon_mol_kg'])
+          assert math.isfinite(back['ph'])
+          assert abs(back['ph']-8.0) < 5e-8
+          assert 'CaOH+' in {x['label'] for x in feed['hydroxo_species'].values()}
+
+          # API wiring used by calculations.py must expose the advanced functions.
+          assert callable(calculations.solve_charge_balanced_state)
+          assert callable(calculations.ammonia_membrane_transport)
+          print('PASS - advanced weak-species chemistry smoke tests')
+          PY
+
+      - name: Commit validated integration to work branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "Total Water Design Suite Automation"
+          git config user.email "admin@totalrodesign.com"
+          git add chemistry_analysis.py calculations.py
+          git commit -m "Integrate advanced NH3 hydrolysis and pH chemistry"
+          git push origin HEAD:chemistry-upgrade-work
