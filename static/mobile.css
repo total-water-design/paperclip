@@ -1,0 +1,166 @@
+/* Total Water Design Suite — mobile/PWA presentation layer.
+   Loaded after the established product styles so mobile behavior remains isolated
+   from validated engineering/calculation code. */
+
+:root{
+  --twds-mobile-safe-top:env(safe-area-inset-top,0px);
+  --twds-mobile-safe-right:env(safe-area-inset-right,0px);
+  --twds-mobile-safe-bottom:env(safe-area-inset-bottom,0px);
+  --twds-mobile-safe-left:env(safe-area-inset-left,0px);
+  --twds-mobile-touch:44px;
+}
+
+html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
+body{overscroll-behavior-y:none}
+button,a,input,select,textarea{touch-action:manipulation}
+.mobile-nav-toggle,.mobile-nav-backdrop,.mobile-network-banner,.mobile-install-button{display:none}
+
+/* Install control injected only when the browser exposes beforeinstallprompt. */
+.mobile-install-button{
+  min-height:var(--twds-mobile-touch);padding:9px 14px;border:1px solid currentColor;
+  border-radius:10px;background:transparent;color:inherit;font:inherit;font-weight:750;
+  cursor:pointer;align-items:center;justify-content:center;white-space:nowrap;
+}
+
+.mobile-network-banner{
+  position:fixed;left:50%;bottom:calc(14px + var(--twds-mobile-safe-bottom));z-index:10000;
+  transform:translateX(-50%);max-width:min(92vw,620px);padding:10px 15px;border-radius:10px;
+  background:#7a231f;color:#fff;box-shadow:0 10px 28px rgba(0,0,0,.28);font-size:13px;font-weight:750;
+}
+body.twds-offline .mobile-network-banner{display:block}
+
+@media (max-width:1024px){
+  /* Suite/public surfaces */
+  .suite-public-header,.suite-app-header{padding-left:max(18px,var(--twds-mobile-safe-left));padding-right:max(18px,var(--twds-mobile-safe-right))}
+  .suite-dashboard-shell{max-width:100%}
+  .suite-product-card,.suite-dashboard-card{min-width:0}
+
+  /* RO engineering workspace */
+  #calculatorApp.app-shell{display:block;min-height:100dvh;width:100%;overflow-x:hidden}
+  #calculatorApp .app-main{width:100%;min-width:0;margin:0}
+  #calculatorApp .workspace-scroll{max-width:100%;overflow-x:hidden}
+  #calculatorApp .layout{grid-template-columns:minmax(0,1fr)!important}
+  #calculatorApp .card,#calculatorApp .suite-panel{min-width:0;max-width:100%}
+  #calculatorApp canvas,#calculatorApp svg{max-width:100%}
+}
+
+@media (max-width:900px){
+  body.mobile-sidebar-open{overflow:hidden}
+
+  .mobile-nav-toggle{
+    display:inline-flex;position:fixed;z-index:9997;left:calc(10px + var(--twds-mobile-safe-left));
+    top:calc(10px + var(--twds-mobile-safe-top));width:44px;height:44px;border:1px solid rgba(148,163,184,.32);
+    border-radius:12px;background:#071a2b;color:#fff;box-shadow:0 8px 24px rgba(0,0,0,.25);
+    align-items:center;justify-content:center;cursor:pointer;
+  }
+  .mobile-nav-toggle .mobile-nav-bars,.mobile-nav-toggle .mobile-nav-bars:before,.mobile-nav-toggle .mobile-nav-bars:after{
+    width:20px;height:2px;border-radius:2px;background:currentColor;display:block;position:relative;content:"";
+  }
+  .mobile-nav-toggle .mobile-nav-bars:before{position:absolute;top:-6px;left:0}
+  .mobile-nav-toggle .mobile-nav-bars:after{position:absolute;top:6px;left:0}
+  body.mobile-sidebar-open .mobile-nav-toggle .mobile-nav-bars{background:transparent}
+  body.mobile-sidebar-open .mobile-nav-toggle .mobile-nav-bars:before{top:0;transform:rotate(45deg)}
+  body.mobile-sidebar-open .mobile-nav-toggle .mobile-nav-bars:after{top:0;transform:rotate(-45deg)}
+
+  .mobile-nav-backdrop{
+    display:block;position:fixed;z-index:9994;inset:0;background:rgba(2,8,23,.58);opacity:0;
+    pointer-events:none;transition:opacity .18s ease;
+  }
+  body.mobile-sidebar-open .mobile-nav-backdrop{opacity:1;pointer-events:auto}
+
+  #calculatorApp .app-sidebar{
+    display:flex!important;position:fixed!important;z-index:9996!important;left:0;top:0;bottom:0;
+    width:min(86vw,330px)!important;max-width:330px;height:100dvh!important;
+    padding-top:var(--twds-mobile-safe-top);padding-bottom:var(--twds-mobile-safe-bottom);
+    transform:translateX(-105%);transition:transform .2s ease;box-shadow:18px 0 40px rgba(0,0,0,.34);
+    overflow-y:auto;overscroll-behavior:contain;
+  }
+  body.mobile-sidebar-open #calculatorApp .app-sidebar{transform:translateX(0)}
+
+  #calculatorApp .app-topbar{
+    position:sticky;top:0;z-index:50;min-height:64px;height:auto!important;
+    padding:calc(8px + var(--twds-mobile-safe-top)) max(10px,var(--twds-mobile-safe-right)) 8px calc(64px + var(--twds-mobile-safe-left))!important;
+    display:flex;flex-wrap:wrap;gap:7px;align-items:center;
+  }
+  #calculatorApp .topbar-command-group{
+    order:1;display:flex;flex:1 1 100%;gap:6px;overflow-x:auto;overscroll-behavior-x:contain;
+    scrollbar-width:none;padding-bottom:2px;
+  }
+  #calculatorApp .topbar-command-group::-webkit-scrollbar{display:none}
+  #calculatorApp .topbar-actions{
+    order:2;display:flex;flex:1 1 100%;gap:6px;overflow-x:auto;scrollbar-width:none;align-items:center;
+  }
+  #calculatorApp .topbar-actions::-webkit-scrollbar{display:none}
+  #calculatorApp .topbar-btn,#calculatorApp .project-chip,#calculatorApp .theme-control{
+    min-height:var(--twds-mobile-touch);flex:0 0 auto;
+  }
+  #calculatorApp .toolbar-divider{display:none}
+  #calculatorApp .topbar-units{display:flex;gap:6px;flex:0 0 auto}
+  #calculatorApp .topbar-units label{min-height:var(--twds-mobile-touch)}
+
+  #calculatorApp .workspace-scroll{padding-left:14px!important;padding-right:14px!important;padding-bottom:calc(24px + var(--twds-mobile-safe-bottom))!important}
+  #calculatorApp .workspace-title-row{gap:10px;align-items:flex-start;flex-wrap:wrap}
+  #calculatorApp .workspace-title-row h1{font-size:clamp(26px,7vw,34px)}
+  #calculatorApp .workspace-tools{margin-left:0}
+  #calculatorApp .case-toolbar{min-width:0}
+  #calculatorApp .case-tabs{display:flex;max-width:100%;overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:thin}
+  #calculatorApp .case-tabs>*{flex:0 0 auto}
+  #calculatorApp .project-meta-grid{grid-template-columns:minmax(0,1fr)!important}
+  #calculatorApp .all-case-summary-body{overflow-x:auto}
+  #calculatorApp table{display:block;max-width:100%;overflow-x:auto;white-space:nowrap;-webkit-overflow-scrolling:touch}
+  #calculatorApp input:not([type="checkbox"]):not([type="radio"]),
+  #calculatorApp select,#calculatorApp textarea{min-height:var(--twds-mobile-touch);font-size:16px!important;max-width:100%}
+  #calculatorApp button{min-height:var(--twds-mobile-touch)}
+  #calculatorApp .primary{width:100%;min-height:50px}
+  #calculatorApp .compute-panel-floating{inset:calc(68px + var(--twds-mobile-safe-top)) 10px auto!important;max-width:none!important;width:auto!important}
+
+  #calculatorApp dialog.suite-modal,.suite-modal{
+    width:min(100vw - 20px,760px)!important;max-width:none;max-height:calc(100dvh - 20px);
+    margin:auto;border-radius:16px;
+  }
+
+  .mobile-install-button{display:inline-flex}
+}
+
+@media (max-width:600px){
+  .suite-public-header,.suite-app-header{gap:10px}
+  .suite-master-lockup span{min-width:0}
+  .suite-public-header nav,.suite-dashboard-header-actions{gap:8px}
+  .suite-header-cta{min-height:44px;padding:10px 13px}
+  .suite-hero{padding-top:38px!important}
+  .suite-hero h1{font-size:clamp(36px,11vw,46px)!important}
+  .suite-hero-lead{font-size:16px}
+  .suite-primary-button,.suite-secondary-button{width:100%;min-height:48px}
+  .suite-hero-actions{display:grid;grid-template-columns:1fr}
+  .suite-dashboard-card{grid-template-columns:82px minmax(0,1fr)!important}
+  .suite-dashboard-card-icon{padding:8px!important}
+  .suite-dashboard-card-icon img{width:68px!important;height:68px!important}
+  .suite-dashboard-card-copy{padding:16px!important}
+  .suite-dashboard-card-head{display:block!important}
+  .suite-dashboard-card-head .suite-status-badge{margin-top:7px}
+  .suite-account-state{grid-template-columns:auto minmax(0,1fr)}
+
+  #calculatorApp .topbar-btn span:not(.sr-only){font-size:12px}
+  #calculatorApp .topbar-btn{padding-left:9px!important;padding-right:9px!important}
+  #calculatorApp .compact-project-chip{max-width:220px}
+  #calculatorApp .account-summary-copy{display:none}
+  #calculatorApp .topbar-units label{font-size:11px}
+  #calculatorApp .topbar-units select{min-width:70px}
+  #calculatorApp .section-title{gap:10px}
+  #calculatorApp .card{border-radius:14px!important}
+  #calculatorApp .all-case-summary-card{display:none}
+  #calculatorApp dialog.suite-modal,.suite-modal{
+    width:100vw!important;height:100dvh;max-height:100dvh;margin:0;border-radius:0!important;
+    padding-bottom:var(--twds-mobile-safe-bottom);
+  }
+
+  /* Authentication pages inherit the existing auth design but collapse cleanly. */
+  .auth-shell{min-height:100dvh!important}
+  .auth-card-panel{padding-left:max(16px,var(--twds-mobile-safe-left))!important;padding-right:max(16px,var(--twds-mobile-safe-right))!important}
+  .auth-card input,.auth-card select,.auth-card button{min-height:44px;font-size:16px}
+}
+
+@media (display-mode:standalone){
+  body{padding-top:0;padding-bottom:var(--twds-mobile-safe-bottom)}
+  .suite-public-header,.suite-app-header{padding-top:var(--twds-mobile-safe-top)}
+}
