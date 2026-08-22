@@ -3,11 +3,12 @@
    authoritative. Engineering API responses, project data and HTML navigation are
    never cached by this worker. */
 
-const CACHE_NAME = 'twds-mobile-static-v1';
+const CACHE_NAME = 'twds-mobile-static-v2';
 const CORE_ASSETS = [
   '/static/manifest.webmanifest',
   '/static/mobile.css',
   '/static/mobile.js',
+  '/static/branding/suite/total_water_design_suite_icon_192.svg',
   '/static/branding/suite/total_water_design_suite_icon_256.png',
   '/static/branding/suite/total_water_design_suite_icon_512.png'
 ];
