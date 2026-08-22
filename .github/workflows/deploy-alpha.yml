@@ -23,7 +23,6 @@ jobs:
       - X64
       - twds-alpha
       - ec2
-
     timeout-minutes: 15
 
     steps:
@@ -38,24 +37,22 @@ jobs:
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
             -d '{"state":"pending","context":"twds-alpha/deployment","description":"Alpha deployment in progress"}' >/dev/null
 
-      - name: Checkout latest alpha
+      - name: Checkout exact triggering Alpha commit
         uses: actions/checkout@v5
         with:
-          ref: alpha
+          ref: ${{ github.sha }}
           fetch-depth: 1
 
       - name: Identify deployment
         run: |
-          echo "Deploying commit:"
-          git rev-parse HEAD
-          echo
-          echo "Short commit:"
-          git rev-parse --short HEAD
+          set -euo pipefail
+          ACTUAL="$(git rev-parse HEAD)"
+          echo "Deploying commit: $ACTUAL"
+          test "$ACTUAL" = "$GITHUB_SHA"
 
       - name: Validate source tree
         run: |
           set -e
-
           test -f app.py
           test -f auth.py
           test -f wsgi.py
@@ -77,17 +74,13 @@ jobs:
               echo "ERROR: forbidden runtime or secret files detected."
               exit 1
           fi
-
           python3 -m compileall -q .
-
           echo "PASS - source validation"
 
       - name: Prepare restricted staging tree
         run: |
-          set -e
-
+          set -euo pipefail
           STAGE=/opt/twds-deploy/staging
-
           rsync -a --delete \
             --exclude='.git/' \
             --exclude='.github/' \
@@ -101,23 +94,27 @@ jobs:
             --exclude='*.pem' \
             --exclude='*.key' \
             "$GITHUB_WORKSPACE/" "$STAGE/"
-
-          git rev-parse HEAD > "$STAGE/.deployment_commit"
-
-          echo "Staging prepared."
-          echo "Commit: $(cat "$STAGE/.deployment_commit")"
+          printf '%s\n' "$GITHUB_SHA" > "$STAGE/.deployment_commit"
+          test "$(cat "$STAGE/.deployment_commit")" = "$GITHUB_SHA"
+          echo "Staging prepared for exact commit $GITHUB_SHA"
 
       - name: Deploy with backup and rollback protection
-        run: |
-          sudo /usr/local/sbin/twds-alpha-deploy
+        run: sudo /usr/local/sbin/twds-alpha-deploy
 
       - name: Final service verification
         run: |
+          set -euo pipefail
           systemctl is-active totalrodesign.service
           systemctl is-active totalbiodesign.service
-
+          if systemctl list-unit-files --type=service 2>/dev/null | grep -q '^totalzlddesign\.service'; then
+            systemctl is-active totalzlddesign.service
+          else
+            echo "Total ZLD Design service is not deployed; skipping service check."
+          fi
           curl -fsS --max-time 10 http://127.0.0.1:8000/ >/dev/null
-
+          curl -fsS --max-time 10 http://127.0.0.1:8000/healthz >/dev/null
+          LOGIN_CODE="$(curl -sS --max-time 10 -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/login)"
+          test "$LOGIN_CODE" = "200"
           echo "PASS - alpha deployment healthy"
 
       - name: Publish deployment success status
@@ -130,7 +127,7 @@ jobs:
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
-            -d '{"state":"success","context":"twds-alpha/deployment","description":"Alpha deployed and health checks passed"}' >/dev/null
+            -d '{"state":"success","context":"twds-alpha/deployment","description":"Exact Alpha commit deployed; rollback-protected checks passed"}' >/dev/null
 
       - name: Publish deployment failure status
         if: failure()
