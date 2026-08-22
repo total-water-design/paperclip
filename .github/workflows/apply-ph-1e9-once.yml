@@ -1,0 +1,67 @@
+name: Apply pH 1e-9 Convergence Once
+
+on:
+  push:
+    branches:
+      - alpha
+    paths:
+      - .github/workflows/apply-ph-1e9-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout alpha
+        uses: actions/checkout@v5
+        with:
+          ref: alpha
+          fetch-depth: 0
+
+      - name: Tighten pH convergence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('chemistry_analysis.py')
+          text = path.read_text(encoding='utf-8')
+
+          old = "# pH is logarithmic; retain seven-decimal convergence for proton/speciation balance.\n    ph_root, _ = brent_root(residual_ph, lo, hi, xtol=1e-7, rtol=1e-10, max_iter=60)"
+          new = "# pH is logarithmic and directly controls free-proton activity, weak-species\n    # equilibria, carbonate redistribution and hydrolysis-sensitive chemistry.\n    # Use a 1e-9 absolute pH tolerance. Keep rtol far smaller so Brent's combined\n    # stopping criterion is effectively governed by the requested 1e-9 pH band.\n    ph_root, _ = brent_root(residual_ph, lo, hi, xtol=1e-9, rtol=1e-12, max_iter=60)"
+
+          count = text.count(old)
+          if count != 1:
+              raise SystemExit(f'Expected exactly one existing pH root block, found {count}')
+          text = text.replace(old, new, 1)
+          path.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Validate chemistry source
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile chemistry_analysis.py solver/root_scalar.py
+          python3 - <<'PY'
+          from pathlib import Path
+          text = Path('chemistry_analysis.py').read_text(encoding='utf-8')
+          assert 'xtol=1e-9, rtol=1e-12, max_iter=60' in text
+          assert 'xtol=1e-7, rtol=1e-10, max_iter=60' not in text
+          print('PASS - pH root is configured for effective ~1e-9 convergence')
+          PY
+          git diff --check
+          git diff -- chemistry_analysis.py
+
+      - name: Commit pH convergence change to alpha
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "Total Water Design Suite Automation"
+          git config user.email "admin@totalrodesign.com"
+          git add chemistry_analysis.py
+          git commit -m "Tighten pH equilibrium convergence to 1e-9"
+          git push origin HEAD:alpha
