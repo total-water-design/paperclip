@@ -477,8 +477,11 @@ def solve_carbonate_state(comp: Mapping[str, float], temp_c: float=25.0, *, ph: 
             f'Could not bracket carbonate pH between {CARBONATE_PH_MIN:.0f} and {CARBONATE_PH_MAX:.0f} '
             'for the supplied TA and CT. Review alkalinity/carbon inputs.'
         )
-    # pH is logarithmic; retain seven-decimal convergence for proton/speciation balance.
-    ph_root, _ = brent_root(residual_ph, lo, hi, xtol=1e-7, rtol=1e-10, max_iter=60)
+    # pH is logarithmic and directly controls free-proton activity, weak-species
+    # equilibria, carbonate redistribution and hydrolysis-sensitive chemistry.
+    # Use a 1e-9 absolute pH tolerance. Keep rtol far smaller so Brent's combined
+    # stopping criterion is effectively governed by the requested 1e-9 pH band.
+    ph_root, _ = brent_root(residual_ph, lo, hi, xtol=1e-9, rtol=1e-12, max_iter=60)
     return state_at_ph(ph_root)
 
 
