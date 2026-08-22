@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#071A2B">
+  <title>Mobile App Required — Total Water Design Suite</title>
+  <link rel="icon" href="{{ url_for('static', filename='branding/suite/total_water_design_suite_icon_32.png') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='suite.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='mobile.css') }}">
+  <style>
+    .mobile-required-page{min-height:100dvh;display:grid;place-items:center;padding:28px;background:linear-gradient(180deg,#f7fbfe,#eaf3f8)}
+    .mobile-required-card{width:min(620px,100%);background:#fff;border:1px solid #d7e3ec;border-radius:24px;padding:34px;box-shadow:0 24px 70px rgba(7,26,43,.16);text-align:center}
+    .mobile-required-card img{width:110px;height:110px;object-fit:contain;margin-bottom:12px}
+    .mobile-required-card h1{margin:0;color:#071a2b;font-size:clamp(30px,8vw,44px);line-height:1.05;letter-spacing:-.04em}
+    .mobile-required-card p{color:#52687c;font-size:17px;line-height:1.55;margin:16px auto;max-width:500px}
+    .mobile-required-actions{display:grid;gap:10px;margin-top:24px}
+    .mobile-store-link{display:flex;align-items:center;justify-content:center;min-height:52px;border-radius:12px;background:#071a2b;color:#fff;font-weight:800;padding:12px 18px}
+    .mobile-store-link.secondary{background:#1769d2}
+    .mobile-store-unavailable{display:block;padding:12px;border-radius:10px;background:#eef4f8;color:#5c7083;font-weight:700}
+    .mobile-required-note{font-size:13px!important;color:#6c7f90!important;margin-top:22px!important}
+  </style>
+</head>
+<body>
+  <main class="mobile-required-page">
+    <section class="mobile-required-card">
+      <img src="{{ url_for('static', filename='branding/suite/total_water_design_suite_icon_256.png') }}" alt="Total Water Design Suite">
+      <p class="suite-eyebrow">TOTAL WATER DESIGN SUITE</p>
+      <h1>Continue in the mobile app</h1>
+      <p>Engineering applications on a cellphone are available through the official Total Water Design Suite app. Your account, subscription, projects and engineering results remain synchronized with the desktop web platform.</p>
+      <div class="mobile-required-actions">
+        {% if ios_store_url %}<a class="mobile-store-link" href="{{ ios_store_url }}" rel="noopener">Download for iPhone</a>{% else %}<span class="mobile-store-unavailable">iPhone app distribution is not enabled yet.</span>{% endif %}
+        {% if android_store_url %}<a class="mobile-store-link secondary" href="{{ android_store_url }}" rel="noopener">Download for Android</a>{% else %}<span class="mobile-store-unavailable">Android app distribution is not enabled yet.</span>{% endif %}
+      </div>
+      <p class="mobile-required-note">Desktop and laptop subscribers can continue using the full hosted web application. Mobile-app access uses the same Total Water Design Suite account.</p>
+    </section>
+  </main>
+</body>
+</html>

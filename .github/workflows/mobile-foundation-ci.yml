@@ -2,7 +2,7 @@ name: Mobile Foundation CI
 
 on:
   push:
-    branches: [mobile-foundation]
+    branches: [mobile-foundation, mobile-app-enforcement]
   pull_request:
     branches: [alpha]
 
@@ -21,5 +21,7 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Validate mobile/PWA isolation
-        run: python -m unittest discover -s tests -p 'test_mobile_foundation.py' -v
+      - name: Validate mobile/PWA and enforcement isolation
+        run: |
+          python -m unittest discover -s tests -p 'test_mobile*.py' -v
+          python -m py_compile mobile_access.py
