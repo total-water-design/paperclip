@@ -115,7 +115,7 @@ body.twds-offline .mobile-network-banner{display:block}
   #calculatorApp .compute-panel-floating{inset:calc(68px + var(--twds-mobile-safe-top)) 10px auto!important;max-width:none!important;width:auto!important}
 
   #calculatorApp dialog.suite-modal,.suite-modal{
-    width:min(100vw - 20px,760px)!important;max-width:none;max-height:calc(100dvh - 20px);
+    width:min(calc(100vw - 20px),760px)!important;max-width:none;max-height:calc(100dvh - 20px);
     margin:auto;border-radius:16px;
   }
 
