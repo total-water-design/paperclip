@@ -1,0 +1,43 @@
+{
+  "id": "/",
+  "name": "Total Water Design Suite",
+  "short_name": "TWDS",
+  "description": "Connected water-treatment engineering applications for process design, analysis and optimization.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
+  "orientation": "any",
+  "background_color": "#F5F9FC",
+  "theme_color": "#071A2B",
+  "categories": ["productivity", "utilities", "business"],
+  "icons": [
+    {
+      "src": "/static/branding/suite/total_water_design_suite_icon_256.png",
+      "sizes": "256x256",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/static/branding/suite/total_water_design_suite_icon_512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "My Applications",
+      "short_name": "Applications",
+      "url": "/suite",
+      "icons": [{"src": "/static/branding/suite/total_water_design_suite_icon_256.png", "sizes": "256x256", "type": "image/png"}]
+    },
+    {
+      "name": "Total RO Design",
+      "short_name": "RO Design",
+      "url": "/ro",
+      "icons": [{"src": "/static/branding/suite/total_ro_design_icon_256.png", "sizes": "256x256", "type": "image/png"}]
+    }
+  ],
+  "prefer_related_applications": false
+}
