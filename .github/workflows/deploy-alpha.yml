@@ -59,7 +59,7 @@ jobs:
           TMP="$(mktemp -d)"
           trap 'rm -rf "$TMP"' EXIT
 
-          git fetch --no-tags --depth=1 origin "$CCRO_SOURCE_COMMIT"
+          git fetch --no-tags --depth=1 origin app/total-ro-design
           PINNED="$(git rev-parse FETCH_HEAD)"
           test "$PINNED" = "$CCRO_SOURCE_COMMIT"
 
