@@ -1,0 +1,120 @@
+name: Apply Convergence Policy Once
+
+on:
+  push:
+    branches:
+      - alpha
+    paths:
+      - .github/workflows/apply-convergence-policy-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout alpha
+        uses: actions/checkout@v5
+        with:
+          ref: alpha
+          fetch-depth: 0
+
+      - name: Apply engineering convergence policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          calc_path = Path('calculations.py')
+          calc = calc_path.read_text(encoding='utf-8')
+
+          replacements = [
+              (
+                  "# Numerical convergence controls. v15.2 relaxes the element-flow criterion from\n# 1e-8 to 1e-6 after measured sensitivity showed <0.01% engineering impact.\nELEMENT_FLOW_REL_TOL = 1e-6\nELEMENT_TDS_REL_TOL = 1e-6",
+                  "# Numerical convergence policy. Hydraulics stop at engineering-significant\n# precision; chemistry/speciation remains tighter and all intermediate values\n# retain full floating-point precision.\nHYDRAULIC_PRESSURE_ABS_TOL_BAR = 1e-3\nELEMENT_FLOW_ABS_TOL_M3H = 1e-3\nELEMENT_FLOW_REL_TOL = 1e-4\nELEMENT_TDS_REL_TOL = 1e-6"
+              ),
+              (
+                  "if last_qp is not None and abs(qp_next-qp) < ELEMENT_FLOW_REL_TOL*max(1.0,qin) and abs(cp_next-cp) < ELEMENT_TDS_REL_TOL*max(1.0,cin):",
+                  "if last_qp is not None and abs(qp_next-qp) < max(ELEMENT_FLOW_ABS_TOL_M3H, ELEMENT_FLOW_REL_TOL*max(1.0,qin)) and abs(cp_next-cp) < ELEMENT_TDS_REL_TOL*max(1.0,cin):"
+              ),
+              (
+                  "if first is not None and abs(first[\"residual\"])<=1e-5:",
+                  "if first is not None and abs(first[\"residual\"])<=HYDRAULIC_PRESSURE_ABS_TOL_BAR:"
+              ),
+              (
+                  "if abs(fa) <= 1e-5:",
+                  "if abs(fa) <= HYDRAULIC_PRESSURE_ABS_TOL_BAR:"
+              ),
+              (
+                  "if abs(fb) <= 1e-5:",
+                  "if abs(fb) <= HYDRAULIC_PRESSURE_ABS_TOL_BAR:"
+              ),
+              (
+                  "if abs(fm) <= 1e-5:",
+                  "if abs(fm) <= HYDRAULIC_PRESSURE_ABS_TOL_BAR:"
+              ),
+              (
+                  "        width=b[\"p2\"]-a[\"p2\"]\n        if abs(fb-fa) > 1e-14:",
+                  "        width=b[\"p2\"]-a[\"p2\"]\n        if width <= HYDRAULIC_PRESSURE_ABS_TOL_BAR:\n            final=min((a,b),key=lambda x:abs(x[\"residual\"]))\n            break\n        if abs(fb-fa) > 1e-14:"
+              ),
+              (
+                  "        if abs(flo)<=tol: final=lo; break\n        if abs(fhi)<=tol: final=hi; break\n        # Bracketed secant step; midpoint fallback guarantees contraction.",
+                  "        if abs(flo)<=tol: final=lo; break\n        if abs(fhi)<=tol: final=hi; break\n        if (hi[0]-lo[0]) <= HYDRAULIC_PRESSURE_ABS_TOL_BAR:\n            final=min((lo,hi), key=lambda x:abs(err(x)))\n            break\n        # Bracketed secant step; midpoint fallback guarantees contraction."
+              ),
+          ]
+
+          for old, new in replacements:
+              count = calc.count(old)
+              if count != 1:
+                  raise SystemExit(f'Expected exactly one calculations.py match, found {count}: {old[:100]!r}')
+              calc = calc.replace(old, new, 1)
+          calc_path.write_text(calc, encoding='utf-8')
+
+          chem_path = Path('chemistry_analysis.py')
+          chem = chem_path.read_text(encoding='utf-8')
+          old = "ph_root, _ = brent_root(residual_ph, lo, hi, xtol=1e-8, rtol=1e-10, max_iter=60)"
+          new = "# pH is logarithmic; retain seven-decimal convergence for proton/speciation balance.\n    ph_root, _ = brent_root(residual_ph, lo, hi, xtol=1e-7, rtol=1e-10, max_iter=60)"
+          count = chem.count(old)
+          if count != 1:
+              raise SystemExit(f'Expected exactly one chemistry_analysis.py pH root match, found {count}')
+          chem = chem.replace(old, new, 1)
+          chem_path.write_text(chem, encoding='utf-8')
+          PY
+
+      - name: Validate patched source
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile calculations.py chemistry_analysis.py
+          python3 - <<'PY'
+          from pathlib import Path
+          calc = Path('calculations.py').read_text(encoding='utf-8')
+          chem = Path('chemistry_analysis.py').read_text(encoding='utf-8')
+          checks = {
+              'pressure tolerance': 'HYDRAULIC_PRESSURE_ABS_TOL_BAR = 1e-3' in calc,
+              'flow absolute tolerance': 'ELEMENT_FLOW_ABS_TOL_M3H = 1e-3' in calc,
+              'flow relative tolerance': 'ELEMENT_FLOW_REL_TOL = 1e-4' in calc,
+              'chemistry TDS remains tight': 'ELEMENT_TDS_REL_TOL = 1e-6' in calc,
+              'pH seven-decimal convergence': 'xtol=1e-7, rtol=1e-10' in chem,
+              'old element-flow tolerance removed': 'ELEMENT_FLOW_REL_TOL = 1e-6' not in calc,
+          }
+          failed = [name for name, ok in checks.items() if not ok]
+          if failed:
+              raise SystemExit('Validation failed: ' + ', '.join(failed))
+          print('PASS - engineering convergence policy source checks')
+          PY
+          git diff --check
+          git diff -- calculations.py chemistry_analysis.py
+
+      - name: Commit convergence policy to alpha
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "Total Water Design Suite Automation"
+          git config user.email "admin@totalrodesign.com"
+          git add calculations.py chemistry_analysis.py
+          git commit -m "Tune hydraulic and pH convergence tolerances"
+          git push origin HEAD:alpha
