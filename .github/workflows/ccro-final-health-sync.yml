@@ -1,0 +1,69 @@
+name: CCRO Final Health Sync
+
+on:
+  push:
+    branches:
+      - alpha
+
+permissions:
+  contents: read
+  statuses: write
+
+concurrency:
+  group: twds-alpha-ccro-final-health
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on:
+      - self-hosted
+      - Linux
+      - X64
+      - twds-alpha
+      - ec2
+    timeout-minutes: 15
+    steps:
+      - name: Publish pending
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          curl -fsS -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" "https://api.github.com/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -d '{"state":"pending","context":"twds-alpha/ccro-final","description":"Waiting for alpha cutover"}' >/dev/null
+
+      - name: Wait for deployed marker
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 120); do
+            if [ -f /opt/totalrodesign/app/.deployment_commit ] && [ "$(cat /opt/totalrodesign/app/.deployment_commit)" = "$GITHUB_SHA" ]; then
+              echo "Live marker matches $GITHUB_SHA"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Live marker: $(cat /opt/totalrodesign/app/.deployment_commit 2>/dev/null || echo missing)"
+          echo "Expected: $GITHUB_SHA"
+          exit 1
+
+      - name: Verify services and Suite
+        run: |
+          set -euo pipefail
+          systemctl is-active totalrodesign.service
+          systemctl is-active totalbiodesign.service
+          curl -fsS --max-time 10 http://127.0.0.1:8000/ >/dev/null
+
+      - name: Verify CCRO all-tier endpoint
+        run: |
+          set -euo pipefail
+          curl -fsS --max-time 10 http://127.0.0.1:8000/api/addons/ccro/status | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("ok") is True; assert d.get("minimum_tier")=="entry"; assert d.get("available_all_tiers") is True; print(d)'
+
+      - name: Publish success
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          curl -fsS -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" "https://api.github.com/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -d '{"state":"success","context":"twds-alpha/ccro-final","description":"CCRO live on alpha for all tiers"}' >/dev/null
+
+      - name: Publish failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          curl -fsS -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" "https://api.github.com/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" -d '{"state":"failure","context":"twds-alpha/ccro-final","description":"CCRO final alpha health check failed"}' >/dev/null
