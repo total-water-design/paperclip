@@ -1,0 +1,12 @@
+{% extends "auth/base.html" %}
+{% block title %}Approval pending — Total RO Design{% endblock %}
+{% block content %}
+<div class="auth-status-icon">✓</div>
+<div class="auth-heading centered">
+  <span>REQUEST RECEIVED</span>
+  <h2>Administrator approval is pending</h2>
+  <p>The request for <strong>{{ email }}</strong> has been recorded. An administrator must activate the account before it can sign in.</p>
+</div>
+<a class="auth-primary auth-button-link" href="{{ url_for('auth.login') }}">Return to sign in</a>
+
+{% endblock %}

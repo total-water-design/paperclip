@@ -1,0 +1,28 @@
+{% extends "auth/base.html" %}
+{% block title %}My account — Total Water Design Suite{% endblock %}
+{% block content %}
+<div class="auth-heading"><span>ACCOUNT</span><h2>{{ current_user.full_name }}</h2><p>{{ current_user.email }}</p></div>
+<div class="account-summary">
+  <div><span>Status</span><strong>{{ current_user.status|title }}</strong></div>
+  <div><span>Role</span><strong>{{ current_user.role|title }}</strong></div>
+  <div><span>Organization</span><strong>{{ current_user.organization or '—' }}</strong></div>
+  <div><span>Suite identity</span><strong>Active</strong></div>
+</div>
+<section class="account-products">
+  <h3>Product access</h3>
+  {% for product in product_entitlements %}
+  <div class="account-product-row">
+    <span>{{ product.name }}</span>
+    {% if product.status == 'available' and product.accessible %}<strong>{{ product.entitlement.tier|title }}</strong>
+    {% elif product.status == 'available' %}<em>Not included</em>
+    {% else %}<em>{{ product.status|replace('_',' ')|title }}</em>{% endif %}
+  </div>
+  {% endfor %}
+</section>
+<div class="auth-stack-actions">
+  <a class="auth-primary auth-button-link" href="{{ url_for('suite_dashboard') }}">Return to my applications</a>
+  <a class="auth-secondary auth-button-link" href="{{ url_for('auth.forgot_password') }}">Change password</a>
+  {% if current_user.is_admin %}<a class="auth-secondary auth-button-link" href="{{ url_for('auth.admin_users') }}">Manage users</a>{% endif %}
+</div>
+<form method="post" action="{{ url_for('auth.logout') }}" class="auth-logout-form"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button type="submit">Sign out</button></form>
+{% endblock %}

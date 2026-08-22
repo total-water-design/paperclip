@@ -1,0 +1,11 @@
+{% extends "auth/base.html" %}
+{% block title %}Registration closed — Total RO Design{% endblock %}
+{% block content %}
+<div class="auth-heading centered">
+  <span>CONTROLLED ALPHA</span>
+  <h2>Public account requests are currently closed</h2>
+  <p>Contact <strong>admin@totalrodesign.com</strong> to request controlled access.</p>
+</div>
+<a class="auth-primary auth-button-link" href="{{ url_for('auth.login') }}">Return to sign in</a>
+
+{% endblock %}

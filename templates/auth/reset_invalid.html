@@ -1,0 +1,11 @@
+{% extends "auth/base.html" %}
+{% block title %}Reset link expired — Total RO Design{% endblock %}
+{% block content %}
+<div class="auth-heading centered">
+  <span>RESET LINK INVALID</span>
+  <h2>This password-reset link has expired or was already used</h2>
+  <p>Request a new link from the account recovery page.</p>
+</div>
+<a class="auth-primary auth-button-link" href="{{ url_for('auth.forgot_password') }}">Request a new reset link</a>
+
+{% endblock %}

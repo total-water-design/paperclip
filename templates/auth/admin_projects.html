@@ -1,0 +1,69 @@
+{% extends "auth/admin_base.html" %}
+{% block title %}Project Database — Total Water Design Suite{% endblock %}
+{% block content %}
+<section class="admin-metric-strip" aria-label="Project database summary">
+  <div><span>Saved revisions</span><strong>{{ project_count }}</strong></div>
+  <div><span>Project families</span><strong>{{ family_count }}</strong></div>
+  <div><span>Owners</span><strong>{{ owner_count }}</strong></div>
+</section>
+
+<section class="admin-toolbar" aria-label="Project search and filters">
+  <label class="admin-search"><span class="sr-only">Search projects</span><input id="projectSearch" type="search" placeholder="Search project ID, name, owner, organization…" autocomplete="off"></label>
+  <select id="projectProductFilter" aria-label="Filter by product">
+    <option value="">All products</option>
+    {% for product in products %}<option value="{{ product.product_id }}">{{ product.name }}</option>{% endfor %}
+  </select>
+  <select id="projectRevisionFilter" aria-label="Filter by revision">
+    <option value="">All revisions</option>
+    <option value="0">Base revisions only</option>
+    <option value="gt0">Revisions &gt; 0</option>
+  </select>
+</section>
+
+<div class="admin-debug-note"><strong>Administrator debugging view.</strong><span>Project snapshots remain private to their owner in normal user workflows. This page is read-only and exposes saved snapshots only to administrator accounts.</span></div>
+
+<div class="admin-table-shell">
+  <table class="admin-data-table" id="projectAdminTable">
+    <thead>
+      <tr>
+        <th><button type="button" class="admin-sort" data-column="0" data-type="text">Project ID <span>↕</span></button></th>
+        <th><button type="button" class="admin-sort" data-column="1" data-type="text">Project name <span>↕</span></button></th>
+        <th><button type="button" class="admin-sort" data-column="2" data-type="text">Owner <span>↕</span></button></th>
+        <th><button type="button" class="admin-sort" data-column="3" data-type="text">Product <span>↕</span></button></th>
+        <th><button type="button" class="admin-sort" data-column="4" data-type="number">Revision <span>↕</span></button></th>
+        <th><button type="button" class="admin-sort" data-column="5" data-type="text">Project country <span>↕</span></button></th>
+        <th><button type="button" class="admin-sort" data-column="6" data-type="date">Created <span>↕</span></button></th>
+        <th><button type="button" class="admin-sort" data-column="7" data-type="date">Updated <span>↕</span></button></th>
+        <th><button type="button" class="admin-sort" data-column="8" data-type="number">Size <span>↕</span></button></th>
+        <th>Debug</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for item in project_rows %}
+      {% set row = item.row %}{% set family = item.family %}{% set owner = item.owner %}
+      <tr data-project-row data-product="{{ row.product_id|e }}" data-revision="{{ row.revision }}" data-search="{{ (row.visible_id ~ ' ' ~ row.name ~ ' ' ~ (owner.full_name if owner else '') ~ ' ' ~ (owner.email if owner else '') ~ ' ' ~ (owner.organization if owner else '') ~ ' ' ~ row.product_id)|lower|e }}">
+        <td data-sort-value="{{ row.visible_id|e }}"><strong class="project-id-cell">{{ row.visible_id }}</strong><small>{{ family.family_uuid if family else '—' }}</small></td>
+        <td data-sort-value="{{ row.name|lower|e }}">{{ row.name }}</td>
+        <td data-sort-value="{{ (owner.full_name if owner else '')|lower|e }}"><div class="admin-user-cell"><strong>{{ owner.full_name if owner else 'Unknown user' }}</strong><span>{{ owner.email if owner else '—' }}</span><small>{{ owner.organization if owner and owner.organization else '—' }}</small></div></td>
+        <td data-sort-value="{{ row.product_id|e }}"><span class="product-pill">{{ (products|selectattr('product_id','equalto',row.product_id)|map(attribute='name')|first) or row.product_id|upper }}</span></td>
+        <td data-sort-value="{{ row.revision }}">{{ row.revision }}</td>
+        <td data-sort-value="{{ family.project_country_name|lower|e if family else '' }}">{{ family.project_country_name if family and family.project_country_name else '—' }}</td>
+        <td data-sort-value="{{ row.created_at.isoformat() if row.created_at else '' }}">{{ row.created_at.strftime('%Y-%m-%d %H:%M') if row.created_at else '—' }}</td>
+        <td data-sort-value="{{ row.updated_at.isoformat() if row.updated_at else '' }}">{{ row.updated_at.strftime('%Y-%m-%d %H:%M') if row.updated_at else '—' }}</td>
+        <td data-sort-value="{{ row.snapshot_bytes or 0 }}">{{ item.size_kb }} KB</td>
+        <td><button type="button" class="admin-action" data-project-json-url="{{ url_for('auth.admin_project_json', revision_id=row.id) }}" data-project-label="{{ row.visible_id|e }}">Inspect</button></td>
+      </tr>
+    {% else %}
+      <tr><td colspan="10" class="admin-empty">No server-side projects have been saved yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+<p class="admin-table-count"><span id="projectVisibleCount">{{ project_count }}</span> of {{ project_count }} saved revisions shown</p>
+
+<dialog class="admin-dialog project-json-dialog" id="projectJsonDialog">
+  <div class="admin-dialog-head"><div><small>PROJECT DATABASE DEBUGGER</small><strong id="projectJsonTitle">Saved project snapshot</strong><span id="projectJsonSubtitle"></span></div><button type="button" data-close-dialog aria-label="Close">×</button></div>
+  <div class="admin-dialog-body project-json-body"><pre id="projectJsonBody">Loading…</pre></div>
+  <div class="admin-dialog-actions"><button type="button" class="admin-secondary" data-close-dialog>Close</button></div>
+</dialog>
+{% endblock %}

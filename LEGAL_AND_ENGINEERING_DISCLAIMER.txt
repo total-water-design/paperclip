@@ -1,0 +1,20 @@
+CALCOSPOWER — ENGINEERING, INTELLECTUAL PROPERTY & LEGAL NOTICE
+
+Total RO Design is an independent engineering screening and decision-support software tool intended for use by qualified professionals. It combines reverse-osmosis membrane calculations, hydraulics, osmotic-pressure models, pump/motor/VFD efficiency, energy-recovery-device performance, pretreatment energy, water chemistry, scaling analysis, economics and user-entered assumptions.
+
+ENGINEERING RESPONSIBILITY
+All outputs are preliminary estimates and screening calculations. They are not engineering advice, a professional engineering opinion, a certified design, a process or performance guarantee, a vendor projection, a construction specification, a procurement recommendation or proof that a design or operating condition is technically feasible or safe. Users remain responsible for checking all inputs, assumptions and results and for obtaining appropriate manufacturer/vendor confirmation, pilot testing and qualified engineering review before design, procurement, operation, investment or contractual reliance.
+
+NO WARRANTY / AS-IS
+To the maximum extent permitted by applicable law, Total RO Design and its associated software, data, documentation and outputs are provided AS IS and AS AVAILABLE, without warranties or representations of accuracy, completeness, reliability, merchantability, fitness for a particular purpose, non-infringement, availability or performance. Results may be inaccurate, incomplete, non-converged or unsuitable because of input errors, model limitations, numerical approximation, extrapolation, software defects, third-party data, equipment behavior, feed-water chemistry, membrane condition, fouling/scaling, controls or site-specific conditions.
+
+LIMITATION OF LIABILITY
+To the maximum extent permitted by applicable law, the owner, developer, contributors and distributors of Total RO Design shall not be liable for losses or damages arising from use of, inability to use, or reliance on the software or its outputs, including equipment or membrane damage, water-quality noncompliance, excess energy consumption, loss of production, revenue or profit, project delay, procurement decisions, contractual exposure or business interruption. Where liability cannot lawfully be excluded, it remains subject to the applicable agreement and mandatory law.
+
+THIRD-PARTY INTELLECTUAL PROPERTY
+Manufacturer names, trademarks, product names, specifications, published scientific works, equations, correlations and other third-party materials remain the property of their respective owners. References are included for engineering identification, interoperability, comparison, research and calculation and do not imply sponsorship, certification, authorization or endorsement. Total RO Design does not assert ownership over third-party intellectual property and asserts rights only in its own protectable software code, implementation, architecture, database organization, documentation, branding, graphics and original expression.
+
+NO VENDOR SUBSTITUTION
+Total RO Design is not a substitute for final membrane-manufacturer projections, ERD selection software, pump/ERD vendor curves, certified vendor calculations, detailed hydraulic engineering, site-specific water analysis, pilot testing, project-specific commercial quotations or professional engineering review.
+
+This notice is a product disclaimer, not legal advice. Commercial terms, liability limits, governing law and any EULA/Terms of Use should be reviewed by qualified legal counsel for the jurisdictions in which Total RO Design is distributed or used.

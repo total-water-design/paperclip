@@ -1,0 +1,9 @@
+Total Water Design Suite v0.25 Alpha — Authenticated AWS Server
+
+Suite version: 0.25
+Total RO Design application line: 0.2
+Release class: Alpha / Engineering Preview
+Database: PostgreSQL 16 recommended; SQLite supported for isolated/local testing
+Python PostgreSQL driver: psycopg 3
+
+See RELEASE_NOTES_v0.25.md, VALIDATION_v0.25.md, MIGRATION_NOTES_v0.25.md and DEPLOYMENT_v0.25.md before deployment.

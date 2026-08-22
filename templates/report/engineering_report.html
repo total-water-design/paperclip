@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Total RO Design — Engineering Report</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='report.css') }}">
+</head>
+<body class="engineering-report-document{% if autoprint %} autoprint{% endif %}">
+  <header class="report-running-header">
+    <img src="{{ url_for('static', filename='branding/suite/total_ro_design_logo.png') }}" alt="Total RO Design">
+    <div><strong>RO System Design Report</strong><span id="runningHeaderMeta"></span></div>
+    <small>Part of the Total Water Design Suite</small>
+  </header>
+  <footer class="report-running-footer"><span id="runningFooterMeta"></span><span class="page-number"></span></footer>
+  <main id="engineeringReportRoot" class="engineering-report-root" aria-live="polite"></main>
+  <script id="reportSnapshot" type="application/json">{{ snapshot_json|safe }}</script>
+  <script>window.TOTALRO_AUTOPRINT={{ 'true' if autoprint else 'false' }};</script>
+  <script src="{{ url_for('static', filename='report.js') }}"></script>
+</body>
+</html>

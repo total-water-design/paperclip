@@ -1,0 +1,32 @@
+[Unit]
+Description=Total Water Design Suite / Total RO Design authenticated Flask application
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=totalrodesign
+Group=totalrodesign
+WorkingDirectory=/opt/totalrodesign/app
+EnvironmentFile=/etc/totalrodesign/totalrodesign.env
+ExecStart=/opt/totalrodesign/venv/bin/gunicorn -c /opt/totalrodesign/app/gunicorn.conf.py wsgi:app
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=90
+UMask=0027
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/var/lib/totalrodesign /opt/totalrodesign/app/instance
+
+[Install]
+WantedBy=multi-user.target

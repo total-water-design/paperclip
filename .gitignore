@@ -1,0 +1,76 @@
+# ============================================================
+# Total Water Design Suite
+# Files that must never enter source control
+# ============================================================
+
+# Runtime / persistent application data
+instance/
+*.db
+*.sqlite
+*.sqlite3
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Logs / temporary files
+*.log
+*.tmp
+*.temp
+*.bak
+*.backup
+*~
+*.swp
+*.swo
+
+# Live-server emergency backups
+*.pre_hotfix*
+*.pre_patch*
+*.pre_update*
+*_backup_*
+backup/
+backups/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# IDE / OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# User-generated / operational content
+uploads/
+feedback_outbox/
+mail_outbox/
+
+# Credentials that should never be committed
+credentials*
+secrets*
+
+# Additional live-server reconciliation backups
+*.pre_live_*
+*.pre_reconcile_*

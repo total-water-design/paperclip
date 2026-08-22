@@ -1,0 +1,16 @@
+{% extends "auth/base.html" %}
+{% block title %}Engineering terms — Total RO Design{% endblock %}
+{% block content %}
+<div class="auth-heading">
+  <span>FIRST SIGN-IN</span>
+  <h2>Acknowledge the engineering terms</h2>
+  <p>Total RO Design is a preliminary engineering and decision-support tool. Review the complete packaged disclaimer before continuing.</p>
+</div>
+<div class="terms-scroll"><pre>{{ disclaimer_text }}</pre></div>
+<form method="post" class="auth-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <input type="hidden" name="next" value="{{ next_url|e }}">
+  <label class="auth-check"><input type="checkbox" name="accept_terms" value="1" required><span>I acknowledge that outputs require independent professional verification and accept these preliminary-engineering terms.</span></label>
+  <button type="submit" class="auth-primary">Accept and continue <span>→</span></button>
+</form>
+{% endblock %}

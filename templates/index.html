@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+{% if auth_enabled %}<meta name="csrf-token" content="{{ csrf_token() }}">{% endif %}
+<title>Total RO Design — RO Process · Energy · SEC</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<main id="calculatorApp" class="app-shell">
+  <aside class="app-sidebar v18-sidebar">
+    <div class="sidebar-brand">
+      <div class="sidebar-logo"><img src="{{ url_for('static', filename='branding/suite/total_ro_design_icon_128.png') }}" alt="Total RO Design icon"></div>
+      <div class="sidebar-brand-copy"><div class="sidebar-brand-title-row"><strong>Total <span>RO</span> Design</strong><span class="version-pill">v0.2</span></div><small>PART OF THE TOTAL WATER DESIGN SUITE</small></div>
+    </div>
+
+    <nav class="tabs sidebar-nav" aria-label="Total RO Design workspaces">
+      <div class="nav-group"><span class="nav-group-title">PROJECT</span>
+        <button class="tab active" data-mode="water"><span class="nav-icon"><img src="{{ url_for('static', filename='icons_v18/water.svg') }}" alt=""></span><span>Water Quality</span></button>
+        <button class="tab gated-plant" data-mode="multistage" title="Manual Plant Design" disabled><span class="nav-icon"><img src="{{ url_for('static', filename='icons_v18/plant.svg') }}" alt=""></span><span>Plant Design</span><b class="nav-detail">RO Plant Designer · manual projection</b></button>
+        <button class="tab gated-envelope" data-mode="envelope" data-feature-id="hydraulic_envelope" disabled><span class="nav-icon"><img src="{{ url_for('static', filename='icons_v18/envelope.svg') }}" alt=""></span><span>Hydraulic Envelope</span><b class="nav-detail">Optional operating-condition study</b></button>
+        <button class="tab gated-advanced" data-mode="advanced" data-feature-id="advanced_design" disabled><span class="nav-icon"><img src="{{ url_for('static', filename='icons_v18/settings.svg') }}" alt=""></span><span>Advance Design</span><b class="nav-detail">Auto Design & optimization</b></button>
+      </div>
+      <div class="nav-group solution-nav" data-feature-id="erd"><span class="nav-group-title">SOLUTIONS</span>
+        <button type="button" id="addSolutionBtn" class="sidebar-add"><span>＋</span><span>Add Solution</span></button>
+        <button class="tab solution-tab" data-mode="px"><span class="nav-icon"><img src="{{ url_for('static', filename='icons_v18/isobaric.svg') }}" alt=""></span><span>Isobaric Chamber</span><i class="solution-dot active"></i></button>
+        <button class="tab solution-tab" data-mode="interstage_px"><span class="nav-icon"><img src="{{ url_for('static', filename='icons_v18/interstage_isobaric.svg') }}" alt=""></span><span>Interstage Isobaric</span></button>
+        <button class="tab solution-tab" data-mode="biturbo"><span class="nav-icon"><img src="{{ url_for('static', filename='icons_v18/biturbo.svg') }}" alt=""></span><span>BiTurbo™</span></button>
+        <button class="tab solution-tab" data-mode="single"><span class="nav-icon"><img src="{{ url_for('static', filename='icons_v18/turbo.svg') }}" alt=""></span><span>Turbocharger</span></button>
+        <button class="tab solution-tab" data-mode="interstage"><span class="nav-icon"><img src="{{ url_for('static', filename='icons_v18/interstage.svg') }}" alt=""></span><span>Interstage Turbo</span></button>
+        <button class="tab solution-tab" id="conventionalSolutionBtn" type="button" title="Conventional pump-only Base Plant solution"><span class="nav-icon"><img src="{{ url_for('static', filename='icons_v18/conventional.svg') }}" alt=""></span><span>Conventional</span></button>
+        <button class="tab solution-tab" data-mode="pelton" title="Pelton common-shaft energy recovery"><span class="nav-icon"><img src="{{ url_for('static', filename='icons_v18/pelton.svg') }}" alt=""></span><span>Pelton Turbine</span></button>
+        <button class="tab solution-tab" data-mode="dweer" title="DWEER positive-displacement work exchanger"><span class="nav-icon"><img src="{{ url_for('static', filename='icons_v18/dweer.svg') }}" alt=""></span><span>DWEER</span></button>
+      </div>
+      <div class="nav-group"><span class="nav-group-title">ANALYSIS</span>
+        <button class="tab" data-mode="comparison" data-feature-id="case_comparison"><span class="nav-icon"><img src="{{ url_for('static', filename='icons_v18/comparison.svg') }}" alt=""></span><span>Comparison</span></button>
+        <button class="tab" data-mode="economic" data-feature-id="economics"><span class="nav-icon"><img src="{{ url_for('static', filename='icons_v18/economics.svg') }}" alt=""></span><span>Economics</span></button>
+      </div>
+    </nav>
+
+    <div class="sidebar-project">
+      <button type="button" id="printResultsBtn" class="sidebar-action" data-feature-id="full_engineering_report"><span class="nav-icon"><img src="{{ url_for('static', filename='icons_v18/report.svg') }}" alt=""></span>Generate Engineering Report</button>
+      <button type="button" id="computeStatus" class="compute-badge sidebar-compute" title="Open compute diagnostics">Compute · detecting…</button>
+    </div>
+    <div class="sidebar-footer"><span class="status-dot"></span><span>Total RO Design v0.2</span></div>
+  </aside>
+
+  <section class="app-main">
+    <header class="app-topbar v18-topbar">
+      <div class="topbar-command-group">
+        <a href="{{ url_for('suite_dashboard') }}" class="topbar-btn suite-return-btn" title="Return to Total Water Design Suite"><img src="{{ url_for('static', filename='branding/suite/total_water_design_suite_icon_32.png') }}" alt=""><span>Suite</span></a>
+        <button type="button" id="newProjectBtn" class="topbar-btn"><img src="{{ url_for('static', filename='icons_v18/new.svg') }}" alt=""><span>New Project</span></button>
+        <button type="button" id="importProjectBtn" class="topbar-btn"><img src="{{ url_for('static', filename='icons_v18/open.svg') }}" alt=""><span>Project Library</span></button>
+        <input type="file" id="projectFileInput" accept=".trodesign,.json,.cospower,.calcospower,application/json" hidden>
+        <button type="button" id="saveProjectBtn" class="topbar-btn"><img src="{{ url_for('static', filename='icons_v18/save.svg') }}" alt=""><span>Save</span></button>
+        <span class="toolbar-divider"></span>
+        <button type="button" id="runAllBtn" class="topbar-btn run-all" data-feature-id="scenario_matrix"><img src="{{ url_for('static', filename='icons_v18/run.svg') }}" alt=""><span>Run All</span></button>
+        <button type="button" id="stopRunBtn" class="topbar-btn stop-run" disabled><img src="{{ url_for('static', filename='icons_v18/stop.svg') }}" alt=""><span>Stop</span></button>
+        <button type="button" id="compareQuickBtn" class="topbar-btn" data-feature-id="case_comparison"><img src="{{ url_for('static', filename='icons_v18/comparison.svg') }}" alt=""><span>Compare</span></button>
+        <button type="button" id="printTabBtn" class="topbar-btn" title="Generate Engineering Report"><img src="{{ url_for('static', filename='icons_v18/report.svg') }}" alt=""><span>Report</span><span class="sr-only">Generate Engineering Report</span></button>
+        <button type="button" id="feedbackBtn" class="topbar-btn" title="Report an issue or calculation concern"><span aria-hidden="true">⚑</span><span>Feedback</span></button>
+      </div>
+      <div class="topbar-actions">
+        <button type="button" id="projectMetaToggle" class="project-chip compact-project-chip" aria-expanded="false" aria-controls="projectMetaPanel" title="Project information"><div><strong id="projectStatusTitle">Total RO Design Project</strong><span id="projectStatusMeta"><i></i> Active workspace</span></div></button>
+        <div class="units topbar-units">
+          <label>Flow <select id="flowUnit"><option>m3/h</option><option>L/s</option><option>gpm</option></select></label>
+          <label>Pressure <select id="pressureUnit"><option>bar</option><option>psi</option></select></label>
+          <label>Flux <select id="fluxUnit"><option value="LMH">LMH</option><option value="GFD">GFD</option></select></label>
+        </div>
+        <label class="theme-control" title="Appearance"><img id="themeIcon" src="{{ url_for('static', filename='icons_v18/moon.svg') }}" alt=""><select id="themeSelect"><option value="light">Light Mode</option><option value="dark" selected>Dark Mode</option></select></label>
+        <button type="button" id="computeQuickBtn" class="topbar-btn icon-only" title="Compute diagnostics"><img src="{{ url_for('static', filename='icons_v18/settings.svg') }}" alt=""></button>
+        {% if auth_enabled and current_user.is_authenticated %}
+        <details class="account-menu">
+          <summary title="Account"><span class="account-avatar">{{ (current_user.full_name or current_user.email)[0]|upper }}</span><span class="account-summary-copy"><strong>{{ current_user.full_name }}</strong><small>{{ current_user.licensed_tier|title }}</small></span></summary>
+          <div class="account-menu-panel">
+            <div class="account-menu-identity"><strong>{{ current_user.full_name }}</strong><span>{{ current_user.email }}</span><em>{{ current_user.role|title }} · {{ current_user.licensed_tier|title }}</em></div>
+            <a href="{{ url_for('auth.account') }}">My account</a>
+            {% if current_user.is_admin %}<a href="{{ url_for('auth.admin_users') }}">Manage users</a><a href="{{ url_for('auth.admin_projects') }}">Project database</a>{% endif %}
+            <form method="post" action="{{ url_for('auth.logout') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button type="submit">Sign out</button></form>
+          </div>
+        </details>
+        {% endif %}
+      </div>
+    </header>
+
+    <section id="adminTierPreview" class="admin-tier-preview" hidden aria-label="Administrator tier preview">
+      <div class="admin-tier-label"><strong>ADMIN TIER PREVIEW</strong><span id="tierPreviewStatus">Viewing as Platinum</span></div>
+      <div class="tier-preview-buttons" role="group" aria-label="Preview subscription tier">
+        <button type="button" data-tier-preview="entry" aria-pressed="false">Entry</button>
+        <button type="button" data-tier-preview="silver" aria-pressed="false">Silver</button>
+        <button type="button" data-tier-preview="gold" aria-pressed="false">Gold</button>
+        <button type="button" data-tier-preview="platinum" aria-pressed="true">Platinum</button>
+      </div>
+      <small id="tierPreviewNote">Admin preview only · project data is preserved</small>
+    </section>
+
+    <section id="projectMetaPanel" class="project-meta-panel" hidden aria-label="Project information">
+      <div class="project-meta-head"><div><span>PROJECT INFORMATION</span><strong>Document & project metadata</strong></div><button type="button" id="projectMetaClose" aria-label="Close project information">×</button></div>
+      <div class="project-meta-grid">
+        <label><span>Project name</span><input id="metaProjectName" type="text" autocomplete="off" placeholder="e.g. North Plant RO Train A"></label>
+        <label><span>Client</span><input id="metaClient" type="text" autocomplete="off" placeholder="Client / owner"></label>
+        <label><span>User / prepared by</span><input id="metaUser" type="text" autocomplete="off" placeholder="Name or initials"></label>
+        <label><span>Project location</span><input id="metaLocation" type="text" autocomplete="off" placeholder="City / site"></label>
+        <label><span>Project Country</span><select id="metaProjectCountry"><option value="">Unknown / select country…</option>{% for code, name in country_choices %}<option value="{{ code }}">{{ name }}</option>{% endfor %}</select></label>
+        <label><span>Project date</span><input id="metaDate" type="date"></label>
+        <label><span>Revision</span><input id="metaRevision" type="text" autocomplete="off" placeholder="e.g. Rev 0" {% if auth_enabled %}readonly title="Server project revisions are controlled by the Suite project library."{% endif %}></label>
+      </div>
+      <p>These fields are stored in the project snapshot and printed on engineering reports. Authenticated server projects are saved in your private Suite project library.</p>
+    </section>
+
+    <div class="workspace-scroll">
+      <div class="workspace-title-row">
+        <div><p class="workspace-eyebrow" id="workspaceEyebrow">DESIGN WORKSPACE</p><h1 id="workspaceTitle">Water Quality</h1><p id="workspaceSubtitle">Define the common water basis used by every technology and operating case.</p></div>
+        <div class="workspace-tools"><span id="effectiveTierBadge" class="badge tier-badge" data-tier="platinum">PLATINUM</span><span class="badge v18-workspace-badge">v0.2</span></div>
+      </div>
+
+      <section id="waterSubtabs" class="water-subtabs input-only-workspace" aria-label="Water quality workspace">
+        <span class="water-subtab active">Water Quality Input</span><small>Input workspace only · chemistry results are attached to each calculated case.</small>
+      </section>
+
+      <section class="case-toolbar" aria-label="Case scenarios">
+        <div class="case-toolbar-label"><strong>Operating Cases</strong><span id="caseToolbarDescription">Up to 10 independent water-quality and operating scenarios</span></div>
+        <div id="caseTabs" class="case-tabs"></div>
+      </section>
+
+      <section id="computePanel" class="compute-panel compute-panel-floating" hidden aria-live="polite" role="dialog" aria-modal="true" aria-label="Compute diagnostics"></section>
+
+      <section id="allCaseOperatingSummary" class="card all-case-summary-card" aria-live="polite"><div class="all-case-summary-head"><div><span>PROJECT CONTEXT</span><strong>All-Case Operating Summary</strong></div><small>Up to four cases shown; additional cases scroll within this card.</small></div><div id="allCaseSummaryBody" class="all-case-summary-body"><p class="muted">No calculated cases yet.</p></div></section>
+
+      <section class="layout">
+        <form id="calcForm" class="card inputs suite-panel">
+          <div class="section-title"><div><span class="panel-kicker">INPUTS</span><h2>Design Basis</h2></div><button type="button" id="resetBtn" class="ghost">Reset</button></div>
+          <div class="solve-hint">Feed pressure is fixed; permeate is calculated.</div>
+          <div id="fields"></div>
+          <button class="primary" type="submit" id="calculateBtn"><span class="calc-btn-label">Calculate coupled duty point</span><span class="calc-btn-spinner" aria-hidden="true"></span><span class="button-arrow">→</span></button>
+          <p id="error" class="error"></p>
+        </form>
+
+        <section class="card results suite-panel">
+          <div class="section-title results-heading"><div><span class="panel-kicker">CALCULATED</span><h2>Case Results</h2></div><span id="modeLabel"></span></div>
+          <div id="warnings"></div>
+          <div id="results" class="result-grid"><p class="muted">Loading membrane database…</p></div>
+        </section>
+      </section>
+
+      <section class="card note suite-note">
+        <strong>Preliminary engineering use</strong>
+        <span>Total RO Design outputs are preliminary engineering estimates and must be independently verified before design, procurement, operation or contractual reliance. No process, equipment, energy-consumption, water-quality or economic result is guaranteed. Version 0.2 introduces the progressive calculation architecture: Water Quality → Plant Design → optional Hydraulic Envelope → eligible ERD calculations / Advance Design. Existing physical and chemical equations remain the engineering basis. Contact: support@totalrodesign.com. <strong>Part of the Total Water Design Suite.</strong></span>
+      </section>
+    </div>
+  </section>
+</main>
+
+<div id="errorBubbleHost" class="error-bubble-host" aria-live="assertive" aria-atomic="true"></div>
+<section id="printReport" class="print-report" aria-hidden="true"></section>
+<div id="calculationOverlay" class="calculation-overlay" hidden aria-live="polite" aria-busy="true">
+  <div class="calculation-dialog" role="dialog" aria-modal="true" aria-live="polite" aria-labelledby="calculationTitle"><div class="hourglass" aria-hidden="true">⌛</div><div class="calculation-copy"><strong id="calculationTitle">Calculating duty point…</strong><span id="calculationDetail">Iterating membrane, pressure, osmotic and energy balances</span><span id="calculationEta" class="calculation-eta">Estimating run time…</span></div><div class="progress-track" aria-hidden="true"><span id="calculationProgressBar"></span></div><div class="calculation-actions"><button type="button" id="cancelCalculationBtn" class="cancel-calculation-btn">Stop calculation</button><small id="calculationCancelHint">Stops the solver and discards the unfinished result.</small></div></div>
+</div>
+
+<dialog id="feedbackResultDialog" class="suite-modal feedback-result-dialog" aria-labelledby="feedbackResultTitle">
+  <div class="suite-modal-head"><div><span>TOTAL RO DESIGN SUPPORT</span><h2 id="feedbackResultTitle">Issue report</h2></div><button type="button" data-close-suite-modal aria-label="Close">×</button></div>
+  <div id="feedbackResultBody" class="suite-modal-body"></div>
+  <div class="suite-modal-actions"><button type="button" class="primary-inline" data-close-suite-modal>Close</button></div>
+</dialog>
+<dialog id="projectLibraryDialog" class="suite-modal project-library-dialog" aria-labelledby="projectLibraryTitle">
+  <div class="suite-modal-head"><div><span>TOTAL WATER DESIGN SUITE</span><h2 id="projectLibraryTitle">Suite Project Library</h2></div><button type="button" data-close-suite-modal aria-label="Close">×</button></div>
+  <div class="suite-modal-body">
+    <div class="project-library-toolbar"><input id="projectLibrarySearch" type="search" placeholder="Search project name or ID…" autocomplete="off"><button type="button" id="legacyProjectImportBtn" class="ghost-dialog-btn">Import legacy file</button></div>
+    <div id="projectLibraryBody" class="project-library-body"><p class="muted">Loading saved projects…</p></div>
+  </div>
+  <div class="suite-modal-actions"><button type="button" class="ghost" data-close-suite-modal>Close</button></div>
+</dialog>
+
+<dialog id="engineeringReportDialog" class="suite-modal report-options-dialog" aria-labelledby="engineeringReportTitle">
+  <form method="dialog" id="engineeringReportOptionsForm">
+    <div class="suite-modal-head"><div><span>TOTAL RO DESIGN</span><h2 id="engineeringReportTitle">Generate Engineering Report</h2></div><button type="button" value="cancel" data-close-suite-modal aria-label="Close">×</button></div>
+    <div class="suite-modal-body">
+      <p class="report-readiness-note" id="reportReadinessNote">The Standard Customer Report uses the current solved case and active unit system.</p>
+      <label class="report-option main-option"><input type="radio" name="report_type" value="standard" checked><span><strong>Standard Customer Report</strong><small>Compact project, stage, chemistry, element, energy, hydraulic, stream and warning summary.</small></span></label>
+      <label class="report-option"><input type="checkbox" name="include_detailed_chemistry" value="1"><span><strong>Detailed Water Chemistry Appendix</strong><small>Complete ionic, balance, speciation and scaling tables.</small></span></label>
+      <label class="report-option"><input type="checkbox" name="include_tail_chemistry" value="1"><span><strong>Tail-Element Chemistry Appendix</strong><small>Tail-element feed, concentrate, local permeate and cumulative permeate streams.</small></span></label>
+      <label class="report-option" id="hydraulicEnvelopeReportOption"><input type="checkbox" name="include_hydraulic_envelope" value="1"><span><strong>Hydraulic Envelope</strong><small>Available only after a complete envelope calculation.</small></span></label>
+      <div class="report-option-summary"><div><span>Active case</span><strong id="reportOptionCase">Case 1</strong></div><div><span>Unit system</span><strong id="reportOptionUnits">SI</strong></div><div><span>Report state</span><strong id="reportOptionState">Ready check pending</strong></div></div>
+    </div>
+    <div class="suite-modal-actions"><button type="button" class="ghost" data-close-suite-modal>Cancel</button><button type="submit" id="generateEngineeringReportBtn" class="primary-inline">Generate PDF</button></div>
+  </form>
+</dialog>
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+</body></html>

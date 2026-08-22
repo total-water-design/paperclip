@@ -1,0 +1,14 @@
+{
+  "light": {
+    "app_bg": "#F4F7FB", "sidebar": "#FFFFFF", "panel": "#FFFFFF", "panel_secondary": "#F8FAFD",
+    "border": "#DCE4EE", "text": "#172033", "muted": "#6B778C", "primary": "#1677FF",
+    "cyan": "#0BA7D5", "success": "#2FA84F", "warning": "#F4A629", "danger": "#E5484D",
+    "selection": "#EAF3FF", "chart_grid": "#E6EDF5"
+  },
+  "dark": {
+    "app_bg": "#07111D", "sidebar": "#081421", "panel": "#0B1827", "panel_secondary": "#0E1D2E",
+    "border": "#213247", "text": "#EAF2FB", "muted": "#8EA0B7", "primary": "#2F8CFF",
+    "cyan": "#23C7E6", "success": "#5ACB70", "warning": "#FFB84D", "danger": "#FF6369",
+    "selection": "#102A49", "chart_grid": "#1E3147"
+  }
+}

@@ -1,0 +1,10 @@
+{% extends "auth/base.html" %}
+{% block title %}Please wait — Total RO Design{% endblock %}
+{% block content %}
+<div class="auth-heading">
+  <span>SECURITY LIMIT</span>
+  <h2>Please wait before trying again</h2>
+  <p>Too many requests were received from this network. Try again in approximately {{ retry_after }} seconds.</p>
+</div>
+<a class="auth-primary auth-button-link" href="{{ url_for('auth.login') }}">Return to sign in</a>
+{% endblock %}

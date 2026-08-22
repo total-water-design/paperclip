@@ -1,0 +1,7 @@
+{% extends "auth/base.html" %}
+{% block title %}Security token expired — Total RO Design{% endblock %}
+{% block content %}
+<div class="auth-heading centered"><span>REQUEST EXPIRED</span><h2>Reload the page and try again</h2><p>{{ reason }}</p></div>
+<a class="auth-primary auth-button-link" href="{{ request.referrer or url_for('auth.login') }}">Reload</a>
+
+{% endblock %}

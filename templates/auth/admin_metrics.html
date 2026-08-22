@@ -1,0 +1,16 @@
+{% extends "auth/admin_base.html" %}
+{% block title %}Metrics — Total Water Design Suite{% endblock %}
+{% block content %}
+<section class="admin-toolbar metrics-toolbar"><form method="get"><label><span>Window</span><select name="window" onchange="this.form.submit()">{% for v,l in [('24h','24 hours'),('7d','7 days'),('30d','30 days'),('90d','90 days'),('1y','1 year'),('all','All time')] %}<option value="{{v}}" {% if window==v %}selected{% endif %}>{{l}}</option>{% endfor %}</select></label></form></section>
+<section class="admin-metric-strip metrics-kpis">
+<div><span>Registered users</span><strong>{{ users }}</strong></div><div><span>Active users</span><strong>{{ active_users }}</strong></div><div><span>Sessions</span><strong>{{ sessions }}</strong></div><div><span>Calculations</span><strong>{{ calculations }}</strong></div><div><span>Failures</span><strong>{{ calc_failures }}</strong></div><div><span>CPU hours</span><strong>{{ '%.2f'|format(cpu_hours) }}</strong></div>
+</section>
+<div class="metrics-grid">
+<section class="metrics-card"><h3>Engagement</h3><dl><dt>Average session</dt><dd>{{ '%.1f'|format(avg_session_s/60) }} min</dd><dt>Median session</dt><dd>{{ '%.1f'|format(median_session_s/60) }} min</dd><dt>Average calculation runtime</dt><dd>{{ '%.2f'|format(avg_runtime_s) }} s</dd><dt>p95 runtime</dt><dd>{{ '%.2f'|format(p95_runtime_s) }} s</dd></dl></section>
+<section class="metrics-card"><h3>Project storage</h3><dl><dt>Saved revisions</dt><dd>{{ project_count }}</dd><dt>Snapshot storage</dt><dd>{{ '%.2f'|format(project_bytes/1048576) }} MB</dd><dt>Average/revision</dt><dd>{{ '%.1f'|format((project_bytes/max(project_count,1))/1024) }} KB</dd></dl></section>
+<section class="metrics-card"><h3>Application activity</h3><table><tr><th>Application</th><th>Events</th></tr>{% for k,v in app_counts|dictsort %}<tr><td>{{k}}</td><td>{{v}}</td></tr>{% endfor %}</table></section>
+<section class="metrics-card"><h3>Users by tier</h3><table><tr><th>Tier</th><th>Users</th></tr>{% for k,v in tier_counts|dictsort %}<tr><td>{{k|title}}</td><td>{{v}}</td></tr>{% endfor %}</table></section>
+<section class="metrics-card wide"><h3>Historical activity</h3><table><tr><th>Date</th><th>Events</th><th>Calculations</th><th>Failures</th><th>CPU hours</th></tr>{% for day,row in daily %}<tr><td>{{day}}</td><td>{{row.events}}</td><td>{{row.calculations}}</td><td>{{row.failures}}</td><td>{{'%.3f'|format(row.cpu_seconds/3600)}}</td></tr>{% endfor %}</table></section>
+<section class="metrics-card wide"><h3>Capacity projections</h3><p class="admin-debug-note">Directional estimates based on measured usage, not infrastructure guarantees.</p><table><tr><th>Concurrent users</th><th>Est. CPU h/day</th><th>Est. project storage</th></tr>{% for row in capacity %}<tr><td>{{row.concurrent_users}}</td><td>{{'%.2f'|format(row.estimated_cpu_hours_day)}}</td><td>{{'%.1f'|format(row.estimated_project_storage_mb)}} MB</td></tr>{% endfor %}</table></section>
+</div>
+{% endblock %}

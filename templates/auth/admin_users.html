@@ -1,0 +1,171 @@
+{% extends "auth/admin_base.html" %}
+{% block title %}User Administration — Total Water Design Suite{% endblock %}
+{% block content %}
+<section class="admin-metric-strip" aria-label="User account summary">
+  <div><span>Users</span><strong>{{ counts.all }}</strong></div>
+  <div class="metric-pending"><span>Pending</span><strong>{{ counts.pending }}</strong></div>
+  <div><span>Active</span><strong>{{ counts.active }}</strong></div>
+  <div><span>Restricted</span><strong>{{ counts.restricted }}</strong></div>
+</section>
+
+<section class="admin-toolbar" aria-label="User search and filters">
+  <label class="admin-search"><span class="sr-only">Search users</span><input id="userSearch" type="search" placeholder="Search name, email, organization, IP…" autocomplete="off"></label>
+  <select id="userStatusFilter" aria-label="Filter by account status">
+    <option value="">All statuses</option>
+    <option value="pending">Pending</option>
+    <option value="active">Active</option>
+    <option value="suspended">Suspended</option>
+    <option value="canceled">Canceled</option>
+    <option value="rejected">Rejected</option>
+    <option value="disabled">Disabled (legacy)</option>
+  </select>
+  <select id="userRoleFilter" aria-label="Filter by role">
+    <option value="">All roles</option>
+    <option value="user">User</option>
+    <option value="admin">Administrator</option>
+  </select>
+  <select id="userTierFilter" aria-label="Filter by Total RO Design tier">
+    <option value="">All RO tiers</option>
+    <option value="entry">Entry</option>
+    <option value="silver">Silver</option>
+    <option value="gold">Gold</option>
+    <option value="platinum">Platinum</option>
+  </select>
+  <button type="button" class="admin-primary compact" data-open-dialog="newUserDialog">+ Add new user</button>
+</section>
+
+<div class="admin-table-shell">
+  <table class="admin-data-table" id="userAdminTable">
+    <thead>
+      <tr>
+        <th><button type="button" class="admin-sort" data-column="0" data-type="text">User <span>↕</span></button></th>
+        <th><button type="button" class="admin-sort" data-column="1" data-type="text">Organization <span>↕</span></button></th>
+        <th><button type="button" class="admin-sort" data-column="2" data-type="text">Country <span>↕</span></button></th>
+        <th><button type="button" class="admin-sort" data-column="8" data-type="text">Status <span>↕</span></button></th>
+        <th><button type="button" class="admin-sort" data-column="3" data-type="text">Role <span>↕</span></button></th>
+        <th><button type="button" class="admin-sort" data-column="4" data-type="text">RO tier <span>↕</span></button></th>
+        <th><button type="button" class="admin-sort" data-column="5" data-type="date">Created <span>↕</span></button></th>
+        <th><button type="button" class="admin-sort" data-column="6" data-type="date">Last login <span>↕</span></button></th>
+        <th><button type="button" class="admin-sort" data-column="7" data-type="number">IPs <span>↕</span></button></th>
+        <th class="admin-actions-col">Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for user in users %}
+      {% set stats = login_stats.get(user.id, {}) %}
+      {% set rows = entitlement_map.get(user.id, []) %}
+      <tr class="status-{{ user.status|e }}" data-user-row data-status="{{ user.status|e }}" data-role="{{ user.role|e }}" data-tier="{{ user.licensed_tier|e }}" data-search="{{ (user.full_name ~ ' ' ~ user.email ~ ' ' ~ (user.organization or '') ~ ' ' ~ user.status ~ ' ' ~ user.role ~ ' ' ~ user.licensed_tier ~ ' ' ~ (stats.all_ips or ''))|lower|e }}">
+        <td data-sort-value="{{ user.full_name|lower|e }}">
+          <div class="admin-user-cell"><strong>{{ user.full_name }}</strong><span>{{ user.email }}</span>{% if user.id == current_user.id %}<small>Current administrator</small>{% endif %}</div>
+        </td>
+        <td data-sort-value="{{ (user.organization or '')|lower|e }}">{{ user.organization or '—' }}</td>
+        <td data-sort-value="{{ user.status|e }}">
+          <span class="admin-status status-{{ user.status|e }}">{{ 'Suspended' if user.status == 'disabled' else user.status|title }}</span>
+          {% if user.status == 'pending' %}<small class="pending-age">{{ '%.1f'|format(pending_hours.get(user.id, 0)) }} h waiting</small>{% endif %}
+        </td>
+        <td data-sort-value="{{ user.role|e }}">{{ 'Administrator' if user.role == 'admin' else 'User' }}</td>
+        <td data-sort-value="{{ user.licensed_tier|e }}"><span class="tier-pill tier-{{ user.licensed_tier|e }}">{{ user.licensed_tier|title }}</span></td>
+        <td data-sort-value="{{ user.created_at.isoformat() if user.created_at else '' }}">{{ user.created_at.strftime('%Y-%m-%d') if user.created_at else '—' }}</td>
+        <td data-sort-value="{{ user.last_login_at.isoformat() if user.last_login_at else '' }}">{{ user.last_login_at.strftime('%Y-%m-%d %H:%M') if user.last_login_at else 'Never' }}</td>
+        <td data-sort-value="{{ stats.count or 0 }}">
+          <button type="button" class="admin-ip-button" data-ip-url="{{ url_for('auth.admin_user_ips', user_id=user.id) }}" data-user-label="{{ user.full_name|e }}">{{ stats.count or 0 }} IP{{ '' if (stats.count or 0) == 1 else 's' }}</button>
+          {% if stats.last_ip %}<small class="admin-ip-last">{{ stats.last_ip }}</small>{% endif %}
+        </td>
+        <td class="admin-row-actions">
+          {% if user.status == 'pending' %}
+            <form method="post" action="{{ url_for('auth.admin_user_decision', user_id=user.id) }}" class="inline-form">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="approve">
+              <button class="admin-action approve" type="submit">Approve</button>
+            </form>
+            <button type="button" class="admin-action danger" data-account-decision="reject" data-action-url="{{ url_for('auth.admin_user_decision', user_id=user.id) }}" data-user-name="{{ user.full_name|e }}">Reject</button>
+          {% elif user.status == 'active' %}
+            <button type="button" class="admin-action" data-open-dialog="editUser{{ user.id }}">Edit</button>
+            <form method="post" action="{{ url_for('auth.admin_send_reset', user_id=user.id) }}" class="inline-form"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="admin-action" type="submit">Reset</button></form>
+            {% if user.id != current_user.id %}<button type="button" class="admin-action warning" data-account-decision="suspend" data-action-url="{{ url_for('auth.admin_user_decision', user_id=user.id) }}" data-user-name="{{ user.full_name|e }}">Suspend</button>{% endif %}
+            {% if user.id != current_user.id %}<button type="button" class="admin-action danger" data-account-decision="cancel" data-action-url="{{ url_for('auth.admin_user_decision', user_id=user.id) }}" data-user-name="{{ user.full_name|e }}">Cancel</button>{% endif %}
+          {% else %}
+            <button type="button" class="admin-action" data-open-dialog="editUser{{ user.id }}">Edit</button>
+            <form method="post" action="{{ url_for('auth.admin_user_decision', user_id=user.id) }}" class="inline-form"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="reactivate"><button class="admin-action approve" type="submit">Reactivate</button></form>
+          {% endif %}
+        </td>
+      </tr>
+
+      <dialog class="admin-dialog" id="editUser{{ user.id }}">
+        <form method="post" action="{{ url_for('auth.admin_update_user', user_id=user.id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <div class="admin-dialog-head"><div><small>USER ACCESS</small><strong>{{ user.full_name }}</strong><span>{{ user.email }}</span></div><button type="button" data-close-dialog aria-label="Close">×</button></div>
+          <div class="admin-dialog-body">
+            <div class="admin-form-grid two">
+              <label><span>Role</span><select name="role"><option value="user" {% if user.role == 'user' %}selected{% endif %}>User</option><option value="admin" {% if user.role == 'admin' %}selected{% endif %}>Administrator</option></select></label>
+              <label><span>Country</span><select name="country_code"><option value="">Unknown / legacy</option>{% for code,name in countries %}<option value="{{ code }}" {% if user.country_code == code %}selected{% endif %}>{{ name }}</option>{% endfor %}</select></label>
+              <label><span>Total RO Design tier</span><select name="licensed_tier">{% for value in ['entry','silver','gold','platinum'] %}<option value="{{ value }}" {% if user.licensed_tier == value %}selected{% endif %}>{{ value|title }}</option>{% endfor %}</select></label>
+            </div>
+            <div class="admin-entitlement-list">
+              {% for product in rows %}
+              <div class="admin-entitlement-row {% if product.status != 'available' %}future{% endif %}">
+                <div><strong>{{ product.name }}</strong><small>{{ product.status|replace('_',' ')|title }}</small></div>
+                <label class="toggle-label"><input type="checkbox" name="product_{{ product.product_id }}_enabled" value="1" {% if product.entitlement.enabled %}checked{% endif %}><span>Enabled</span></label>
+                <label><span>Tier</span><select name="product_{{ product.product_id }}_tier">{% for value in ['entry','silver','gold','platinum'] %}<option value="{{ value }}" {% if product.entitlement.tier == value %}selected{% endif %}>{{ value|title }}</option>{% endfor %}</select></label>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+          <div class="admin-dialog-actions"><button type="button" class="admin-secondary" data-close-dialog>Cancel</button><button type="submit" class="admin-primary">Save access</button></div>
+        </form>
+      </dialog>
+    {% else %}
+      <tr><td colspan="10" class="admin-empty">No user accounts exist yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+<p class="admin-table-count"><span id="userVisibleCount">{{ users|length }}</span> of {{ users|length }} users shown</p>
+
+<dialog class="admin-dialog" id="newUserDialog">
+  <form method="post" action="{{ url_for('auth.admin_create_user') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="admin-dialog-head"><div><small>ADMINISTRATOR-CREATED ACCOUNT</small><strong>Add new user</strong><span>Admin-created accounts are active immediately and do not require approval.</span></div><button type="button" data-close-dialog aria-label="Close">×</button></div>
+    <div class="admin-dialog-body">
+      <div class="admin-form-grid two">
+        <label><span>Full name</span><input name="full_name" required maxlength="160"></label>
+        <label><span>Email</span><input name="email" type="email" required maxlength="254"></label>
+        <label><span>Organization</span><input name="organization" maxlength="200"></label>
+        <label><span>Country</span><select name="country_code" required><option value="">Select country…</option>{% for code,name in countries %}<option value="{{ code }}">{{ name }}</option>{% endfor %}</select></label>
+        <label><span>Role</span><select name="role"><option value="user">User</option><option value="admin">Administrator</option></select></label>
+      </div>
+      <div class="admin-dialog-section-head">
+        <strong>Product entitlements</strong>
+        <span>Enable only the applications this account should be allowed to access. Release status is enforced separately.</span>
+      </div>
+      <div class="admin-entitlement-list admin-new-user-entitlements">
+        {% for product in products %}
+        <div class="admin-entitlement-row {% if product.status != 'available' %}future{% endif %}">
+          <div><strong>{{ product.name }}</strong><small>{{ product.status|replace('_',' ')|title }}</small></div>
+          <label class="toggle-label"><input type="checkbox" name="new_product_{{ product.product_id }}_enabled" value="1" {% if product.product_id == 'ro' %}checked{% endif %}><span>Enabled</span></label>
+          <label><span>Tier</span><select name="new_product_{{ product.product_id }}_tier">{% for value in ['entry','silver','gold','platinum'] %}<option value="{{ value }}" {% if value == 'entry' %}selected{% endif %}>{{ value|title }}</option>{% endfor %}</select></label>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    <div class="admin-dialog-actions"><button type="button" class="admin-secondary" data-close-dialog>Cancel</button><button type="submit" class="admin-primary">Create and send password setup</button></div>
+  </form>
+</dialog>
+
+<dialog class="admin-dialog decision-dialog" id="accountDecisionDialog">
+  <form method="post" id="accountDecisionForm">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="action" id="accountDecisionAction">
+    <div class="admin-dialog-head"><div><small>ACCOUNT ACTION</small><strong id="accountDecisionTitle">Account action</strong><span id="accountDecisionUser"></span></div><button type="button" data-close-dialog aria-label="Close">×</button></div>
+    <div class="admin-dialog-body">
+      <label class="admin-feedback-label"><span>Reason and feedback to user</span><textarea name="feedback" id="accountDecisionFeedback" rows="6" maxlength="2000" required placeholder="Explain the reason clearly. This text will be included in the email sent to the user."></textarea></label>
+    </div>
+    <div class="admin-dialog-actions"><button type="button" class="admin-secondary" data-close-dialog>Cancel</button><button type="submit" class="admin-primary danger-fill" id="accountDecisionSubmit">Apply action</button></div>
+  </form>
+</dialog>
+
+<dialog class="admin-dialog ip-dialog" id="ipHistoryDialog">
+  <div class="admin-dialog-head"><div><small>LOGIN SECURITY</small><strong id="ipHistoryTitle">IP address history</strong><span id="ipHistorySubtitle"></span></div><button type="button" data-close-dialog aria-label="Close">×</button></div>
+  <div class="admin-dialog-body"><div id="ipHistoryBody" class="admin-loading">Loading…</div></div>
+  <div class="admin-dialog-actions"><button type="button" class="admin-secondary" data-close-dialog>Close</button></div>
+</dialog>
+{% endblock %}

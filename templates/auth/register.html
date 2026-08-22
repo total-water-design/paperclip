@@ -1,0 +1,22 @@
+{% extends "auth/base.html" %}
+{% block title %}Request access — Total RO Design{% endblock %}
+{% block content %}
+<div class="auth-heading">
+  <span>ACCOUNT REQUEST</span>
+  <h2>Request Total RO Design access</h2>
+  <p>New accounts begin at Entry tier and require administrator approval before sign-in.</p>
+</div>
+<form method="post" class="auth-form" novalidate>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <label><span>Full name</span><input type="text" name="full_name" required autocomplete="name" maxlength="160"></label>
+  <label><span>Organization</span><input type="text" name="organization" autocomplete="organization" maxlength="200"></label>
+  <label><span>Country</span><select name="country_code" required autocomplete="country"><option value="">Select country…</option>{% for code,name in countries %}<option value="{{ code }}">{{ name }}</option>{% endfor %}</select></label>
+  <label><span>Work email</span><input type="email" name="email" required autocomplete="email" maxlength="254"></label>
+  <label><span>Password</span><input type="password" name="password" required autocomplete="new-password" maxlength="256"><small>At least 12 characters. Avoid your email name and predictable phrases.</small></label>
+  <label><span>Confirm password</span><input type="password" name="confirm_password" required autocomplete="new-password" maxlength="256"></label>
+  <label class="auth-check auth-terms"><input type="checkbox" name="accept_terms" value="1" required><span>I understand that Total RO Design provides preliminary engineering estimates that must be independently verified.</span></label>
+  <button type="submit" class="auth-primary">Submit account request <span>→</span></button>
+</form>
+<div class="auth-links"><a href="{{ url_for('auth.login') }}">Back to sign in</a></div>
+
+{% endblock %}

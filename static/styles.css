@@ -1,0 +1,160 @@
+
+/* v0.2 progressive workflow */
+.workflow-locked{opacity:.42!important;cursor:not-allowed!important;filter:grayscale(.65)}
+.case-chip em{font-style:normal;font-weight:800;margin-left:.25rem;color:var(--muted)}
+.case-chip.remove-case{border-style:dashed;font-size:1.2rem;min-width:42px}
+.seed-card{border-left:4px solid var(--border)}
+.seed-card.seed-ready{border-left-color:#16a34a;background:color-mix(in srgb,#16a34a 6%,var(--panel))}
+.erd-check-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:.55rem;margin:1rem 0}
+.erd-check-grid label{display:flex;gap:.55rem;align-items:center;border:1px solid var(--border);border-radius:10px;padding:.65rem .75rem;background:var(--surface)}
+.source-disclaimer{border-left:3px solid #0ea5e9;padding-left:.75rem}
+
+
+/* Total RO Design Hotfix 1B multi-pass */
+
+.multipass-section{
+  margin-top:18px;
+}
+
+.mp-toolbar{
+  display:flex;
+  align-items:center;
+  gap:10px;
+}
+
+.mp-pass-card,
+.mp-recycle-row{
+  margin-top:12px;
+  padding:14px;
+  border:1px solid var(--border,#d9e1ea);
+  border-radius:12px;
+  background:var(--card,#fff);
+}
+
+.mp-pass-primary{
+  border-left:4px solid #1769d2;
+}
+
+.mp-pass-header,
+.mp-recycle-footer{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:16px;
+}
+
+.mp-pass-header > div{
+  display:flex;
+  flex-direction:column;
+  gap:2px;
+}
+
+.mp-pass-number{
+  font-size:11px;
+  font-weight:800;
+  letter-spacing:.08em;
+  color:var(--muted,#667085);
+}
+
+.mp-pass-basis-grid{
+  margin-top:12px;
+}
+
+.mp-stage-list{
+  display:grid;
+  gap:10px;
+  margin-top:12px;
+}
+
+.mp-stage-card{
+  padding:12px;
+  border:1px solid var(--border,#d9e1ea);
+  border-radius:10px;
+  background:rgba(23,105,210,.025);
+}
+
+.mp-stage-title{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  margin-bottom:8px;
+}
+
+.mp-stage-title span{
+  font-size:12px;
+  color:var(--muted,#667085);
+}
+
+.mp-subsection{
+  margin-top:18px;
+  padding-top:14px;
+  border-top:1px solid var(--border,#d9e1ea);
+}
+
+.mp-recycle-name{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  margin-bottom:10px;
+}
+
+.mp-recycle-name strong{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  min-width:34px;
+  height:28px;
+  border-radius:8px;
+  background:rgba(23,105,210,.10);
+}
+
+.mp-recycle-footer{
+  margin-top:8px;
+  font-size:12px;
+}
+
+.mp-add-recycle{
+  margin-top:10px;
+}
+
+.mp-empty-state,
+.mp-tier-note,
+.mp-feature-boundary{
+  padding:12px 14px;
+  border-radius:10px;
+  background:rgba(2,32,71,.045);
+  font-size:13px;
+}
+
+.mp-feature-boundary{
+  display:flex;
+  gap:8px;
+  margin-top:14px;
+}
+
+.mp-feature-boundary strong{
+  white-space:nowrap;
+}
+
+.mp-calc-row{
+  display:flex;
+  justify-content:flex-end;
+  margin-top:16px;
+}
+
+.mp-result-panel{
+  margin-top:16px;
+}
+
+.mp-result-panel .table-wrap{
+  margin-top:12px;
+}
+
+@media (max-width:900px){
+  .mp-pass-header,
+  .mp-recycle-footer,
+  .mp-feature-boundary{
+    align-items:flex-start;
+    flex-direction:column;
+  }
+}

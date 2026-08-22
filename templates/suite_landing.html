@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Total Water Design Suite</title>
+  <link rel="icon" href="{{ url_for('static', filename='branding/suite/total_water_design_suite_icon_32.png') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='suite.css') }}">
+</head>
+<body class="suite-page">
+  <header class="suite-public-header">
+    <a class="suite-master-lockup" href="{{ url_for('index') }}" aria-label="Total Water Design Suite home">
+      <img src="{{ url_for('static', filename='branding/suite/total_water_design_suite_icon_128.png') }}" alt="">
+      <span><small>TOTAL WATER</small><strong>DESIGN SUITE</strong></span>
+    </a>
+    <nav aria-label="Suite navigation">
+      <a href="#applications">Applications</a>
+      <a href="#founder">Founder</a>
+      <a href="#engineering-basis">Engineering basis</a>
+      {% if auth_enabled and current_user.is_authenticated %}
+        <a class="suite-header-cta" href="{{ url_for('suite_dashboard') }}">My applications</a>
+      {% else %}
+        <a href="{{ url_for('auth.register') }}">Request access</a>
+        <a class="suite-header-cta" href="{{ url_for('auth.login') }}">Sign in</a>
+      {% endif %}
+    </nav>
+  </header>
+
+  <main>
+    <section class="suite-hero">
+      <div class="suite-hero-copy">
+        <p class="suite-eyebrow">TOTAL WATER DESIGN SUITE · v{{ config.get('SUITE_VERSION', '0.25') }}</p>
+        <h1>{{ suite_headline }}</h1>
+        <p class="suite-hero-lead">Use specialized applications for pretreatment, biological treatment, membranes and demineralization, and ZLD. Transfer validated stream data between designs, close the plant-wide water balance, compare lifecycle economics, and optimize the integrated system.</p>
+        <div class="suite-hero-actions">
+          {% if auth_enabled and current_user.is_authenticated %}
+            <a class="suite-primary-button" href="{{ url_for('suite_dashboard') }}">Open my applications <span>→</span></a>
+          {% else %}
+            <a class="suite-primary-button" href="{{ url_for('auth.login') }}">Sign in to the Suite <span>→</span></a>
+            <a class="suite-secondary-button" href="{{ url_for('auth.register') }}">Request an account</a>
+          {% endif %}
+        </div>
+        <div class="suite-promise-row">
+          <div><strong>One account</strong><span>One authenticated identity across the Suite.</span></div>
+          <div><strong>Specialist depth</strong><span>Each process retains its dedicated engineering engine.</span></div>
+          <div><strong>Connected design basis</strong><span>Streams, assumptions and revisions are designed to move with the project.</span></div>
+        </div>
+      </div>
+      <div class="suite-hero-mark" aria-hidden="true">
+        <img src="{{ url_for('static', filename='branding/suite/total_water_design_suite_icon_1024.png') }}" alt="">
+      </div>
+    </section>
+
+    <section id="applications" class="suite-section suite-applications">
+      <div class="suite-section-heading">
+        <div><p class="suite-eyebrow">APPLICATION PORTFOLIO</p><h2>Engineering depth by process. One connected family.</h2></div>
+        <p>Total RO Design is the first available engineering application. The remaining products are shown transparently with their current development status.</p>
+      </div>
+
+      {% for category, heading, description in [('design','Design','Detailed process and equipment design'),('analysis','Analysis & Optimization','Plant-wide balance, economics and system integration')] %}
+      <section class="suite-product-group">
+        <div class="suite-product-group-title"><span>{{ heading }}</span><small>{{ description }}</small></div>
+        <div class="suite-product-grid">
+          {% for product in products if product.category == category %}
+          <article class="suite-product-card status-{{ product.status }} {% if product.product_id == 'ro' %}launch-product{% endif %}" style="--product-accent: {{ product.accent }}">
+            <div class="suite-product-visual">
+              <img src="{{ url_for('static', filename=product.icon_asset) }}" alt="{{ product.name }} icon">
+              <span class="suite-status-badge">{{ status_label(product.status) }}</span>
+            </div>
+            <div class="suite-product-card-copy">
+              <p class="suite-product-category">{{ heading|upper }}</p>
+              <h3>{{ product.name }}</h3>
+              <p>{{ product.description }}</p>
+              {% if product.product_id == 'ro' %}
+                <p class="suite-product-note">First product to launch · Entry, Silver, Gold and Platinum tiers</p>
+                {% if auth_enabled and current_user.is_authenticated %}
+                  <a class="suite-product-cta" href="{{ url_for('ro_application') }}">Open application <span>→</span></a>
+                {% else %}
+                  <a class="suite-product-cta" href="{{ url_for('auth.login', next=url_for('ro_application')) }}">Sign in to open <span>→</span></a>
+                {% endif %}
+              {% else %}
+                <span class="suite-product-disabled">{{ status_label(product.status) }}</span>
+              {% endif %}
+            </div>
+          </article>
+          {% endfor %}
+        </div>
+      </section>
+      {% endfor %}
+    </section>
+
+    <section id="founder" class="suite-section suite-founder-section">
+      <div class="suite-founder-copy">
+        <p class="suite-eyebrow">A MESSAGE FROM THE FOUNDER</p>
+        <h2>Engineering should be spent solving water challenges - not reconciling disconnected tools.</h2>
+        <p class="suite-founder-lead">Over more than 20 years working in international sales and business development for hydraulic equipment and water infrastructure, I repeatedly saw engineers move between membrane programs, pump tools, energy-recovery calculations, spreadsheets, chemistry packages and economic models.</p>
+        <p>Each tool may be capable on its own. The inefficiency comes from the gaps between them. When one assumption changes, engineers often have to update several applications, reconcile different units and design bases, and repeat work that should remain connected.</p>
+        <p>That experience led to the vision for the <strong>Total Water Design Suite</strong>: specialized engineering applications that preserve their technical depth while sharing one account, one project identity and, progressively, validated streams and assumptions across the complete treatment train.</p>
+        <p>The objective is not to replace engineering judgment. It is to create a better environment in which qualified professionals can apply it - from pretreatment and biological treatment through membranes, demineralization, brine concentration, water balance, economics and system-level optimization.</p>
+        <p>My tenure as <strong>President of ALADyR</strong> further reinforced the scale of that need. The water industry is being asked to deliver more capacity, greater efficiency and increasingly sophisticated reuse and desalination systems while controlling capital and operating cost.</p>
+        <p><strong>We are building the Suite to help engineers move from a design question to an informed, traceable decision with less unnecessary iteration.</strong></p>
+        <div class="suite-founder-signoff">
+          <strong>Jerry Ross</strong>
+          <span>Founder &amp; Chief Executive Officer</span>
+          <span>Total Water Design Suite</span>
+          <em>Former President, ALADyR</em>
+        </div>
+      </div>
+      <figure class="suite-founder-portrait">
+        <img src="{{ url_for('static', filename='branding/jerry_ross_founder.png') }}" alt="Jerry Ross, Founder and Chief Executive Officer">
+        <figcaption>Jerry Ross · Founder &amp; CEO</figcaption>
+      </figure>
+    </section>
+
+    <section id="engineering-basis" class="suite-section suite-engineering-basis">
+      <div class="suite-section-heading compact"><div><p class="suite-eyebrow">ENGINEERING BASIS</p><h2>Transparent preliminary-engineering software</h2></div></div>
+      <div class="suite-basis-grid">
+        <article><strong>Engineering responsibility</strong><p>The applications provide preliminary engineering estimates and decision support. Qualified professionals must independently verify inputs, assumptions, equipment limits and results before design, procurement, operation, contractual reliance or investment.</p></article>
+        <article><strong>Product status</strong><p>The Suite is being built progressively. Only products marked <em>Available</em> provide active access. Coming Soon and In Development cards are roadmap information, not release promises.</p></article>
+        <article><strong>Vendor-neutral intent</strong><p>Where the underlying data and calculation engine support it, the Suite is designed to enable transparent, vendor-neutral comparison without representing itself as a manufacturer projection or guarantee.</p></article>
+      </div>
+    </section>
+  </main>
+
+  <footer class="suite-public-footer">
+    <div class="suite-master-lockup small"><img src="{{ url_for('static', filename='branding/suite/total_water_design_suite_icon_64.png') }}" alt=""><span><small>TOTAL WATER</small><strong>DESIGN SUITE</strong></span></div>
+    <p>{{ suite_tagline }}</p>
+    <p>support@totalrodesign.com · totalrodesign.com</p>
+  </footer>
+</body>
+</html>

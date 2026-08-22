@@ -1,0 +1,2 @@
+Authenticated AWS/server source package — Total Water Design Suite v0.25 Alpha
+Includes Suite shell, Total RO Design runtime, PostgreSQL-ready administration/project library, telemetry foundation, generalized multi-pass flowsheet solver, reports, deployment files, and validation tests.
