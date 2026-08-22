@@ -385,9 +385,12 @@ def _membrane_pressure_limit_bar(m, temperature_c):
             return p0+f*(p1-p0)
     return pts[-1][1]
 
-# Numerical convergence controls. v15.2 relaxes the element-flow criterion from
-# 1e-8 to 1e-6 after measured sensitivity showed <0.01% engineering impact.
-ELEMENT_FLOW_REL_TOL = 1e-6
+# Numerical convergence policy. Hydraulics stop at engineering-significant
+# precision; chemistry/speciation remains tighter and all intermediate values
+# retain full floating-point precision.
+HYDRAULIC_PRESSURE_ABS_TOL_BAR = 1e-3
+ELEMENT_FLOW_ABS_TOL_M3H = 1e-3
+ELEMENT_FLOW_REL_TOL = 1e-4
 ELEMENT_TDS_REL_TOL = 1e-6
 
 
@@ -687,7 +690,7 @@ def membrane_stage(q_feed_m3h, p_feed_bar, membrane_id, vessels, elements_per_ve
             cp_next = cp + element_relax * c_residual
             if full:
                 cp_comp = {k: cp_comp[k] + element_relax*(cp_new_comp[k]-cp_comp[k]) for k in SPECIES}
-            if last_qp is not None and abs(qp_next-qp) < ELEMENT_FLOW_REL_TOL*max(1.0,qin) and abs(cp_next-cp) < ELEMENT_TDS_REL_TOL*max(1.0,cin):
+            if last_qp is not None and abs(qp_next-qp) < max(ELEMENT_FLOW_ABS_TOL_M3H, ELEMENT_FLOW_REL_TOL*max(1.0,qin)) and abs(cp_next-cp) < ELEMENT_TDS_REL_TOL*max(1.0,cin):
                 qp, cp = qp_next, cp_next
                 break
             previous_raw_residual = raw_residual
@@ -1538,7 +1541,7 @@ def _solve_interstage_stage2(data, qf1, pr1, qr1, feed_tds, feed_comp, pex, feed
     for x in batch_states(local_points):
         if x is not None: valid.append(x)
     first=cache.get(round(guess,8))
-    if first is not None and abs(first["residual"])<=1e-5:
+    if first is not None and abs(first["residual"])<=HYDRAULIC_PRESSURE_ABS_TOL_BAR:
         return finalize_result(first,"parallel smart bracket",False,0)
 
     bracket=None
@@ -1578,11 +1581,14 @@ def _solve_interstage_stage2(data, qf1, pr1, qr1, feed_tds, feed_comp, pex, feed
     iterations=0
     for iterations in range(1,31):
         fa,fb=a["residual"],b["residual"]
-        if abs(fa) <= 1e-5:
+        if abs(fa) <= HYDRAULIC_PRESSURE_ABS_TOL_BAR:
             final=a; break
-        if abs(fb) <= 1e-5:
+        if abs(fb) <= HYDRAULIC_PRESSURE_ABS_TOL_BAR:
             final=b; break
         width=b["p2"]-a["p2"]
+        if width <= HYDRAULIC_PRESSURE_ABS_TOL_BAR:
+            final=min((a,b),key=lambda x:abs(x["residual"]))
+            break
         if abs(fb-fa) > 1e-14:
             p=b["p2"]-fb*(b["p2"]-a["p2"])/(fb-fa)
         else:
@@ -1598,7 +1604,7 @@ def _solve_interstage_stage2(data, qf1, pr1, qr1, feed_tds, feed_comp, pex, feed
                 continue
         final=mid
         fm=mid["residual"]
-        if abs(fm) <= 1e-5:
+        if abs(fm) <= HYDRAULIC_PRESSURE_ABS_TOL_BAR:
             break
         if fa*fm <= 0:
             b=mid
@@ -4465,6 +4471,9 @@ def _solve_pressure_for_product(data, base_calc):
         flo,fhi=err(lo),err(hi)
         if abs(flo)<=tol: final=lo; break
         if abs(fhi)<=tol: final=hi; break
+        if (hi[0]-lo[0]) <= HYDRAULIC_PRESSURE_ABS_TOL_BAR:
+            final=min((lo,hi), key=lambda x:abs(err(x)))
+            break
         # Bracketed secant step; midpoint fallback guarantees contraction.
         if abs(fhi-flo)>1e-14:
             p=hi[0]-fhi*(hi[0]-lo[0])/(fhi-flo)
