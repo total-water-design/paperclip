@@ -1,0 +1,77 @@
+name: Shared Pump Regression
+
+on:
+  pull_request:
+    branches:
+      - alpha
+    paths:
+      - 'pump_db.py'
+      - 'vcmp_pump.py'
+      - 'hhecp_pump.py'
+      - 'pd_pump.py'
+      - 'shared_pump_engine.py'
+      - 'data/hhecp_*.json'
+      - 'data/pd_*.json'
+      - 'test_shared_pump_engine.py'
+      - '.github/workflows/shared-pump-ci.yml'
+  push:
+    branches:
+      - alpha
+    paths:
+      - 'pump_db.py'
+      - 'vcmp_pump.py'
+      - 'hhecp_pump.py'
+      - 'pd_pump.py'
+      - 'shared_pump_engine.py'
+      - 'data/hhecp_*.json'
+      - 'data/pd_*.json'
+      - 'test_shared_pump_engine.py'
+      - '.github/workflows/shared-pump-ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    name: Validate shared pump engine
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install test dependency
+        run: python -m pip install pytest
+      - name: Run shared pump regression suite
+        run: python -m pytest -q test_shared_pump_engine.py
+      - name: Verify Alpha compatibility contract
+        run: |
+          python - <<'PY'
+          import pump_db
+
+          legacy = pump_db.select_pump(55.0, 18.0, density_kg_m3=998.0, top_n=1)
+          assert legacy['ok']
+          assert legacy['selected']['technology'] == 'VCMP'
+          assert 'rpm_basis' in legacy['selected']
+
+          hhecp = pump_db.select_pump(
+              600.0, 50.0,
+              technologies=('hhecp',),
+              top_n=1,
+          )
+          assert hhecp['ok']
+          assert hhecp['selected']['technology'] == 'HHECP'
+
+          pd = pump_db.select_pump(
+              55.0, 18.0,
+              available_inlet_bar=2.0,
+              technologies=('pd',),
+              max_duty_units=10,
+              top_n=1,
+          )
+          assert pd['ok']
+          assert pd['selected']['technology'] == 'PD'
+
+          print('PASS - legacy VCMP default preserved; HHECP/PD shared selection is opt-in and functional')
+          PY
