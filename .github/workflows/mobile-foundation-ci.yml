@@ -1,0 +1,25 @@
+name: Mobile Foundation CI
+
+on:
+  push:
+    branches: [mobile-foundation]
+  pull_request:
+    branches: [alpha]
+
+permissions:
+  contents: read
+
+jobs:
+  mobile-foundation:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Validate mobile/PWA isolation
+        run: python -m unittest discover -s tests -p 'test_mobile_foundation.py' -v
