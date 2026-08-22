@@ -1,0 +1,148 @@
+name: Build CCRO Source Once
+
+on:
+  push:
+    branches:
+      - alpha
+    paths:
+      - .github/workflows/build-ccro-source-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  build-ccro-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout current alpha
+        uses: actions/checkout@v5
+        with:
+          ref: alpha
+          fetch-depth: 0
+
+      - name: Create isolated source-ready branch
+        run: |
+          set -euo pipefail
+          git checkout -b promotion/ccro-alpha-source-ready-v1
+
+      - name: Materialize validated CCRO source
+        run: |
+          set -euo pipefail
+          PINNED="0f9e4455f7df4f556f420a04bf086ee4913d7b16"
+          git fetch --no-tags origin app/total-ro-design
+          test "$(git rev-parse FETCH_HEAD)" = "$PINNED"
+          TMP="$(mktemp -d)"
+          trap 'rm -rf "$TMP"' EXIT
+          mkdir -p "$TMP/payload"
+          for n in 01 02 03 04 05; do
+            git show "${PINNED}:deploy/ccro_alpha/payload.part${n}" > "$TMP/payload/payload.part${n}"
+          done
+
+          python3 - "$TMP/payload" <<'PY'
+          from pathlib import Path
+          import base64, io, sys, tarfile
+          root=Path.cwd()
+          payload=Path(sys.argv[1])
+          expected={
+              'addons/__init__.py',
+              'addons/ccro/__init__.py',
+              'addons/ccro/engine.py',
+              'static/addons/ccro/ccro.svg',
+              'static/addons/ccro/ccro_addon.js',
+              'tests/test_ccro_addon.py',
+          }
+          parts=sorted(payload.glob('payload.part*'))
+          if len(parts) != 5:
+              raise SystemExit(f'Expected 5 payload parts, found {len(parts)}')
+          raw=base64.b64decode(''.join(p.read_text(encoding='ascii').strip() for p in parts),validate=True)
+          with tarfile.open(fileobj=io.BytesIO(raw),mode='r:gz') as tf:
+              names=set(tf.getnames())
+              if names != expected:
+                  raise SystemExit(f'Unexpected CCRO payload members: {sorted(names ^ expected)}')
+              for member in tf.getmembers():
+                  target=(root/member.name).resolve()
+                  if root.resolve() not in target.parents:
+                      raise SystemExit(f'Unsafe payload path: {member.name}')
+              tf.extractall(root)
+          PY
+
+          cat > ccro_runtime.py <<'PY'
+          """Register the isolated Total RO Design CCRO engine and UI."""
+          from __future__ import annotations
+
+          UI_SCRIPT = "/static/addons/ccro/ccro_addon.js"
+
+          def register_ccro_runtime(app, calculations):
+              from addons.ccro import register_ccro
+              register_ccro(app, calculations)
+              if getattr(app, "_totalro_ccro_ui_runtime_registered", False):
+                  return
+              from flask import request
+
+              @app.after_request
+              def _inject_ccro_workspace_loader(response):
+                  if request.path != "/ro" or response.status_code != 200:
+                      return response
+                  if "text/html" not in str(response.headers.get("Content-Type", "")).lower():
+                      return response
+                  html=response.get_data(as_text=True)
+                  if UI_SCRIPT in html or "</body>" not in html:
+                      return response
+                  response.set_data(html.replace("</body>", f'<script src="{UI_SCRIPT}"></script>\n</body>', 1))
+                  response.headers["Content-Length"] = str(len(response.get_data()))
+                  return response
+
+              app._totalro_ccro_ui_runtime_registered = True
+          PY
+
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('wsgi.py')
+          text=p.read_text(encoding='utf-8')
+          old='from app import app  # noqa: E402'
+          new='from app import app, CALCS  # noqa: E402\nfrom ccro_runtime import register_ccro_runtime  # noqa: E402\n\nregister_ccro_runtime(app, CALCS)'
+          if new not in text:
+              if old not in text:
+                  raise SystemExit('Expected WSGI import hook not found')
+              text=text.replace(old,new,1)
+              p.write_text(text,encoding='utf-8')
+
+          t=Path('TIER_ENTITLEMENT_MATRIX.md')
+          s=t.read_text(encoding='utf-8')
+          line='- CCRO Design (Closed Circuit Reverse Osmosis), available to Entry, Silver, Gold, and Platinum after a current Plant Design basis.\n'
+          if line not in s:
+              anchor='- Manual 1–4 stage Plant Design.\n'
+              if anchor not in s:
+                  raise SystemExit('Tier-matrix Plant Design anchor not found')
+              s=s.replace(anchor,anchor+line,1)
+              t.write_text(s,encoding='utf-8')
+          PY
+
+          mkdir -p docs
+          git show "${PINNED}:docs/CCRO_ENGINEERING_BASIS.md" > docs/CCRO_ENGINEERING_BASIS.md
+
+          # Return alpha deployment to its normal tracked-source pipeline.
+          git show be18b7f83e0bc9e259e58fd8c4e5f4655c569073:.github/workflows/deploy-alpha.yml > .github/workflows/deploy-alpha.yml
+
+      - name: Validate source isolation and all-tier contract
+        run: |
+          set -euo pipefail
+          python3 -m py_compile addons/ccro/__init__.py addons/ccro/engine.py ccro_runtime.py wsgi.py
+          node --check static/addons/ccro/ccro_addon.js
+          grep -q '"minimum_tier": "entry"' addons/ccro/__init__.py
+          grep -q '"available_all_tiers": True' addons/ccro/__init__.py
+          ! grep -q 'require_feature(' addons/ccro/__init__.py
+          ! grep -qi '41 bar' addons/ccro/engine.py
+          grep -q 'register_ccro_runtime(app, CALCS)' wsgi.py
+          git diff --check
+
+      - name: Commit source-ready branch
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/build-ccro-source-once.yml
+          git config user.name "Total Water Design Suite Automation"
+          git config user.email "admin@totalrodesign.com"
+          git add -A
+          git commit -m "Materialize validated all-tier CCRO source for alpha"
+          git push origin HEAD:promotion/ccro-alpha-source-ready-v1
