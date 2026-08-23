@@ -1,0 +1,36 @@
+name: Shared Water Chemistry CI
+
+on:
+  push:
+    branches:
+      - engine/shared-water-chemistry
+    paths:
+      - 'shared_water_chemistry/**'
+      - 'tests/test_shared_water_chemistry_contract.py'
+      - '.github/workflows/shared-water-chemistry-ci.yml'
+  pull_request:
+    paths:
+      - 'shared_water_chemistry/**'
+      - 'tests/test_shared_water_chemistry_contract.py'
+      - '.github/workflows/shared-water-chemistry-ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  contract-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install chemistry test dependency
+        run: python -m pip install 'numpy>=1.26,<3'
+      - name: Compile shared chemistry package
+        run: python -m compileall -q shared_water_chemistry tests/test_shared_water_chemistry_contract.py
+      - name: Run water-state contract tests
+        run: python -m unittest discover -s tests -p 'test_shared_water_chemistry_contract.py'
