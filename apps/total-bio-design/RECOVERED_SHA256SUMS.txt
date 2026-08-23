@@ -1,0 +1,12 @@
+92a4c6f60a8553c601c3aeefdc932d2efc8d5ec590c3ea1f1c49dbfa5347de70  apps/total-bio-design/Source/web/app.js
+4bb28e17bbc9b674c6c189543401347d9c369033fd1c559cdf22e49279111ace  apps/total-bio-design/Source/web/assets/TotalBioDesign.ico
+2eff8dca20386e31d36848a99baf439cbfa9d1ea630385d4bf6666e6de5f7b2d  apps/total-bio-design/Source/web/assets/icon.png
+453226a8e1e9a155715a5abd3a363c4260f04ec2cb43d60958730f119bbc6f2a  apps/total-bio-design/Source/web/assets/icon.svg
+86aeeaa66299ceea6402db88e7e44d3fa32718be58b3a262509838e3615abcd3  apps/total-bio-design/Source/web/assets/logo.svg
+495372885d43f0ee61d13742f1c5ec0a4cc9c66c64c41c6eefd1e1a4a59f883b  apps/total-bio-design/Source/web/compliance_advisor.js
+6aa6c39b652b169dfbec527e2b92506d3b06c004e746b2909d0ec47f05502c4a  apps/total-bio-design/Source/web/engine.js
+fd5a0028645aadd4294a07da2d033bc965ede4ba03459440d7a5768bece26a11  apps/total-bio-design/Source/web/index.html
+153897b2f9261712f48abfcbf310105af4af391c331f142ab5e48a4fe3721d40  apps/total-bio-design/Source/web/model.json
+3d2af62445902dca151b88aca7770efec1b9d474b29e4892326b2742f1e07b47  apps/total-bio-design/Source/web/process_network.js
+6fc271acc633f4cf5cf3e0a83ed23138f6c47d489a5679d7a451f99508aeaecf  apps/total-bio-design/Source/web/styles.css
+bcbaf4c6194ae82afb58158bbe2b18cacd7a0ab6819eda84cf213b772c139477  apps/total-bio-design/Source/web/unit_catalog.js

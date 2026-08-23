@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 130" role="img" aria-label="Total Bio Design">
+  <defs>
+    <linearGradient id="water" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#28B6FF"/><stop offset="1" stop-color="#0A63C7"/></linearGradient>
+    <linearGradient id="bio" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#A6E45B"/><stop offset="1" stop-color="#35A853"/></linearGradient>
+  </defs>
+  <g transform="translate(4 5)">
+    <circle cx="58" cy="58" r="50" fill="none" stroke="#78D7F8" stroke-width="4" opacity=".9"/>
+    <path d="M58 8C42 31 27 46 27 67c0 18 14 34 31 34s31-16 31-34C89 46 74 31 58 8z" fill="url(#water)" stroke="#fff" stroke-width="3"/>
+    <path d="M57 91C54 67 63 43 85 30c2 25-4 47-28 61z" fill="url(#bio)" stroke="#E7FFD0" stroke-width="2"/>
+    <path d="M56 91c5-18 14-34 29-48" fill="none" stroke="#fff" stroke-width="2" opacity=".9"/>
+    <path d="M15 81c13 8 25 11 39 10M62 104c17-1 29-6 39-15" fill="none" stroke="#4DC4E9" stroke-width="3" stroke-linecap="round" opacity=".8"/>
+  </g>
+  <g font-family="Segoe UI, Arial, sans-serif" font-weight="700">
+    <text x="125" y="52" font-size="40" fill="#EAF4FF">Total</text>
+    <text x="227" y="52" font-size="40" fill="#7AC943">Bio</text>
+    <text x="294" y="52" font-size="40" fill="#EAF4FF">Design</text>
+    <text x="127" y="86" font-size="15" font-weight="500" letter-spacing="2.1" fill="#9DC7E8">BIOLOGICAL WATER TREATMENT DESIGN</text>
+    <text x="127" y="109" font-size="12" font-weight="500" letter-spacing="1.5" fill="#61C8C1">TOTAL WATER DESIGN SUITE</text>
+  </g>
+</svg>
