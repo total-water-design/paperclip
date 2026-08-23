@@ -7,12 +7,15 @@ on:
     paths:
       - 'shared_water_chemistry/**'
       - 'tests/test_shared_water_chemistry_contract.py'
+      - 'tests/test_shared_water_chemistry_waterstream_adapter.py'
       - '.github/workflows/shared-water-chemistry-ci.yml'
   pull_request:
     paths:
       - 'shared_water_chemistry/**'
       - 'tests/test_shared_water_chemistry_contract.py'
+      - 'tests/test_shared_water_chemistry_waterstream_adapter.py'
       - '.github/workflows/shared-water-chemistry-ci.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -20,17 +23,38 @@ permissions:
 jobs:
   contract-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - name: Verify exact Shared Chemistry head
+        run: |
+          EXPECTED="${{ github.event.pull_request.head.sha || github.sha }}"
+          ACTUAL="$(git rev-parse HEAD)"
+          test "$ACTUAL" = "$EXPECTED"
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
       - name: Install chemistry test dependency
         run: python -m pip install 'numpy>=1.26,<3'
-      - name: Compile shared chemistry package
-        run: python -m compileall -q shared_water_chemistry tests/test_shared_water_chemistry_contract.py
+      - name: Materialize exact WaterStream v0.6 reference checkout
+        run: |
+          git fetch origin e43bd4e1f86f657528e83dc9e185970443d30f4b
+          rm -rf /tmp/shared-waterstream
+          git worktree add --detach /tmp/shared-waterstream e43bd4e1f86f657528e83dc9e185970443d30f4b
+          test "$(git -C /tmp/shared-waterstream rev-parse HEAD)" = "e43bd4e1f86f657528e83dc9e185970443d30f4b"
+      - name: Compile shared chemistry package and tests
+        run: |
+          python -m compileall -q \
+            shared_water_chemistry \
+            tests/test_shared_water_chemistry_contract.py \
+            tests/test_shared_water_chemistry_waterstream_adapter.py
       - name: Run water-state contract tests
         run: python -m unittest discover -s tests -p 'test_shared_water_chemistry_contract.py'
+      - name: Run WaterStream v0.6 production adapter tests
+        run: |
+          cd /tmp
+          PYTHONPATH="/tmp/shared-waterstream:${GITHUB_WORKSPACE}" \
+            python "${GITHUB_WORKSPACE}/tests/test_shared_water_chemistry_waterstream_adapter.py" -v
