@@ -294,6 +294,17 @@ def _membrane_model_coefficients(m):
     """
     r = float(m["rejection_pct"]) / 100.0
     j_test = float(m["test_flux_lmh"])
+
+    # Shared-catalog records may carry A/B values already calibrated on this
+    # exact Total RO Design transport basis. Use them only when both are present;
+    # all existing records continue through the established legacy calibration.
+    explicit_a = m.get("water_permeability_A_lmh_bar")
+    if explicit_a in (None, ""):
+        explicit_a = m.get("specific_flux_A_app_lmh_bar")
+    explicit_b = m.get("salt_permeability_B_lmh")
+    if explicit_a not in (None, "") and explicit_b not in (None, ""):
+        return float(explicit_a), float(explicit_b)
+
     b_lmh = j_test * max(1.0 - r, 1e-9) / max(r, 1e-9)
     # NF records can carry a water-permeability calibration obtained from
     # multiple manufacturer salt test points.  Do not force those records back
