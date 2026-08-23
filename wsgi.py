@@ -18,9 +18,12 @@ from runtime_chemistry_upgrade import install_runtime_chemistry  # noqa: E402
 
 CHEMISTRY_UPGRADE = install_runtime_chemistry()
 
-from app import app, CALCS  # noqa: E402
+from app import app, CALCS, _require_feature  # noqa: E402
 from ccro_runtime import register_ccro_runtime  # noqa: E402
 from mobile_access import init_mobile_access  # noqa: E402
+import ro_economic_summary_v1 as ro_economic_summary  # noqa: E402
+from ro_economic_pump_adapter import install_ro_economic_pump_adapter  # noqa: E402
+from ro_economic_ui import register_ro_economic_ui  # noqa: E402
 
 register_ccro_runtime(app, CALCS)
 
@@ -28,3 +31,17 @@ register_ccro_runtime(app, CALCS)
 # is explicitly enabled. Native attestation verifiers will be injected here
 # when the signed iOS and Android shells are introduced.
 init_mobile_access(app)
+
+# Normalize heterogeneous solved pump-duty fields before the RO economics routes
+# are registered. This prevents aggregate electrical duty from being counted on
+# top of component duties and preserves parallel pump-bank unit counts when the
+# shared pump engine propagates them. This adapter affects CAPEX interpretation
+# only; membrane, pump-performance, chemistry, CCRO, and legacy economics remain
+# authoritative and unchanged.
+install_ro_economic_pump_adapter(ro_economic_summary)
+
+# RO-scope CAPEX/OPEX and its standardized Total Economic Design handoff are
+# additive consumers of solved engineering results. Preserve Alpha's existing
+# economics entitlement pattern through the canonical _require_feature guard.
+ro_economic_summary.register_ro_economic_summary(app)
+register_ro_economic_ui(app, _require_feature)
