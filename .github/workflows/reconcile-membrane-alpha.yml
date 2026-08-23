@@ -1,0 +1,183 @@
+name: Reconcile Validated Membrane Milestone To Alpha Candidate
+
+on:
+  push:
+    branches:
+      - promotion/membrane-alpha-769c
+
+permissions:
+  contents: write
+
+jobs:
+  reconcile:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      ALPHA_BASE: 9f9244b9f4550b5f6b4cfc49772d20a3cc38c45e
+      RO_BASE: 664e1c8d3762373c690f9aa8ea1cd2825d232aa2
+      MEMBRANE_MILESTONE: 769c83d00136ab26f563e04c6c61b5748591465b
+    steps:
+      - name: Checkout Alpha-based promotion branch
+        uses: actions/checkout@v5
+        with:
+          ref: promotion/membrane-alpha-769c
+          fetch-depth: 0
+
+      - name: Verify immutable inputs
+        run: |
+          set -euo pipefail
+          git fetch origin alpha app/total-ro-design
+          git merge-base --is-ancestor "$ALPHA_BASE" HEAD
+          test "$(git rev-parse origin/alpha)" = "$ALPHA_BASE"
+          test "$(git rev-parse origin/app/total-ro-design)" = "$MEMBRANE_MILESTONE"
+          test "$(git rev-parse "$RO_BASE")" = "$RO_BASE"
+          echo "PASS - Alpha and validated Total RO membrane milestone are unchanged"
+
+      - name: Replay membrane-only milestone onto current Alpha
+        run: |
+          set -euo pipefail
+          git checkout "$MEMBRANE_MILESTONE" -- \
+            membrane_db.py \
+            calculations.py \
+            data/membranes \
+            data/membrane_spec_manifest.json \
+            data/membrane_spec_sources.json \
+            static/membrane_catalog_ui.js \
+            static/membrane_specs \
+            scripts/validate_membrane_catalog.py \
+            tests/test_shared_membrane_catalog_integration.py
+
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('templates/index.html')
+          text=p.read_text(encoding='utf-8')
+          tag="<script src=\"{{ url_for('static', filename='membrane_catalog_ui.js') }}\"></script>"
+          if tag not in text:
+              anchor="<script src=\"{{ url_for('static', filename='app.js') }}\"></script>"
+              if anchor not in text:
+                  raise SystemExit('Current Alpha template app.js anchor not found')
+              text=text.replace(anchor, anchor+'\n'+tag, 1)
+              p.write_text(text,encoding='utf-8')
+          PY
+
+          # Temporary workflow must never enter Alpha.
+          git rm .github/workflows/reconcile-membrane-alpha.yml
+
+      - name: Verify reconciliation scope
+        run: |
+          set -euo pipefail
+          changed="$(git diff --name-only "$ALPHA_BASE")"
+          echo "$changed"
+          for forbidden in app.py wsgi.py auth.py water_chemistry.py chemistry_analysis.py economics.py pump_db.py vcmp_pump.py hhecp_pump.py pd_pump.py shared_pump_engine.py ccro_runtime.py ro_economic_summary_v1.py ro_economic_pump_adapter.py mobile_access.py; do
+            if printf '%s\n' "$changed" | grep -qx "$forbidden"; then
+              echo "ERROR: unrelated Alpha architecture file changed: $forbidden" >&2
+              exit 1
+            fi
+          done
+          test "$(git show "$ALPHA_BASE":calculations.py | git hash-object --stdin)" = "$(git show "$RO_BASE":calculations.py | git hash-object --stdin)"
+          echo "PASS - calculations.py Alpha pre-membrane baseline exactly matches validated RO baseline"
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Validate catalog and full current Alpha test suite
+        run: |
+          set -euo pipefail
+          python scripts/validate_membrane_catalog.py
+          python -m unittest discover -s tests -v
+
+      - name: Verify legacy membrane numerical invariance
+        run: |
+          set -euo pipefail
+          git worktree add --detach /tmp/ro-before "$RO_BASE"
+          (cd /tmp/ro-before && PYTHONPATH=. python - <<'PY' > /tmp/base_coefficients.json
+          import json, membrane_db, calculations
+          out={}
+          for row in membrane_db.MEMBRANES:
+              if not row.get('calculation_enabled',True): continue
+              rid=row['record_id']; a,b=calculations._membrane_model_coefficients(membrane_db.get_membrane(rid))
+              out[rid]={'a':float(a),'b':float(b)}
+          print(json.dumps(out,sort_keys=True))
+          PY
+          )
+          python - <<'PY'
+          import json, membrane_db, calculations
+          baseline=json.load(open('/tmp/base_coefficients.json'))
+          diffs=[]
+          for rid,before in baseline.items():
+              a,b=calculations._membrane_model_coefficients(membrane_db.get_membrane(rid))
+              if abs(a-before['a'])>1e-10 or abs(b-before['b'])>1e-10:
+                  diffs.append((rid,before['a'],a,before['b'],b))
+          print('LEGACY_MEMBRANES_COMPARED=',len(baseline))
+          print('NUMERICAL_DIFFERENCES=',len(diffs))
+          assert not diffs, diffs[:10]
+          PY
+
+      - name: Verify NanoH2O aliases, TRISEP A/B, catalog-only blocking, hybrid and report identity
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import inspect
+          import membrane_db, calculations
+
+          groups=membrane_db.grouped_membranes(suite_app='total-ro-design')
+          assert len(groups.get('RO',[]))==246
+          assert len(groups.get('NF',[]))==44
+          assert membrane_db.META['metadata']['duplicates_removed']==10
+
+          nano=next(r for r in membrane_db.MEMBRANES if r.get('manufacturer')=='NanoH2O' and r.get('calculation_enabled',True))
+          suffix=nano['record_id'].split('|',1)[1]
+          for legacy in ('LG Water Solutions','LG NanoH2O','LG Chem Water Solutions'):
+              assert membrane_db.get_membrane(legacy+'|'+suffix)['record_id']==nano['record_id']
+
+          trisep=[r for r in membrane_db.MEMBRANES if r.get('manufacturer')=='TRISEP']
+          ready=[r for r in trisep if r.get('calculation_enabled',True)]
+          blocked=[r for r in trisep if not r.get('calculation_enabled',True)]
+          assert len(trisep)==47 and len(ready)==39 and len(blocked)==8
+          for r in ready:
+              a,b=calculations._membrane_model_coefficients(membrane_db.get_membrane(r['record_id']))
+              assert abs(a-float(r['specific_flux_A_app_lmh_bar']))<1e-12
+              assert abs(b-float(r['salt_permeability_B_lmh']))<1e-12
+          for r in blocked:
+              try: membrane_db.get_membrane(r['record_id'])
+              except ValueError: pass
+              else: raise AssertionError(r['record_id'])
+
+          ro_ready=[r for r in membrane_db.MEMBRANES if r.get('calculation_enabled',True) and str(r.get('membrane_type','RO')).upper()=='RO']
+          first=next(r for r in ro_ready if r.get('manufacturer')=='NanoH2O')
+          second=next(r for r in ro_ready if r['record_id']!=first['record_id'] and float(r.get('max_operating_pressure_bar') or 0)>=20)
+          recipe=[first['record_id'],second['record_id']]
+          funcs=[fn for _,fn in inspect.getmembers(calculations,inspect.isfunction) if 'Element-to-element clean RO stage calculation' in (fn.__doc__ or '')]
+          assert len(funcs)==1
+          fn=funcs[0]; sig=inspect.signature(fn)
+          values={'membrane_id':recipe[0],'vessels':10,'elements_per_vessel':2,'q_feed_m3h':100.0,'feed_flow_m3h':100.0,'feed_m3h':100.0,'p_feed_bar':20.0,'feed_pressure_bar':20.0,'membrane_pressure_bar':20.0,'feed_tds_ppm':2000.0,'target_recovery':0.10,'recovery':0.10,'permeate_pressure_bar':0.0,'temperature_c':25.0,'feed_ionic_strength':None,'datasheet_max_dp_per_element_bar':1.0,'feed_composition':None,'feed_ph':7.6,'water_mode':'tds','fouling_factor':1.0,'salt_passage_factor':1.0,'feed_carbonate_state':None,'resolve_carbonate_streams':False,'membrane_recipe':recipe}
+          kwargs={k:values[k] for k in sig.parameters if k in values}
+          missing=[k for k,p in sig.parameters.items() if p.default is inspect._empty and k not in kwargs]
+          assert not missing,(sig,missing)
+          result=fn(**kwargs)
+          assert result['hybrid_membrane_design'] is True
+          assert result['membrane_manufacturer']=='Hybrid'
+          assert result['element_results'][0]['membrane_manufacturer']=='NanoH2O'
+          assert result['element_results'][0]['membrane_model']==first['model']
+          assert result['element_results'][1]['membrane_model']==second['model']
+
+          js=Path('static/membrane_catalog_ui.js').read_text()
+          assert "const order = ['RO', 'NF']" in js and 'catalog only' in js
+          assert 'membrane_catalog_ui.js' in Path('templates/index.html').read_text()
+          assert 'mobile.js' in Path('templates/index.html').read_text()
+          appjs=Path('static/app.js').read_text()
+          assert 'stage${i}_membrane_manufacturer' in appjs and 'stage${i}_membrane_model' in appjs
+          print('PASS - shared membrane Alpha integration contract')
+          PY
+
+      - name: Commit validated Alpha candidate
+        run: |
+          set -euo pipefail
+          git config user.name totalrodesign
+          git config user.email admin@totalrodesign.com
+          git add -A
+          git commit -m "Reconcile validated shared membrane catalog into Alpha" -m "Replay only the validated membrane milestone onto current Alpha, preserving Suite Core, RO Economics, CCRO, shared pump, mobile/PWA, runtime chemistry, auth/project and deployment architecture."
+          git push origin HEAD:promotion/membrane-alpha-769c
