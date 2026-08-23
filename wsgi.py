@@ -20,6 +20,10 @@ CHEMISTRY_UPGRADE = install_runtime_chemistry()
 
 from app import app, CALCS, _require_feature  # noqa: E402
 from ccro_runtime import register_ccro_runtime  # noqa: E402
+from batch_ro_runtime import register_batch_ro_runtime  # noqa: E402
+import ro_customer_surface as ro_customer_surface_module  # noqa: E402
+from ro_customer_surface import register_ro_customer_surface  # noqa: E402
+from ro_suite_ui_contract import register_ro_suite_ui_contract  # noqa: E402
 from mobile_access import init_mobile_access  # noqa: E402
 from zld_integration import register_total_zld_design  # noqa: E402
 import ro_economic_summary_v1 as ro_economic_summary  # noqa: E402
@@ -29,7 +33,22 @@ import suite_metrics as suite_metrics_module  # noqa: E402
 from suite_metrics import register_suite_metrics  # noqa: E402
 from suite_metrics_audit import apply_suite_metrics_audit_corrections  # noqa: E402
 
+# Total RO specialist configurations are registered against the current CALCS
+# registry without replacing conventional RO, chemistry, project, or Suite
+# services. CCRO and Batch RO remain process configurations inside Total RO.
 register_ccro_runtime(app, CALCS)
+register_batch_ro_runtime(app, CALCS)
+
+# Suite Core is the authoritative owner of feedback transport/storage/workflow.
+# The validated RO customer-surface module also contains a legacy issue-report
+# interceptor, so disable that interceptor at this integration boundary while
+# retaining the RO-owned customer-safe JavaScript/API/report sanitization.
+ro_customer_surface_module._neutral_issue_report = lambda _app: None
+register_ro_customer_surface(app)
+
+# Adopt the validated non-structural RO UI/UX adapter. The mature RO template
+# remains authoritative; this does not create a second Suite/project shell.
+register_ro_suite_ui_contract(app)
 
 # The phone-browser gate is disabled unless TOTALRO_REQUIRE_MOBILE_APP_ON_PHONE
 # is explicitly enabled. Native attestation verifiers will be injected here

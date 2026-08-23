@@ -8,9 +8,21 @@
   window.__TOTALRO_CCRO_ADDON__={version:ADDON_VERSION};
 
   function register(){
-    // Fail visibly if a future TROD build removes one of the stable integration hooks.
-    const required=['FEATURE_REGISTRY','MODE_FEATURE','WORKSPACE_META','defaults','sections','processModeConfigured','renderFields','changeMode','processPerformanceBody'];
-    const missing=required.filter(name=>{try{return typeof eval(name)==='undefined'}catch(_){return true}});
+    // Latest Total RO Design exposes these host hooks as top-level lexical
+    // bindings (const/let). Probe them directly rather than through nested
+    // eval(), which can falsely report valid cross-script lexical bindings as
+    // missing. A future incompatible host still fails visibly before CCRO
+    // mutates any host state.
+    const missing=[];
+    if(typeof FEATURE_REGISTRY==='undefined')missing.push('FEATURE_REGISTRY');
+    if(typeof MODE_FEATURE==='undefined')missing.push('MODE_FEATURE');
+    if(typeof WORKSPACE_META==='undefined')missing.push('WORKSPACE_META');
+    if(typeof defaults==='undefined')missing.push('defaults');
+    if(typeof sections==='undefined')missing.push('sections');
+    if(typeof processModeConfigured==='undefined')missing.push('processModeConfigured');
+    if(typeof renderFields==='undefined')missing.push('renderFields');
+    if(typeof changeMode==='undefined')missing.push('changeMode');
+    if(typeof processPerformanceBody==='undefined')missing.push('processPerformanceBody');
     if(missing.length){console.error('CCRO add-on not activated; incompatible Total RO Design UI hooks:',missing);return;}
 
     embeddedChemistryStreamByMode.ccro='concentrate';
