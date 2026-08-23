@@ -1,0 +1,31 @@
+# /etc/systemd/system/totalbiodesign.service
+[Unit]
+Description=Total Bio Design service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=totalrodesign
+Group=totalrodesign
+WorkingDirectory=/opt/totalbiodesign
+ExecStart=/opt/totalbiodesign/totalbiodesign -no-browser -port 8081
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+UMask=0027
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

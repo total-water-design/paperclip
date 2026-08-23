@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en" data-theme="light" data-theme-preference="system">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="theme-color" content="#0E7A55" />
+  <meta name="color-scheme" content="light dark" />
+  <title>Total Bio Design — Biological Wastewater Treatment</title>
+  <link rel="icon" href="assets/icon.png" />
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="suite_contract_v1.css" />
+  <link rel="stylesheet" href="suite_contract_v1_responsive.css" />
+</head>
+<body class="twds-application bio-application" style="--twds-app-accent:#0E7A55">
+  <div id="appShell" class="twds-app-shell bio-app-shell" data-twds-app-shell data-app-id="bio">
+    <header class="twds-app-header bio-suite-header">
+      <div class="twds-app-header__identity">
+        <a class="suite-master-lockup" href="/suite" aria-label="Return to Total Water Design Suite">
+          <img src="/static/branding/suite/total_water_design_suite_icon_64.png" alt="" onerror="this.hidden=true" />
+          <span><small>TOTAL WATER</small><strong>DESIGN SUITE</strong></span>
+        </a>
+        <span class="twds-app-header__divider" aria-hidden="true"></span>
+        <div class="twds-app-identity">
+          <img class="twds-app-identity__icon" src="assets/icon.svg" alt="" />
+          <div class="twds-app-identity__copy"><strong>Total Bio Design</strong><span>Part of the Total Water Design Suite</span></div>
+          <span class="twds-chip twds-chip--neutral">v0.2.3</span>
+        </div>
+      </div>
+      <div class="twds-app-header__actions">
+        <label class="twds-theme-control"><span>Appearance</span><select id="themeSelect" data-twds-theme-select aria-label="Appearance"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
+        <details id="accountMenu" class="twds-account-menu" hidden>
+          <summary><span id="accountAvatar" class="twds-account-avatar" aria-hidden="true">U</span><span><strong id="accountName">Account</strong><small id="accountTier">Suite user</small></span></summary>
+          <div class="twds-account-menu__panel"><div class="twds-account-menu__identity"><strong id="accountPanelName">Account</strong><span id="accountEmail"></span><small id="accountRole"></small></div><a href="/account">My account</a><a href="/suite">Suite dashboard</a></div>
+        </details>
+        <button class="twds-button twds-button--quiet" id="helpBtn" type="button">Help</button>
+        <button class="twds-button twds-button--quiet" id="exitBtn" type="button">Suite</button>
+      </div>
+    </header>
+
+    <section class="twds-project-bar bio-project-bar" data-twds-project-bar>
+      <button type="button" class="twds-project-bar__identity project-pill" title="Project information and rename">
+        <span class="twds-project-bar__eyebrow">PROJECT</span>
+        <strong id="projectName" data-twds-project-name>Untitled Biological Design</strong>
+        <small><span id="projectIdText" data-twds-project-id>TBIO · not yet saved</span><span id="projectRevisionText" data-twds-project-revision>Rev 0</span><span id="unsavedIndicator" class="twds-unsaved" data-twds-unsaved hidden>Unsaved changes</span></small>
+      </button>
+      <div class="twds-project-bar__actions" aria-label="Project controls">
+        <button type="button" class="twds-button twds-button--quiet" id="newBtn">New Project</button>
+        <button type="button" class="twds-button twds-button--quiet" id="openBtn">Project Library</button>
+        <button type="button" class="twds-button twds-button--secondary" id="saveBtn">Save</button>
+        <details class="twds-project-more"><summary class="twds-button twds-button--quiet">More</summary><div>
+          <button type="button" id="saveAsBtn">Save As</button>
+          <button type="button" id="revisionBtn" hidden>Revision</button>
+          <button type="button" id="duplicateBtn">Duplicate</button>
+          <button type="button" id="sendToROBtn" hidden>Handoff</button>
+          <button type="button" id="printBtn">Report</button>
+        </div></details>
+      </div>
+      <input type="file" id="fileOpen" accept=".tbd,.json" hidden />
+    </section>
+
+    <div id="adminTierPreview" class="admin-tier-preview" hidden>
+      <div class="admin-tier-preview-label"><span>ADMIN TIER PREVIEW</span><strong id="adminTierPreviewStatus">Viewing as Platinum</strong></div>
+      <div class="admin-tier-preview-buttons" role="group" aria-label="Administrator Bio subscription tier preview"><button type="button" data-bio-tier-preview="entry">Entry</button><button type="button" data-bio-tier-preview="silver">Silver</button><button type="button" data-bio-tier-preview="gold">Gold</button><button type="button" data-bio-tier-preview="platinum">Platinum</button></div>
+    </div>
+
+    <nav class="twds-workspace-nav bio-workspace-nav" aria-label="Bio workspace navigation">
+      <button type="button" class="active" data-workspace-target="MarketIntake" aria-current="page">Inputs</button>
+      <button type="button" data-workspace-target="DesignBasis">Design</button>
+      <button type="button" data-workspace-target="Dashboard">Results</button>
+      <button type="button" data-workspace-target="MassBalance">Detailed Results</button>
+      <button type="button" data-workspace-target="CompactReport">Report</button>
+    </nav>
+
+    <section class="bio-calculation-bar" aria-label="Calculation workflow">
+      <div class="twds-workflow-steps"><span>Inputs</span><i>→</i><span>Validate</span><i>→</i><span>Calculate</span><i>→</i><span>Converge</span><i>→</i><span>Results</span><i>→</i><span>Report</span></div>
+      <div class="bio-calc-actions"><span class="calc-state"><span id="calcDot" class="status-dot ok"></span><span id="calcState">Calculate</span></span><button type="button" id="calculateBtn" class="twds-button twds-button--primary twds-calculate" data-twds-calculate-state="idle"><span id="calculateBtnLabel" data-twds-calculate-label>Calculate</span><span class="twds-calculate__spinner" aria-hidden="true"></span></button></div>
+      <div id="calculationLive" class="twds-calculation-live" aria-live="polite" aria-atomic="true"></div>
+    </section>
+
+    <div class="twds-app-body bio-app-body">
+      <aside class="sidebar twds-app-nav" aria-label="Total Bio Design engineering navigation">
+        <a class="twds-suite-return" href="/suite">← Suite</a>
+        <div class="side-header twds-app-nav__heading"><span>APPLICATION</span><strong>Biological Treatment</strong><small>Total Bio Design</small></div>
+        <nav id="nav"></nav>
+        <div class="side-footer"><div class="version">Total Bio Design v0.2.3</div><div class="suite-endorsement">Part of the Total Water Design Suite</div></div>
+      </aside>
+      <section class="twds-app-main bio-main-shell">
+        <div id="globalGuidance" class="bio-global-guidance" aria-live="polite"></div>
+        <main class="main twds-workspace-content" id="main"></main>
+      </section>
+    </div>
+  </div>
+
+  <div id="toast"></div>
+  <div id="modal" class="modal hidden" role="dialog" aria-modal="true"><div class="modal-card"><button id="modalClose" class="modal-close">×</button><img src="assets/icon.png" class="about-icon" alt="" /><h2>Total Bio Design</h2><p>Biological wastewater treatment design, process mass balance, residuals handling, compliance review, and cross-application handoff.</p><p class="muted"><strong>Part of the Total Water Design Suite.</strong> Steady-state design tool; project-specific engineering review remains required.</p></div></div>
+  <div id="networkModal" class="network-modal hidden"></div>
+
+  <dialog id="handoffDialog" class="bio-handoff-dialog" aria-labelledby="handoffTitle">
+    <div class="bio-handoff-head"><div><span>HANDOFF</span><h2 id="handoffTitle">Send biological effluent to Total RO Design</h2></div><button type="button" id="handoffCloseBtn" aria-label="Close handoff">×</button></div>
+    <div class="twds-handoff-card"><div class="twds-handoff-card__route"><div><span>Source</span><strong>Total Bio Design</strong><small id="handoffSourceProject">Current project</small></div><span class="twds-handoff-card__arrow" aria-hidden="true">→</span><div><span>Receiving application</span><strong>Total RO Design</strong><small>Biological treatment final effluent</small></div></div><dl><div><dt>Lineage</dt><dd id="handoffLineage">Pending save</dd></div><div><dt>Inherited values</dt><dd>Flow, temperature, pH + biological quality</dd></div></dl></div>
+    <div id="handoffStreamSummary" class="handoff-stream-summary"></div>
+    <p class="handoff-note">Transferred biological effluent values retain lineage. Complete ionic chemistry, salinity, scaling species and membrane design remain Total RO Design inputs.</p>
+    <div class="bio-handoff-actions"><button type="button" class="twds-button twds-button--quiet" id="cancelHandoffBtn">Cancel</button><button type="button" class="twds-button twds-button--primary" id="confirmHandoffBtn">Create Handoff</button></div>
+  </dialog>
+
+  <script src="engine.js"></script>
+  <script src="unit_catalog.js"></script>
+  <script src="process_network.js"></script>
+  <script src="compliance_advisor.js"></script>
+  <script src="app.js"></script>
+  <script src="suite_contract_adapter.js"></script>
+</body>
+</html>

@@ -1,0 +1,19 @@
+/* Responsive corrections from rendered UI validation. No engineering behavior. */
+.bio-app-body>.sidebar .side-header{display:flex!important;flex-direction:column!important;align-items:flex-start!important;gap:2px!important;padding:10px!important}
+.bio-app-body>.sidebar .side-header>span,.bio-app-body>.sidebar .side-header>strong,.bio-app-body>.sidebar .side-header>small{display:block!important;width:100%!important;line-height:1.25!important}
+.bio-app-body>.sidebar .side-header>span{font-size:8px!important;letter-spacing:.12em!important;font-weight:850!important}
+.bio-app-body>.sidebar .side-header>strong{font-size:13px!important}
+.bio-app-body>.sidebar .side-header>small{font-size:9px!important}
+@media(max-width:720px){
+  .suite-master-lockup{min-width:max-content;gap:5px}
+  .suite-master-lockup span{display:flex!important;flex-direction:column!important;line-height:.95!important}
+  .suite-master-lockup small{display:block!important;font-size:6px!important;letter-spacing:.10em!important}
+  .suite-master-lockup strong{display:block!important;font-size:10px!important}
+  .bio-app-body>.sidebar #nav>.nav-group{display:none!important}
+}
+@media(max-width:480px){
+  .twds-app-header__identity{gap:6px!important}
+  .suite-master-lockup strong{font-size:9px!important}
+  .twds-app-identity__copy strong{font-size:11px!important}
+  .twds-chip{padding:3px 5px!important;font-size:7px!important}
+}
