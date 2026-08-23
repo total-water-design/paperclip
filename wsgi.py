@@ -21,6 +21,7 @@ CHEMISTRY_UPGRADE = install_runtime_chemistry()
 from app import app, CALCS, _require_feature  # noqa: E402
 from ccro_runtime import register_ccro_runtime  # noqa: E402
 from mobile_access import init_mobile_access  # noqa: E402
+from zld_integration import register_total_zld_design  # noqa: E402
 import ro_economic_summary_v1 as ro_economic_summary  # noqa: E402
 from ro_economic_pump_adapter import install_ro_economic_pump_adapter  # noqa: E402
 from ro_economic_ui import register_ro_economic_ui  # noqa: E402
@@ -31,6 +32,12 @@ register_ccro_runtime(app, CALCS)
 # is explicitly enabled. Native attestation verifiers will be injected here
 # when the signed iOS and Android shells are introduced.
 init_mobile_access(app)
+
+# Total ZLD Design remains an administrator engineering preview while the
+# specialist application is in development. Registration is additive and reuses
+# the Suite authentication/entitlement infrastructure without replacing RO or
+# shared chemistry runtime wiring.
+register_total_zld_design(app)
 
 # Normalize heterogeneous solved pump-duty fields before the RO economics routes
 # are registered. This prevents aggregate electrical duty from being counted on
