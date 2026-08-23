@@ -22,11 +22,17 @@ from app import app, CALCS, _require_feature  # noqa: E402
 from ccro_runtime import register_ccro_runtime  # noqa: E402
 from mobile_access import init_mobile_access  # noqa: E402
 from zld_integration import register_total_zld_design  # noqa: E402
+from ro_suite_ui_contract import register_ro_suite_ui_contract  # noqa: E402
 import ro_economic_summary_v1 as ro_economic_summary  # noqa: E402
 from ro_economic_pump_adapter import install_ro_economic_pump_adapter  # noqa: E402
 from ro_economic_ui import register_ro_economic_ui  # noqa: E402
 
 register_ccro_runtime(app, CALCS)
+
+# Suite Core UI/UX Contract v1.0 progressive adoption for Total RO Design.
+# This augments the mature RO shell and injects the validated CCRO UI add-on
+# without replacing specialist calculations or current Alpha runtime wiring.
+register_ro_suite_ui_contract(app)
 
 # The phone-browser gate is disabled unless TOTALRO_REQUIRE_MOBILE_APP_ON_PHONE
 # is explicitly enabled. Native attestation verifiers will be injected here
