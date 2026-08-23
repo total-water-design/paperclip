@@ -1,0 +1,104 @@
+{
+  "documents": {
+    "trisep-8p5": {
+      "current_path": "static/membrane_specs/trisep-8p5/current.pdf",
+      "current_sha256": "9618bfa03b7c82357fb8b6f31038c3b010760519fd572bcc4092f8093b8bcfa4",
+      "manufacturer": "TRISEP",
+      "resolved_source_url": "https://water-membrane-solutions.mann-hummel.com/content/dam/water-membrane-solutions/download/technical-data-sheets/trisep/trisep-8.5-inch-diameter-elements-data-sheet.pdf/_jcr_content/renditions/original./trisep-8.5-inch-diameter-elements-data-sheet.pdf",
+      "title": "TRISEP 8.5 Inch Diameter Elements",
+      "uploaded_baseline_sha256": "9618bfa03b7c82357fb8b6f31038c3b010760519fd572bcc4092f8093b8bcfa4",
+      "versions": ["9618bfa03b7c82357fb8b6f31038c3b010760519fd572bcc4092f8093b8bcfa4"]
+    },
+    "trisep-acm2": {
+      "current_path": "static/membrane_specs/trisep-acm2/current.pdf",
+      "current_sha256": "c6a259dbd319b32d884905e6e82ee583c760ba61e1a90b73cc38e9e8902b6c66",
+      "manufacturer": "TRISEP",
+      "resolved_source_url": "https://water-membrane-solutions.mann-hummel.com/content/dam/water-membrane-solutions/download/technical-data-sheets/trisep/trisep-acm2-data-sheet.pdf/_jcr_content/renditions/original./trisep-acm2-data-sheet.pdf",
+      "title": "TRISEP ACM2 High Rejection Brackish Water RO Elements",
+      "uploaded_baseline_sha256": "c6a259dbd319b32d884905e6e82ee583c760ba61e1a90b73cc38e9e8902b6c66",
+      "versions": ["c6a259dbd319b32d884905e6e82ee583c760ba61e1a90b73cc38e9e8902b6c66"]
+    },
+    "trisep-acm3": {
+      "current_path": "static/membrane_specs/trisep-acm3/current.pdf",
+      "current_sha256": "c006e1f5edeef4acc05e7dddbbf6314bda27f411b194434103ff2ad779a24513",
+      "manufacturer": "TRISEP",
+      "resolved_source_url": "https://water-membrane-solutions.mann-hummel.com/content/dam/water-membrane-solutions/download/technical-data-sheets/trisep/trisep-acm3-data-sheet.pdf/_jcr_content/renditions/original./trisep-acm3-data-sheet.pdf",
+      "title": "TRISEP ACM3 Low Energy Brackish Water RO Elements",
+      "uploaded_baseline_sha256": "c006e1f5edeef4acc05e7dddbbf6314bda27f411b194434103ff2ad779a24513",
+      "versions": ["c006e1f5edeef4acc05e7dddbbf6314bda27f411b194434103ff2ad779a24513"]
+    },
+    "trisep-acm4": {
+      "current_path": "static/membrane_specs/trisep-acm4/current.pdf",
+      "current_sha256": "2714803498dfd246bc9ed0e2a9be46752d5944a649b58f6bcbd30686d97fdbb8",
+      "manufacturer": "TRISEP",
+      "resolved_source_url": "https://water-membrane-solutions.mann-hummel.com/content/dam/water-membrane-solutions/download/technical-data-sheets/trisep/trisep-acm4-data-sheet.pdf/_jcr_content/renditions/original./trisep-acm4-data-sheet.pdf",
+      "title": "TRISEP ACM4 Low Energy Brackish Water RO Elements",
+      "uploaded_baseline_sha256": "2714803498dfd246bc9ed0e2a9be46752d5944a649b58f6bcbd30686d97fdbb8",
+      "versions": ["2714803498dfd246bc9ed0e2a9be46752d5944a649b58f6bcbd30686d97fdbb8"]
+    },
+    "trisep-dialysis": {
+      "current_path": "static/membrane_specs/trisep-dialysis/current.pdf",
+      "current_sha256": "3af9f17519aa0f6422cf3b3727bd3dc26a206a8173a2b8a33448ebf36f15d975",
+      "manufacturer": "TRISEP",
+      "resolved_source_url": "https://water-membrane-solutions.mann-hummel.com/content/dam/water-membrane-solutions/download/technical-data-sheets/trisep/Dialysis-Pure-RO.pdf/_jcr_content/renditions/original./Dialysis-Pure-RO.pdf",
+      "title": "TRISEP DS Dialysis Pure RO",
+      "uploaded_baseline_sha256": "3af9f17519aa0f6422cf3b3727bd3dc26a206a8173a2b8a33448ebf36f15d975",
+      "versions": ["3af9f17519aa0f6422cf3b3727bd3dc26a206a8173a2b8a33448ebf36f15d975"]
+    },
+    "trisep-ds-sanitary": {
+      "current_path": "static/membrane_specs/trisep-ds-sanitary/current.pdf",
+      "current_sha256": "1c73087af79b0b244041e1f21a845ec59444ec9b9be27d2f31ecf3d6bdbe26c3",
+      "manufacturer": "TRISEP",
+      "resolved_source_url": "https://water-membrane-solutions.mann-hummel.com/content/dam/water-membrane-solutions/download/brochures/TRISEP%20DS%20Sanitary%20Elements.pdf/_jcr_content/renditions/original./TRISEP%20DS%20Sanitary%20Elements.pdf",
+      "title": "TRISEP DS Sanitary Elements",
+      "uploaded_baseline_sha256": "1c73087af79b0b244041e1f21a845ec59444ec9b9be27d2f31ecf3d6bdbe26c3",
+      "versions": ["1c73087af79b0b244041e1f21a845ec59444ec9b9be27d2f31ecf3d6bdbe26c3"]
+    },
+    "trisep-ds-ts40-8038-65": {
+      "current_path": "static/membrane_specs/trisep-ds-ts40-8038-65/current.pdf",
+      "current_sha256": "d6b1a3ba399ec449ba84fb91740e050285059c3ccc8dd41b67243498d5ee423c",
+      "manufacturer": "TRISEP",
+      "resolved_source_url": "https://water-membrane-solutions.mann-hummel.com/content/dam/water-membrane-solutions/download/technical-data-sheets/trisep/TRISEP%20DS%20TS40%208038-65.pdf/_jcr_content/renditions/original./TRISEP%20DS%20TS40%208038-65.pdf",
+      "title": "TRISEP DS TS40 8038-65",
+      "uploaded_baseline_sha256": "d6b1a3ba399ec449ba84fb91740e050285059c3ccc8dd41b67243498d5ee423c",
+      "versions": ["d6b1a3ba399ec449ba84fb91740e050285059c3ccc8dd41b67243498d5ee423c"]
+    },
+    "trisep-sb20": {
+      "current_path": "static/membrane_specs/trisep-sb20/current.pdf",
+      "current_sha256": "2cf90e81648b6c8f9598a0aa5aa12797d91e18ad995d374d104f78ff5644df59",
+      "manufacturer": "TRISEP",
+      "resolved_source_url": "https://water-membrane-solutions.mann-hummel.com/content/dam/water-membrane-solutions/download/technical-data-sheets/trisep/trisep-sb20-data-sheet.pdf/_jcr_content/renditions/original./trisep-sb20-data-sheet.pdf",
+      "title": "TRISEP SB20 Cellulose Acetate RO Elements",
+      "uploaded_baseline_sha256": "2cf90e81648b6c8f9598a0aa5aa12797d91e18ad995d374d104f78ff5644df59",
+      "versions": ["2cf90e81648b6c8f9598a0aa5aa12797d91e18ad995d374d104f78ff5644df59"]
+    },
+    "trisep-sb50": {
+      "current_path": "static/membrane_specs/trisep-sb50/current.pdf",
+      "current_sha256": "05fd55675182b4219bd67e1f0f1a655c400cf366101369148248b66447bc1aa4",
+      "manufacturer": "TRISEP",
+      "resolved_source_url": "https://water-membrane-solutions.mann-hummel.com/content/dam/water-membrane-solutions/download/technical-data-sheets/trisep/trisep-sb50-data-sheet.pdf/_jcr_content/renditions/original./trisep-sb50-data-sheet.pdf",
+      "title": "TRISEP SB50 Cellulose Acetate RO Elements",
+      "uploaded_baseline_sha256": "05fd55675182b4219bd67e1f0f1a655c400cf366101369148248b66447bc1aa4",
+      "versions": ["05fd55675182b4219bd67e1f0f1a655c400cf366101369148248b66447bc1aa4"]
+    },
+    "trisep-upr": {
+      "current_path": "static/membrane_specs/trisep-upr/current.pdf",
+      "current_sha256": "9db670b360974c6d96aab3b4b323b93ada52dcff4a4975ece01dc39bc47bf04c",
+      "manufacturer": "TRISEP",
+      "resolved_source_url": "https://water-membrane-solutions.mann-hummel.com/content/dam/water-membrane-solutions/download/technical-data-sheets/trisep/trisep-upr-data-sheet.pdf/_jcr_content/renditions/original./trisep-upr-data-sheet.pdf",
+      "title": "TRISEP UPR Ultra-High Pressure Industrial Membrane Elements",
+      "uploaded_baseline_sha256": "9db670b360974c6d96aab3b4b323b93ada52dcff4a4975ece01dc39bc47bf04c",
+      "versions": ["9db670b360974c6d96aab3b4b323b93ada52dcff4a4975ece01dc39bc47bf04c"]
+    },
+    "trisep-x20": {
+      "current_path": "static/membrane_specs/trisep-x20/current.pdf",
+      "current_sha256": "24fd14e5bedbaf2694d0bc63fe3f735a43ee074fb4a4319dfbceaca9c61965ca",
+      "manufacturer": "TRISEP",
+      "resolved_source_url": "https://water-membrane-solutions.mann-hummel.com/content/dam/water-membrane-solutions/download/technical-data-sheets/trisep/TRISEP%20X20.pdf/_jcr_content/renditions/original./TRISEP%20X20.pdf",
+      "title": "TRISEP X-20 Low Fouling Brackish Water RO Elements",
+      "uploaded_baseline_sha256": "24fd14e5bedbaf2694d0bc63fe3f735a43ee074fb4a4319dfbceaca9c61965ca",
+      "versions": ["24fd14e5bedbaf2694d0bc63fe3f735a43ee074fb4a4319dfbceaca9c61965ca"]
+    }
+  },
+  "schema_version": "1.0.0"
+}
