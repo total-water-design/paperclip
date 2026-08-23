@@ -25,6 +25,9 @@ from zld_integration import register_total_zld_design  # noqa: E402
 import ro_economic_summary_v1 as ro_economic_summary  # noqa: E402
 from ro_economic_pump_adapter import install_ro_economic_pump_adapter  # noqa: E402
 from ro_economic_ui import register_ro_economic_ui  # noqa: E402
+import suite_metrics as suite_metrics_module  # noqa: E402
+from suite_metrics import register_suite_metrics  # noqa: E402
+from suite_metrics_audit import apply_suite_metrics_audit_corrections  # noqa: E402
 
 register_ccro_runtime(app, CALCS)
 
@@ -52,3 +55,9 @@ install_ro_economic_pump_adapter(ro_economic_summary)
 # economics entitlement pattern through the canonical _require_feature guard.
 ro_economic_summary.register_ro_economic_summary(app)
 register_ro_economic_ui(app, _require_feature)
+
+# Suite Metrics is registered last so all existing Alpha application, chemistry,
+# mobile, ZLD and economics wiring remains authoritative. Apply the audited
+# concurrency/hourly/host-identity corrections before installing the routes.
+apply_suite_metrics_audit_corrections(suite_metrics_module)
+register_suite_metrics(app)

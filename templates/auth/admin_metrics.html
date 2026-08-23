@@ -1,16 +1,160 @@
 {% extends "auth/admin_base.html" %}
 {% block title %}Metrics — Total Water Design Suite{% endblock %}
 {% block content %}
-<section class="admin-toolbar metrics-toolbar"><form method="get"><label><span>Window</span><select name="window" onchange="this.form.submit()">{% for v,l in [('24h','24 hours'),('7d','7 days'),('30d','30 days'),('90d','90 days'),('1y','1 year'),('all','All time')] %}<option value="{{v}}" {% if window==v %}selected{% endif %}>{{l}}</option>{% endfor %}</select></label></form></section>
-<section class="admin-metric-strip metrics-kpis">
-<div><span>Registered users</span><strong>{{ users }}</strong></div><div><span>Active users</span><strong>{{ active_users }}</strong></div><div><span>Sessions</span><strong>{{ sessions }}</strong></div><div><span>Calculations</span><strong>{{ calculations }}</strong></div><div><span>Failures</span><strong>{{ calc_failures }}</strong></div><div><span>CPU hours</span><strong>{{ '%.2f'|format(cpu_hours) }}</strong></div>
-</section>
-<div class="metrics-grid">
-<section class="metrics-card"><h3>Engagement</h3><dl><dt>Average session</dt><dd>{{ '%.1f'|format(avg_session_s/60) }} min</dd><dt>Median session</dt><dd>{{ '%.1f'|format(median_session_s/60) }} min</dd><dt>Average calculation runtime</dt><dd>{{ '%.2f'|format(avg_runtime_s) }} s</dd><dt>p95 runtime</dt><dd>{{ '%.2f'|format(p95_runtime_s) }} s</dd></dl></section>
-<section class="metrics-card"><h3>Project storage</h3><dl><dt>Saved revisions</dt><dd>{{ project_count }}</dd><dt>Snapshot storage</dt><dd>{{ '%.2f'|format(project_bytes/1048576) }} MB</dd><dt>Average/revision</dt><dd>{{ '%.1f'|format((project_bytes/(project_count if project_count else 1))/1024) }} KB</dd></dl></section>
-<section class="metrics-card"><h3>Application activity</h3><table><tr><th>Application</th><th>Events</th></tr>{% for k,v in app_counts|dictsort %}<tr><td>{{k}}</td><td>{{v}}</td></tr>{% endfor %}</table></section>
-<section class="metrics-card"><h3>Users by tier</h3><table><tr><th>Tier</th><th>Users</th></tr>{% for k,v in tier_counts|dictsort %}<tr><td>{{k|title}}</td><td>{{v}}</td></tr>{% endfor %}</table></section>
-<section class="metrics-card wide"><h3>Historical activity</h3><table><tr><th>Date</th><th>Events</th><th>Calculations</th><th>Failures</th><th>CPU hours</th></tr>{% for day,row in daily %}<tr><td>{{day}}</td><td>{{row.events}}</td><td>{{row.calculations}}</td><td>{{row.failures}}</td><td>{{'%.3f'|format(row.cpu_seconds/3600)}}</td></tr>{% endfor %}</table></section>
-<section class="metrics-card wide"><h3>Capacity projections</h3><p class="admin-debug-note">Directional estimates based on measured usage, not infrastructure guarantees.</p><table><tr><th>Concurrent users</th><th>Est. CPU h/day</th><th>Est. project storage</th></tr>{% for row in capacity %}<tr><td>{{row.concurrent_users}}</td><td>{{'%.2f'|format(row.estimated_cpu_hours_day)}}</td><td>{{'%.1f'|format(row.estimated_project_storage_mb)}} MB</td></tr>{% endfor %}</table></section>
+<link rel="stylesheet" href="{{ url_for('static', filename='admin_metrics.css') }}">
+<div id="metricsDashboard"
+     data-payload="{{ metrics_payload_json|forceescape }}"
+     data-live-url="{{ metrics_live_url|e }}">
+  <section class="admin-toolbar metrics-toolbar">
+    <div class="metrics-timezone">
+      <strong>{{ timezone_label }}</strong>
+      <span>All time-of-day charts use the New York clock and adjust automatically for EST/EDT.</span>
+    </div>
+    <form method="get">
+      <label><span>Analysis window</span>
+        <select name="window" onchange="this.form.submit()">
+          {% for v,l in [('24h','24 hours'),('7d','7 days'),('30d','30 days'),('90d','90 days'),('1y','1 year'),('all','All time')] %}
+          <option value="{{ v }}" {% if window==v %}selected{% endif %}>{{ l }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </form>
+  </section>
+
+  <section class="admin-metric-strip metrics-kpis">
+    <div class="metric-live"><span>Connected now</span><strong data-live-kpi="users">{{ connected_users }}</strong><small>{{ connected_sessions }} session{% if connected_sessions != 1 %}s{% endif %}</small></div>
+    <div><span>Peak connected 24h</span><strong>{{ peak_connected_24h }}</strong></div>
+    <div><span>Active users</span><strong>{{ active_users }}</strong><small>selected window</small></div>
+    <div><span>Registered</span><strong>{{ users }}</strong></div>
+    <div><span>Calculations</span><strong>{{ calculations }}</strong></div>
+    <div><span>Failures</span><strong>{{ calc_failures }}</strong></div>
+    <div><span>CPU hours</span><strong>{{ '%.2f'|format(cpu_hours) }}</strong></div>
+    <div><span>CPU pressure</span><strong data-live-kpi="cpu">{% if live_resource.cpu_percent is not none %}{{ '%.0f'|format(live_resource.cpu_percent) }}%{% else %}—{% endif %}</strong></div>
+    <div><span>Memory</span><strong data-live-kpi="memory">{% if live_resource.memory_percent is not none %}{{ '%.0f'|format(live_resource.memory_percent) }}%{% else %}—{% endif %}</strong></div>
+  </section>
+
+  <div class="metrics-grid">
+    <section class="metrics-card wide">
+      <div class="metrics-card-heading">
+        <div><h3>Usage by time of day</h3><p>Average and peak connected users by hour, normalized to {{ timezone_label }}.</p></div>
+        <span class="metrics-legend"><i class="legend-primary"></i>Average connected <i class="legend-secondary"></i>Peak connected</span>
+      </div>
+      <div class="metrics-chart-shell metrics-chart-tall"><canvas data-metrics-chart="hourly-users" aria-label="Connected users by Eastern hour"></canvas></div>
+    </section>
+
+    <section class="metrics-card wide">
+      <div class="metrics-card-heading">
+        <div><h3>Activity through the day</h3><p>Suite events and engineering calculations by Eastern hour.</p></div>
+        <span class="metrics-legend"><i class="legend-primary"></i>Events <i class="legend-secondary"></i>Calculations</span>
+      </div>
+      <div class="metrics-chart-shell"><canvas data-metrics-chart="hourly-events" aria-label="Events and calculations by Eastern hour"></canvas></div>
+    </section>
+
+    <section class="metrics-card">
+      <div class="metrics-card-heading">
+        <div><h3>Connected users — last 24 hours</h3><p>30-minute point-in-time concurrency estimate.</p></div>
+      </div>
+      <div class="metrics-chart-shell"><canvas data-metrics-chart="concurrency" aria-label="Connected users during the last 24 hours"></canvas></div>
+    </section>
+
+    <section class="metrics-card">
+      <div class="metrics-card-heading">
+        <div><h3>Daily active users</h3><p>Unique authenticated users with tracked activity each Eastern calendar day.</p></div>
+      </div>
+      <div class="metrics-chart-shell"><canvas data-metrics-chart="daily-active" aria-label="Daily active users"></canvas></div>
+    </section>
+
+    <section class="metrics-card wide capacity-card capacity-{{ capacity.status }}">
+      <div class="capacity-head">
+        <div>
+          <span class="capacity-eyebrow">Predictive infrastructure planning</span>
+          <h3>EC2 capacity recommendation</h3>
+          <p>{{ capacity.action }}</p>
+        </div>
+        <span class="capacity-status">{{ capacity.status|replace('_',' ')|title }}</span>
+      </div>
+
+      <div class="capacity-summary">
+        <div><span>Current host</span><strong>{{ capacity.current }}</strong></div>
+        <div><span>p95 CPU pressure</span><strong>{{ '%.1f'|format(capacity.p95_cpu) }}%</strong></div>
+        <div><span>p95 memory</span><strong>{{ '%.1f'|format(capacity.p95_memory) }}%</strong></div>
+        <div><span>Observed peak users</span><strong>{{ capacity.observed_peak }}</strong></div>
+        <div><span>8-week forecast peak</span><strong>{{ capacity.forecast_peak_8w }}</strong></div>
+        <div><span>Estimated safe concurrency</span><strong>{% if capacity.safe_concurrency %}{{ capacity.safe_concurrency }}{% else %}Collecting data{% endif %}</strong></div>
+      </div>
+
+      <div class="capacity-recommendation">
+        <div>
+          <span>Recommended next configuration</span>
+          <strong>{{ capacity.recommended_servers }} × {{ capacity.recommended_instance }}</strong>
+          <small>{{ capacity.recommended_vcpus }} vCPU / {{ capacity.recommended_memory_gb }} GiB RAM per server</small>
+        </div>
+        <div>
+          <span>When to act</span>
+          <strong>
+            {% if capacity.status == 'scale_now' %}Now
+            {% elif capacity.trigger_weeks is not none and capacity.trigger_weeks <= 8 %}Within ~{{ capacity.trigger_weeks }} week{% if capacity.trigger_weeks != 1 %}s{% endif %}
+            {% elif capacity.status == 'collecting_baseline' %}After baseline is established
+            {% else %}No 8-week trigger detected{% endif %}
+          </strong>
+          <small>Trigger: p95 CPU ≥ 70%, memory ≥ 80%, or forecast concurrency approaches measured headroom.</small>
+        </div>
+      </div>
+
+      <div class="metrics-chart-shell"><canvas data-metrics-chart="forecast" aria-label="Observed and forecast peak connected users"></canvas></div>
+      <p class="admin-debug-note"><strong>Model:</strong> {{ capacity.method_note }}</p>
+      <p class="admin-debug-note"><strong>Scale-out dependency:</strong> {{ capacity.architecture_note }}</p>
+    </section>
+
+    <section class="metrics-card">
+      <h3>Engagement</h3>
+      <dl>
+        <dt>Sessions in window</dt><dd>{{ sessions }}</dd>
+        <dt>Average session</dt><dd>{{ '%.1f'|format(avg_session_s/60) }} min</dd>
+        <dt>Median session</dt><dd>{{ '%.1f'|format(median_session_s/60) }} min</dd>
+        <dt>Average calculation runtime</dt><dd>{{ '%.2f'|format(avg_runtime_s) }} s</dd>
+        <dt>p95 calculation runtime</dt><dd>{{ '%.2f'|format(p95_runtime_s) }} s</dd>
+      </dl>
+    </section>
+
+    <section class="metrics-card">
+      <h3>Project storage</h3>
+      <dl>
+        <dt>Saved revisions</dt><dd>{{ project_count }}</dd>
+        <dt>Snapshot storage</dt><dd>{{ '%.2f'|format(project_bytes/1048576) }} MB</dd>
+        <dt>Average/revision</dt><dd>{{ '%.1f'|format((project_bytes/(project_count if project_count else 1))/1024) }} KB</dd>
+        <dt>Process memory now</dt><dd data-live-kpi="rss">{% if live_resource.process_memory_mb is not none %}{{ '%.0f'|format(live_resource.process_memory_mb) }} MB{% else %}—{% endif %}</dd>
+      </dl>
+    </section>
+
+    <section class="metrics-card">
+      <h3>Application activity</h3>
+      <table><tr><th>Application</th><th>Events</th></tr>
+      {% for k,v in app_counts|dictsort %}<tr><td>{{ k }}</td><td>{{ v }}</td></tr>{% else %}<tr><td colspan="2">No application events yet.</td></tr>{% endfor %}
+      </table>
+    </section>
+
+    <section class="metrics-card">
+      <h3>Users by tier</h3>
+      <table><tr><th>Tier</th><th>Users</th></tr>
+      {% for k,v in tier_counts|dictsort %}<tr><td>{{ k|title }}</td><td>{{ v }}</td></tr>{% else %}<tr><td colspan="2">No users yet.</td></tr>{% endfor %}
+      </table>
+    </section>
+
+    <section class="metrics-card wide">
+      <h3>Historical activity</h3>
+      <div class="metrics-table-scroll">
+        <table>
+          <tr><th>Date (ET)</th><th>Active users</th><th>Events</th><th>Calculations</th><th>Failures</th><th>CPU hours</th></tr>
+          {% for day,row in daily %}
+          <tr><td>{{ day }}</td><td>{{ row.active_users }}</td><td>{{ row.events }}</td><td>{{ row.calculations }}</td><td>{{ row.failures }}</td><td>{{ '%.3f'|format(row.cpu_seconds/3600) }}</td></tr>
+          {% else %}
+          <tr><td colspan="6">No tracked activity in this window yet.</td></tr>
+          {% endfor %}
+        </table>
+      </div>
+    </section>
+  </div>
 </div>
+<script src="{{ url_for('static', filename='admin_metrics.js') }}" defer></script>
 {% endblock %}
