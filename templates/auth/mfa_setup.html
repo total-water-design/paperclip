@@ -1,15 +1,78 @@
 {% extends "auth/base.html" %}
 {% block title %}Set up two-step verification — Total Water Design Suite{% endblock %}
 {% block content %}
-<div class="auth-heading"><span>ACCOUNT SECURITY</span><h2>Set up two-step verification</h2><p>Two-step verification is required for every Total Water Design Suite account.</p></div>
-<div class="auth-security-note"><strong>Authenticator app</strong><p>Add this account to Microsoft Authenticator, Google Authenticator, 1Password, Authy, or another RFC 6238 compatible authenticator.</p></div>
-<form method="post" class="auth-form">
-  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-  <label><span>Account</span><input value="{{ current_user.email if current_user.is_authenticated else '' }}" readonly></label>
-  <label><span>Setup key</span><input value="{{ secret }}" readonly autocomplete="off"></label>
-  <details class="auth-details"><summary>Advanced setup URI</summary><p class="auth-code-wrap">{{ provisioning_uri }}</p></details>
-  <label><span>6-digit authenticator code</span><input name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required autofocus></label>
-  <button class="auth-primary" type="submit">Verify and enable two-step verification</button>
-</form>
-<p class="auth-fine-print">After verification, one-time recovery codes will be shown once. Store them securely and separately from your password.</p>
+<div class="auth-heading">
+  <span>ACCOUNT SECURITY</span>
+  <h2>Set up two-step verification</h2>
+  <p>Two-step verification is required for every Total Water Design Suite account.</p>
+</div>
+
+<ol class="mfa-setup-steps">
+  <li>
+    <div class="mfa-step-copy">
+      <strong>Open your authenticator app</strong>
+      <p>Use Microsoft Authenticator, Google Authenticator, 1Password, Authy, or another RFC 6238-compatible authenticator.</p>
+    </div>
+  </li>
+  <li>
+    <div class="mfa-step-copy">
+      <strong>Scan this QR code</strong>
+      <p>Use the authenticator app's add-account or scan-QR option.</p>
+    </div>
+    <div class="mfa-qr-frame">
+      <img class="mfa-qr-image" src="{{ qr_data_uri }}" width="224" height="224" alt="Scan this QR code using your authenticator app.">
+    </div>
+    <p class="mfa-expiry-note">For your security, this setup expires after {{ enrollment_ttl_minutes }} minutes. If it expires, TWDS generates a new QR code and setup key.</p>
+
+    <details class="auth-details mfa-manual-details">
+      <summary>Can't scan the QR code?</summary>
+      <div class="mfa-manual-grid">
+        <div><span>Account name</span><strong>{{ account_name }}</strong></div>
+        <div><span>Issuer</span><strong>{{ issuer }}</strong></div>
+      </div>
+      <div class="mfa-setup-key-row">
+        <div>
+          <span>Manual setup key</span>
+          <code id="mfa-setup-key-display">{{ secret_display }}</code>
+        </div>
+        <button type="button" class="auth-secondary mfa-copy-button" data-copy-value="{{ secret }}" data-copy-label="setup key">Copy setup key</button>
+      </div>
+      <p class="auth-fine-print">Treat this setup key like a password. Only enter it into your authenticator app.</p>
+    </details>
+
+    <details class="auth-details">
+      <summary>Advanced setup URI</summary>
+      <p class="auth-code-wrap">{{ provisioning_uri }}</p>
+    </details>
+
+    {% if current_user.is_authenticated %}
+    <div class="mfa-restart-row">
+      <div>
+        <strong>Think this QR code or setup key was exposed?</strong>
+        <p>Generate a new enrollment secret before continuing. The previous QR code and setup key will stop working.</p>
+      </div>
+      <form method="post" action="{{ url_for('suite_mfa.restart_setup') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="auth-secondary">Generate a new QR code</button>
+      </form>
+    </div>
+    {% endif %}
+  </li>
+  <li>
+    <div class="mfa-step-copy">
+      <strong>Enter the 6-digit code from your authenticator app</strong>
+      <p>The code changes every 30 seconds.</p>
+    </div>
+    <form method="post" class="auth-form mfa-verification-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label for="mfa-code"><span>6-digit authenticator code</span><input id="mfa-code" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required autofocus aria-describedby="mfa-code-help"></label>
+      <small id="mfa-code-help">Enter only the current six digits shown by your authenticator.</small>
+      <button class="auth-primary" type="submit">Verify and enable two-step verification</button>
+    </form>
+  </li>
+</ol>
+
+<p class="auth-fine-print">Two-step verification is enabled only after TWDS validates the 6-digit code. Recovery codes are then shown once for secure storage.</p>
+<div id="mfa-copy-status" class="mfa-copy-status" aria-live="polite"></div>
+<script src="{{ url_for('static', filename='mfa_setup.js') }}" defer></script>
 {% endblock %}

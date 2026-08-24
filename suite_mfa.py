@@ -25,6 +25,7 @@ from sqlalchemy import UniqueConstraint, select
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from auth import User, admin_required, audit, db, _rate_limited
+from suite_mfa_qr import qr_svg_data_uri
 
 mfa_bp = Blueprint("suite_mfa", __name__)
 
@@ -141,6 +142,63 @@ def _totp_credential(profile: MfaProfile, create: bool = False) -> MfaCredential
     return row
 
 
+def _enrollment_ttl_seconds() -> int:
+    try:
+        value = int(os.getenv("TWDS_MFA_ENROLLMENT_TTL_SECONDS", "1800") or 1800)
+    except (TypeError, ValueError):
+        value = 1800
+    return max(300, min(value, 86400))
+
+
+def _pending_totp_expired(credential: MfaCredential | None) -> bool:
+    if not credential or not credential.created_at:
+        return False
+    created_at = credential.created_at
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    return (_utcnow() - created_at).total_seconds() >= _enrollment_ttl_seconds()
+
+
+def _replace_pending_totp(profile: MfaProfile) -> MfaCredential:
+    if profile.enabled:
+        raise RuntimeError("An enabled MFA credential cannot be replaced by the enrollment flow.")
+
+    # A pending credential is not yet trusted as an enrolled factor. Rotate its
+    # encrypted secret in place instead of deleting/reinserting the ORM row.
+    # This preserves the durable row identity while immediately invalidating the
+    # previously rendered QR/setup key and avoids primary-key reuse ambiguity on
+    # SQLite without changing PostgreSQL schema or enrolled-user credentials.
+    credential = _totp_credential(profile, create=False)
+    if credential is None:
+        credential = _totp_credential(profile, create=True)
+    else:
+        credential.encrypted_secret = _encrypt_secret(pyotp.random_base32())
+        credential.label = "Authenticator app"
+        credential.credential_id = "primary"
+        credential.public_data_json = "{}"
+        credential.created_at = _utcnow()
+        credential.last_used_at = None
+
+    profile.last_totp_counter = None
+    profile.recovery_hashes_json = "[]"
+    profile.recovery_codes_generated_at = None
+    profile.updated_at = _utcnow()
+    db.session.flush()
+    return credential
+
+
+def _provisioning_uri(secret: str, account_name: str, issuer: str) -> str:
+    return pyotp.TOTP(secret, digits=6, interval=30).provisioning_uri(
+        name=str(account_name),
+        issuer_name=str(issuer),
+    )
+
+
+def _format_setup_key(secret: str) -> str:
+    value = str(secret or "")
+    return " ".join(value[index:index + 4] for index in range(0, len(value), 4))
+
+
 def _normalize_code(value: object) -> str:
     return "".join(ch for ch in str(value or "").upper() if ch.isalnum())
 
@@ -229,7 +287,7 @@ def _password_reauth_satisfied(profile: MfaProfile, user: User) -> bool:
         reset_at = reset_at.replace(tzinfo=timezone.utc)
     return bool(
         int(session.get(MFA_PASSWORD_AUTH_USER) or 0) == int(user.id)
-        and int(session.get(MFA_PASSWORD_AUTH_AT) or 0) >= int(reset_at.timestamp())
+        and float(session.get(MFA_PASSWORD_AUTH_AT) or 0.0) >= reset_at.timestamp()
     )
 
 
@@ -304,7 +362,17 @@ def _install_enforcement(app) -> None:
         if not app.config.get("AUTH_ENABLED", False) or not _mfa_required():
             return None
         endpoint = request.endpoint or ""
-        if endpoint == "static" or endpoint.startswith("suite_mfa."):
+        if endpoint == "static":
+            return None
+        # Only routes required to complete the second-factor ceremony may run
+        # before the session is MFA-verified. Account/admin security management
+        # routes are intentionally NOT exempt and must pass the same enforcement
+        # gate as every other protected Suite surface.
+        if endpoint in {
+            "suite_mfa.setup",
+            "suite_mfa.restart_setup",
+            "suite_mfa.challenge",
+        }:
             return None
         if endpoint in {
             "auth.login", "auth.logout", "auth.forgot_password", "auth.reset_password",
@@ -327,6 +395,8 @@ def _install_enforcement(app) -> None:
     def _remember_successful_password_auth(response):
         # auth.login performs the existing password validation. Record only a
         # successful redirect with an authenticated user, never a failed POST.
+        # Preserve sub-second precision so an MFA reset later in the same second
+        # can never mistake a pre-reset password authentication for a fresh one.
         if (
             request.endpoint == "auth.login"
             and request.method == "POST"
@@ -334,7 +404,7 @@ def _install_enforcement(app) -> None:
             and 300 <= response.status_code < 400
         ):
             session[MFA_PASSWORD_AUTH_USER] = int(current_user.id)
-            session[MFA_PASSWORD_AUTH_AT] = int(time.time())
+            session[MFA_PASSWORD_AUTH_AT] = time.time()
         return response
 
 
@@ -363,10 +433,25 @@ def setup():
         if current_user.is_authenticated:
             return _force_password_reauth(user)
         return redirect(url_for("auth.login", next=url_for("suite_mfa.setup")))
+
     credential = _totp_credential(profile, create=True)
+    if _pending_totp_expired(credential):
+        credential = _replace_pending_totp(profile)
+        audit("mfa_enrollment_secret_rotated", user=user, actor=user, detail="reason=expired")
+        db.session.commit()
+        if request.method == "POST":
+            flash(
+                "This setup session is no longer valid. A new QR code has been generated. "
+                "Scan it and enter the current 6-digit code from your authenticator app.",
+                "error",
+            )
+            return redirect(url_for("suite_mfa.setup"))
+        flash("Your previous two-step setup expired. A new QR code and setup key were generated.", "warning")
+
     secret = _decrypt_secret(credential.encrypted_secret)
     issuer = str(os.getenv("TWDS_MFA_ISSUER") or "Total Water Design Suite")[:80]
-    provisioning_uri = pyotp.TOTP(secret).provisioning_uri(name=user.email, issuer_name=issuer)
+    provisioning_uri = _provisioning_uri(secret, user.email, issuer)
+    qr_data_uri = qr_svg_data_uri(provisioning_uri)
 
     if request.method == "POST":
         limited = _rate_limit("mfa-setup")
@@ -375,7 +460,10 @@ def setup():
         if not _verify_totp(profile, request.form.get("code") or ""):
             audit("mfa_enrollment_failed", user=user, actor=user, detail="Invalid authenticator code")
             db.session.commit()
-            flash("The authenticator code was not valid. Confirm the device time and try again.", "error")
+            flash(
+                "The verification code is incorrect. Enter the current 6-digit code from your authenticator app.",
+                "error",
+            )
         else:
             profile.enabled = True
             profile.primary_method = "totp"
@@ -395,7 +483,43 @@ def setup():
         # before rendering the provisioning URI so the submitted TOTP is checked
         # against the same credential on the subsequent POST.
         db.session.commit()
-    return render_template("auth/mfa_setup.html", secret=secret, provisioning_uri=provisioning_uri, issuer=issuer)
+
+    return render_template(
+        "auth/mfa_setup.html",
+        account_name=user.email,
+        secret=secret,
+        secret_display=_format_setup_key(secret),
+        provisioning_uri=provisioning_uri,
+        issuer=issuer,
+        qr_data_uri=qr_data_uri,
+        enrollment_ttl_minutes=max(1, _enrollment_ttl_seconds() // 60),
+    )
+
+
+@mfa_bp.post("/mfa/setup/restart")
+def restart_setup():
+    if not current_user.is_authenticated or current_user.status != "active":
+        abort(401)
+    profile = _profile(current_user.id, create=True)
+    if profile.enabled:
+        flash("Two-step verification is already enabled for this account.", "error")
+        return redirect(url_for("suite_mfa.account_security"))
+    if profile.reset_at and not _password_reauth_satisfied(profile, current_user):
+        return _force_password_reauth(current_user)
+
+    _replace_pending_totp(profile)
+    audit(
+        "mfa_enrollment_restarted",
+        user=current_user,
+        actor=current_user,
+        detail="Pending enrollment secret rotated",
+    )
+    db.session.commit()
+    flash(
+        "A new QR code and setup key were generated. The previous enrollment QR code and setup key will no longer work.",
+        "success",
+    )
+    return redirect(url_for("suite_mfa.setup"))
 
 
 @mfa_bp.route("/mfa/challenge", methods=["GET", "POST"])
