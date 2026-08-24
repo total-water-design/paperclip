@@ -1,0 +1,105 @@
+name: Dependency Activation Auth Harness CI
+
+on:
+  pull_request:
+    branches: [alpha]
+    paths:
+      - 'deploy/verify_auth_install.py'
+      - 'tests/test_verify_auth_install_composition.py'
+      - '.github/workflows/dependency-activation-auth-harness-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  hosted:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install disposable validation dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-server.txt pytest
+      - name: Prepare immutable Batch RO release artifact in CI workspace
+        run: |
+          EXPECTED_BATCH_SHA="$(tr -d '\r\n ' < deploy/batch_ro_alpha/payload.sha256)"
+          python tools/materialize_batch_ro_build.py --from-legacy-payload --expect-payload-sha "$EXPECTED_BATCH_SHA"
+          python tools/materialize_batch_ro_build.py --check
+      - name: Compile templates
+        run: python deploy/verify_templates.py
+      - name: Canonical authenticated-server install smoke
+        run: python deploy/verify_auth_install.py
+      - name: Dependency hardening contract regressions
+        run: |
+          python -m pytest -q \
+            tests/test_requirements_fingerprint.py \
+            tests/test_dependency_deployer_contract.py \
+            tests/test_verify_auth_install_composition.py
+      - name: Suite Core and MFA composition regressions
+        run: |
+          python -m pytest -q \
+            tests/test_suite_mfa_security.py \
+            tests/test_suite_platform_services_wiring.py \
+            tests/test_suite_communications.py \
+            tests/test_suite_feedback.py \
+            tests/test_suite_reports_contract.py
+      - name: Metrics regression layers in isolated processes
+        run: |
+          # These modules intentionally monkey-patch suite_metrics at import time.
+          # Separate processes prevent collection-order state from one layer from
+          # replacing another layer before its own assertions execute.
+          python -m pytest -q tests/test_suite_metrics.py
+          python -m pytest -q tests/test_suite_metrics_hardening.py
+          python -m pytest -q tests/test_suite_metrics_audit.py
+
+  ec2-read-only:
+    runs-on: [self-hosted, Linux, X64, twds-alpha, ec2]
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Validate corrected harness without production mutation
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin alpha
+          test "$(git rev-parse origin/alpha)" = 'afba11b6a933b6de12366082a24653ec5813f31e'
+          BEFORE="$(systemctl show totalrodesign.service -p MainPID -p NRestarts -p ActiveEnterTimestampMonotonic --value | tr '\n' '|')"
+          test "$(systemctl show totalrodesign.service -p ProtectSystem --value)" = strict
+          TMPVENV="${RUNNER_TEMP}/auth-harness-fix-${GITHUB_RUN_ID}"
+          rm -rf "$TMPVENV"
+          python3 -m venv "$TMPVENV"
+          "$TMPVENV/bin/python" -m pip install --upgrade pip >/dev/null
+          "$TMPVENV/bin/python" -m pip install -r requirements-server.txt pytest >/dev/null
+          EXPECTED_BATCH_SHA="$(tr -d '\r\n ' < deploy/batch_ro_alpha/payload.sha256)"
+          "$TMPVENV/bin/python" tools/materialize_batch_ro_build.py --from-legacy-payload --expect-payload-sha "$EXPECTED_BATCH_SHA"
+          "$TMPVENV/bin/python" tools/materialize_batch_ro_build.py --check
+          "$TMPVENV/bin/python" deploy/verify_templates.py
+          "$TMPVENV/bin/python" deploy/verify_auth_install.py
+          "$TMPVENV/bin/python" -m pytest -q \
+            tests/test_requirements_fingerprint.py \
+            tests/test_dependency_deployer_contract.py \
+            tests/test_verify_auth_install_composition.py \
+            tests/test_suite_mfa_security.py \
+            tests/test_suite_platform_services_wiring.py \
+            tests/test_suite_communications.py \
+            tests/test_suite_feedback.py \
+            tests/test_suite_reports_contract.py
+          "$TMPVENV/bin/python" -m pytest -q tests/test_suite_metrics.py
+          "$TMPVENV/bin/python" -m pytest -q tests/test_suite_metrics_hardening.py
+          "$TMPVENV/bin/python" -m pytest -q tests/test_suite_metrics_audit.py
+          AFTER="$(systemctl show totalrodesign.service -p MainPID -p NRestarts -p ActiveEnterTimestampMonotonic --value | tr '\n' '|')"
+          test "$BEFORE" = "$AFTER"
+          systemctl is-active --quiet totalrodesign.service
+          systemctl is-active --quiet totalbiodesign.service
+          curl -fsS --max-time 10 http://127.0.0.1:8000/healthz >/dev/null
+          rm -rf "$TMPVENV"
+          git reset --hard HEAD
+          git clean -ffdx
+          echo 'PASS - corrected auth harness validated; production runtime unchanged'
