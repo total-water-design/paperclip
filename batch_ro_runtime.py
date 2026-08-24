@@ -1,112 +1,120 @@
-"""Runtime registration for the Total RO Design Batch RO specialist add-on.
+"""Immutable runtime registration for the Total RO Design Batch RO add-on.
 
-The validated Batch RO engine/UI is stored as a compact payload on the dedicated
-feature branch. At application startup this module materializes only Batch-RO-
-owned files, registers the ``batch_ro`` calculation mode, and injects its UI
-loader only into the Total RO Design ``/ro`` workspace.
+Batch RO executable/UI files are tracked in the release artifact before
+Gunicorn starts. Normal WSGI startup reads a checked-in SHA-256 manifest,
+verifies the already-present files, and then imports/registers Batch RO.
 
-No conventional RO calculation, entitlement, database, or Suite shell file is
-modified by payload extraction.  A narrow RO-owned compatibility patch is
-applied only to the materialized Batch UI script so its host-hook probe works
-with the current Total RO Design lexical bindings.  The specialist calculation
-engine and payload digest remain authoritative and unchanged.
+This module deliberately contains no payload extraction, source patching,
+directory creation, file generation, or other application-source mutation.
 """
 from __future__ import annotations
 
-import base64
-import io
+import hashlib
+import json
 from pathlib import Path
-import tarfile
+import re
 
 ROOT = Path(__file__).resolve().parent
-PAYLOAD_DIR = ROOT / "deploy" / "batch_ro_alpha"
-PAYLOAD_PARTS = (
-    "payload.segment01",
-    "payload.segment02",
-    "payload.part02",
-    "payload.part03",
-)
-EXPECTED_MEMBERS = {
+MANIFEST_PATH = ROOT / "deploy" / "batch_ro_runtime_manifest.json"
+UI_SCRIPT = "/static/addons/batch_ro/batch_ro_addon.js"
+EXPECTED_RUNTIME_MEMBERS = {
     "addons/batch_ro/__init__.py",
     "addons/batch_ro/engine.py",
     "static/addons/batch_ro/batch_ro.svg",
     "static/addons/batch_ro/batch_ro_addon.js",
-    "docs/BATCH_RO_ENGINEERING_BASIS.md",
-    "tests/test_batch_ro_addon.py",
 }
-UI_SCRIPT = "/static/addons/batch_ro/batch_ro_addon.js"
-UI_SCRIPT_PATH = ROOT / UI_SCRIPT.lstrip("/")
-
-_OLD_HOST_PROBE = """const required=['FEATURE_REGISTRY','MODE_FEATURE','WORKSPACE_META','defaults','sections','processModeConfigured','renderFields','changeMode','processPerformanceBody'];
-    const missing=required.filter(name=>{try{return typeof eval(name)==='undefined'}catch(_){return true}});
-    if(missing.length){console.error('Batch RO add-on not activated; incompatible Total RO Design UI hooks:',missing);return;}"""
-
-_NEW_HOST_PROBE = """const missing=[];
-    if(typeof FEATURE_REGISTRY==='undefined')missing.push('FEATURE_REGISTRY');
-    if(typeof MODE_FEATURE==='undefined')missing.push('MODE_FEATURE');
-    if(typeof WORKSPACE_META==='undefined')missing.push('WORKSPACE_META');
-    if(typeof defaults==='undefined')missing.push('defaults');
-    if(typeof sections==='undefined')missing.push('sections');
-    if(typeof processModeConfigured==='undefined')missing.push('processModeConfigured');
-    if(typeof renderFields==='undefined')missing.push('renderFields');
-    if(typeof changeMode==='undefined')missing.push('changeMode');
-    if(typeof processPerformanceBody==='undefined')missing.push('processPerformanceBody');
-    if(missing.length){console.error('Batch RO add-on not activated; incompatible Total RO Design UI hooks:',missing);return;}"""
+MANIFEST_SCHEMA = "twds.batch-ro-runtime-manifest"
+MANIFEST_VERSION = 1
 
 
-def _validated_payload_bytes() -> bytes:
-    parts = [PAYLOAD_DIR / name for name in PAYLOAD_PARTS]
-    missing = [p.name for p in parts if not p.is_file()]
-    if missing:
-        raise RuntimeError(f"Batch RO feature payload is incomplete: missing {missing}")
-    encoded = "".join(p.read_text(encoding="ascii").strip() for p in parts)
-    raw = base64.b64decode(encoded, validate=True)
-    with tarfile.open(fileobj=io.BytesIO(raw), mode="r:gz") as tf:
-        names = set(tf.getnames())
-        if names != EXPECTED_MEMBERS:
-            raise RuntimeError(f"Batch RO feature payload member mismatch: {sorted(names ^ EXPECTED_MEMBERS)}")
-        for member in tf.getmembers():
-            target = (ROOT / member.name).resolve()
-            if ROOT.resolve() not in target.parents:
-                raise RuntimeError(f"Unsafe Batch RO payload path: {member.name}")
-    return raw
+class BatchRODeploymentError(RuntimeError):
+    """The immutable Batch RO deployment artifact is absent or does not match."""
 
 
-def _patch_batch_ro_ui_host_probe() -> None:
-    """Adapt the specialist UI probe to current RO cross-script lexical bindings.
-
-    The specialist v0.1 UI used ``eval(name)`` inside an array callback to probe
-    host symbols.  In current browsers that nested eval cannot reliably resolve
-    the host script's top-level lexical bindings, so it falsely reports every
-    Total RO Design hook as missing.  CCRO already uses direct ``typeof`` probes.
-    Apply the same compatibility pattern here without changing Batch inputs,
-    equations, API calls, result schema, or engineering behavior.
-    """
-    text = UI_SCRIPT_PATH.read_text(encoding="utf-8")
-    if _NEW_HOST_PROBE in text:
-        return
-    if _OLD_HOST_PROBE not in text:
-        raise RuntimeError(
-            "Batch RO UI compatibility probe no longer matches the validated specialist payload; "
-            "return this contract change to the Batch RO specialist owner before integration."
+def _load_runtime_manifest(root: Path = ROOT) -> dict:
+    root = Path(root).resolve()
+    path = root / "deploy" / "batch_ro_runtime_manifest.json"
+    if not path.is_file():
+        raise BatchRODeploymentError(
+            "Batch RO runtime manifest is missing: deploy/batch_ro_runtime_manifest.json. "
+            "Prepare the complete release artifact before Gunicorn starts."
         )
-    UI_SCRIPT_PATH.write_text(text.replace(_OLD_HOST_PROBE, _NEW_HOST_PROBE, 1), encoding="utf-8")
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise BatchRODeploymentError("Batch RO runtime manifest is not valid UTF-8 JSON.") from exc
+    if not isinstance(manifest, dict):
+        raise BatchRODeploymentError("Batch RO runtime manifest root must be an object.")
+    if manifest.get("schema") != MANIFEST_SCHEMA or manifest.get("version") != MANIFEST_VERSION:
+        raise BatchRODeploymentError(
+            f"Unsupported Batch RO runtime manifest: expected {MANIFEST_SCHEMA} v{MANIFEST_VERSION}."
+        )
+    files = manifest.get("files")
+    if not isinstance(files, dict):
+        raise BatchRODeploymentError("Batch RO runtime manifest files entry must be an object.")
+    names = set(files)
+    if names != EXPECTED_RUNTIME_MEMBERS:
+        missing = sorted(EXPECTED_RUNTIME_MEMBERS - names)
+        unexpected = sorted(names - EXPECTED_RUNTIME_MEMBERS)
+        raise BatchRODeploymentError(
+            f"Batch RO runtime manifest member mismatch; missing={missing}, unexpected={unexpected}."
+        )
+    for relative, digest in files.items():
+        if not isinstance(relative, str) or not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise BatchRODeploymentError(f"Invalid Batch RO SHA-256 identity for {relative!r}.")
+    return manifest
 
 
-def materialize_batch_ro_files() -> None:
-    """Extract the exact specialist payload, then apply the RO-owned UI adapter."""
-    raw = _validated_payload_bytes()
-    with tarfile.open(fileobj=io.BytesIO(raw), mode="r:gz") as tf:
-        tf.extractall(ROOT)
-    _patch_batch_ro_ui_host_probe()
+def validate_batch_ro_deployment_files(root: Path = ROOT) -> dict:
+    """Fail closed unless every tracked Batch RO runtime file matches its SHA."""
+    root = Path(root).resolve()
+    manifest = _load_runtime_manifest(root)
+    problems: list[str] = []
+    identities: dict[str, str] = {}
+    for relative, expected_sha in sorted(manifest["files"].items()):
+        path = root / relative
+        try:
+            resolved = path.resolve(strict=True)
+        except FileNotFoundError:
+            problems.append(f"missing {relative}")
+            continue
+        if root not in resolved.parents:
+            problems.append(f"unsafe path {relative}")
+            continue
+        if path.is_symlink() or not resolved.is_file():
+            problems.append(f"not a regular tracked file {relative}")
+            continue
+        actual_sha = hashlib.sha256(resolved.read_bytes()).hexdigest()
+        identities[relative] = actual_sha
+        if actual_sha != expected_sha:
+            problems.append(
+                f"identity mismatch {relative}: expected {expected_sha}, got {actual_sha}"
+            )
+    if problems:
+        raise BatchRODeploymentError(
+            "Batch RO immutable deployment artifact is not ready: " + "; ".join(problems) + ". "
+            "Release preparation/reconciliation must install the exact tracked files; "
+            "normal application startup will not modify application source files."
+        )
+    manifest_bytes = (root / "deploy" / "batch_ro_runtime_manifest.json").read_bytes()
+    return {
+        "schema": manifest["schema"],
+        "manifest_version": manifest["version"],
+        "batch_ro_version": manifest.get("batch_ro_version"),
+        "manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
+        "files": identities,
+        "file_count": len(identities),
+        "provenance": manifest.get("provenance") or {},
+    }
 
 
 def register_batch_ro_runtime(app, calculations) -> None:
-    """Register Batch RO and add its UI loader to Total RO Design."""
-    materialize_batch_ro_files()
+    """Read-only verification followed by Batch RO calculation/UI registration."""
+    identity = validate_batch_ro_deployment_files(ROOT)
     from addons.batch_ro import register_batch_ro
 
     register_batch_ro(app, calculations)
+    app.config["BATCH_RO_DEPLOYMENT_IDENTITY"] = identity
 
     if getattr(app, "_totalro_batch_ro_ui_runtime_registered", False):
         return

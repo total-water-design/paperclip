@@ -77,6 +77,23 @@ jobs:
           test -d templates
           test -d data
 
+          EXPECTED_BATCH_SHA="$(tr -d '\r\n ' < deploy/batch_ro_alpha/payload.sha256)"
+
+          python3 tools/materialize_batch_ro_build.py \
+            --from-legacy-payload \
+            --expect-payload-sha "$EXPECTED_BATCH_SHA"
+
+          python3 tools/materialize_batch_ro_build.py --check
+
+          for f in \
+            addons/batch_ro/__init__.py \
+            addons/batch_ro/engine.py \
+            static/addons/batch_ro/batch_ro.svg \
+            static/addons/batch_ro/batch_ro_addon.js \
+            deploy/batch_ro_runtime_manifest.json; do
+            test -f "$f"
+          done
+
           if find . \
             \( -name '.env' \
                -o -name '*.db' \
@@ -251,6 +268,19 @@ jobs:
           TMP="$(mktemp -d)"
           trap 'rm -rf "$TMP"' EXIT
           git archive "$PREVIOUS_SHA" | tar -x -C "$TMP"
+
+          if [ -f "$TMP/tools/materialize_batch_ro_build.py" ] \
+             && [ -f "$TMP/deploy/batch_ro_alpha/payload.sha256" ]; then
+            (
+              cd "$TMP"
+              EXPECTED_BATCH_SHA="$(tr -d '\r\n ' < deploy/batch_ro_alpha/payload.sha256)"
+              python3 tools/materialize_batch_ro_build.py \
+                --from-legacy-payload \
+                --expect-payload-sha "$EXPECTED_BATCH_SHA"
+              python3 tools/materialize_batch_ro_build.py --check
+            )
+          fi
+
           STAGE=/opt/twds-deploy/staging
           rsync -a --delete \
             --exclude='.git/' \
