@@ -206,12 +206,14 @@ with tempfile.TemporaryDirectory(prefix="totalwater-suite-auth-check-") as tmp:
     assert b"projectSearch" in admin_projects_page.data
 
     # Administrator-created accounts support product-specific entitlements.
+    # Country is a required field in the current production admin-create contract.
     created_user = client.post(
         "/admin/users/create",
         data={
             "full_name": "Product Entitlement Check",
             "email": "product-check@example.com",
             "organization": "Example Engineering",
+            "country_code": "US",
             "role": "user",
             "new_product_ro_enabled": "1",
             "new_product_ro_tier": "silver",
@@ -224,6 +226,7 @@ with tempfile.TemporaryDirectory(prefix="totalwater-suite-auth-check-") as tmp:
         product_user = db.session.query(User).filter_by(email="product-check@example.com").one()
         rows = {row.product_id: row for row in db.session.query(ProductEntitlement).filter_by(user_id=product_user.id)}
         assert product_user.licensed_tier == "silver"
+        assert product_user.country_code == "US"
         assert rows["ro"].enabled is True and rows["ro"].tier == "silver"
         assert rows["bio"].enabled is True and rows["bio"].tier == "platinum"
         assert rows["zld"].enabled is False
