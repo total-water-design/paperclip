@@ -1,0 +1,69 @@
+name: Shared WaterStream v0.6 Chemistry Readiness CI
+
+on:
+  push:
+    branches:
+      - engine/shared-waterstream
+    paths:
+      - "shared_waterstream/**"
+      - "tests/test_shared_waterstream_v06_chemistry_integration.py"
+      - "tests/test_shared_waterstream_v06_regression.py"
+      - "tests/test_shared_waterstream_v06_waterstate_compat.py"
+      - "SHARED_WATERSTREAM_CHEMISTRY_ADAPTER_v0.6.md"
+      - "SHARED_WATERSTREAM_v0.6_MIGRATION.md"
+      - ".github/workflows/shared-waterstream-ci.yml"
+  pull_request:
+    branches:
+      - alpha
+      - engine/shared-waterstream
+    paths:
+      - "shared_waterstream/**"
+      - "tests/test_shared_waterstream_v06_chemistry_integration.py"
+      - "tests/test_shared_waterstream_v06_regression.py"
+      - "tests/test_shared_waterstream_v06_waterstate_compat.py"
+      - "SHARED_WATERSTREAM_CHEMISTRY_ADAPTER_v0.6.md"
+      - "SHARED_WATERSTREAM_v0.6_MIGRATION.md"
+      - ".github/workflows/shared-waterstream-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  readiness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install exact Shared Chemistry test dependency range
+        run: python -m pip install 'numpy>=1.26,<3'
+
+      - name: Compile Shared WaterStream v0.6 candidate
+        run: |
+          python -m compileall -q shared_waterstream/v05.py shared_waterstream/v06.py shared_waterstream/__init__.py \
+            tests/test_shared_waterstream_v06_chemistry_integration.py \
+            tests/test_shared_waterstream_v06_regression.py \
+            tests/test_shared_waterstream_v06_waterstate_compat.py
+
+      - name: Run v0.6 chemistry integration readiness suite
+        run: python -m unittest tests.test_shared_waterstream_v06_chemistry_integration -v
+
+      - name: Run v0.6 transport regression suite
+        run: python -m unittest tests.test_shared_waterstream_v06_regression -v
+
+      - name: Check out exact Shared Chemistry milestone read-only
+        run: |
+          git fetch origin 6fdbb11e025130162f749a7b77191e108f183d15 --depth=1
+          git worktree add --detach /tmp/shared-water-chemistry FETCH_HEAD
+          test "$(git -C /tmp/shared-water-chemistry rev-parse HEAD)" = "6fdbb11e025130162f749a7b77191e108f183d15"
+
+      - name: Run WaterStream-to-WaterState compatibility against exact chemistry milestone
+        run: |
+          cd /tmp
+          PYTHONPATH="/tmp/shared-water-chemistry:${GITHUB_WORKSPACE}" \
+            python "${GITHUB_WORKSPACE}/tests/test_shared_waterstream_v06_waterstate_compat.py" -v

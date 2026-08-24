@@ -1,0 +1,15 @@
+{% extends "auth/base.html" %}
+{% block title %}Set up two-step verification — Total Water Design Suite{% endblock %}
+{% block content %}
+<div class="auth-heading"><span>ACCOUNT SECURITY</span><h2>Set up two-step verification</h2><p>Two-step verification is required for every Total Water Design Suite account.</p></div>
+<div class="auth-security-note"><strong>Authenticator app</strong><p>Add this account to Microsoft Authenticator, Google Authenticator, 1Password, Authy, or another RFC 6238 compatible authenticator.</p></div>
+<form method="post" class="auth-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <label><span>Account</span><input value="{{ current_user.email if current_user.is_authenticated else '' }}" readonly></label>
+  <label><span>Setup key</span><input value="{{ secret }}" readonly autocomplete="off"></label>
+  <details class="auth-details"><summary>Advanced setup URI</summary><p class="auth-code-wrap">{{ provisioning_uri }}</p></details>
+  <label><span>6-digit authenticator code</span><input name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required autofocus></label>
+  <button class="auth-primary" type="submit">Verify and enable two-step verification</button>
+</form>
+<p class="auth-fine-print">After verification, one-time recovery codes will be shown once. Store them securely and separately from your password.</p>
+{% endblock %}

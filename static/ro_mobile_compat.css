@@ -1,0 +1,25 @@
+/* Total RO Design mobile compatibility fixes.
+   Narrowly scoped to the native RO shell; does not replace the mature app stylesheet. */
+@media (max-width:760px){
+  #calculatorApp .app-sidebar{width:100%!important;min-width:0!important}
+  #calculatorApp .sidebar-nav{width:100%;min-width:0}
+  #calculatorApp .sidebar-nav .nav-group{min-width:0}
+  #calculatorApp .sidebar-nav .tab,
+  #calculatorApp .sidebar-nav .sidebar-add{width:100%!important;min-width:0!important;max-width:100%;overflow:hidden}
+  #calculatorApp .sidebar-nav .tab>span:not(.nav-icon),
+  #calculatorApp .sidebar-nav .sidebar-add>span:last-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #calculatorApp .app-main,
+  #calculatorApp .workspace-scroll{min-width:0;max-width:100%}
+
+  /* Override legacy desktop Water Quality minimum columns on phones. */
+  #calculatorApp .water-profile .water-basic-grid,
+  #calculatorApp .water-profile .grid,
+  #calculatorApp .chemistry-grid{grid-template-columns:minmax(0,1fr)!important}
+  #calculatorApp .water-profile .source-water-field,
+  #calculatorApp .water-profile .span2{grid-column:span 1!important}
+  #calculatorApp .field label{min-width:0;overflow-wrap:anywhere}
+
+  /* v18.3.8 uses the viewport-clamped contextual-help panel. The superseded
+     inline absolute popover is visibility-hidden and otherwise widens scrollWidth. */
+  #calculatorApp .info-popover{display:none!important}
+}

@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Total Water Academy icon</title>
+  <desc id="desc">A water droplet above an open engineering book, surrounded by process-flow cues.</desc>
+  <defs>
+    <linearGradient id="navyDrop" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#0D1B2A"/><stop offset="0.55" stop-color="#064B70"/><stop offset="1" stop-color="#1A7F8E"/></linearGradient>
+    <linearGradient id="aqua" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#4AC3D1"/><stop offset="1" stop-color="#1A7F8E"/></linearGradient>
+    <linearGradient id="book" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#176A87"/><stop offset="1" stop-color="#0D1B2A"/></linearGradient>
+  </defs>
+  <path d="M78 276 C68 160 136 82 228 66" fill="none" stroke="#4AC3D1" stroke-width="14" stroke-linecap="round"/>
+  <path d="M284 66 C376 82 444 160 434 276" fill="none" stroke="#4AC3D1" stroke-width="14" stroke-linecap="round"/>
+  <circle cx="72" cy="274" r="20" fill="#0D3151" stroke="#4AC3D1" stroke-width="9"/>
+  <circle cx="440" cy="274" r="20" fill="#0D3151" stroke="#4AC3D1" stroke-width="9"/>
+  <path d="M91 237 H119" stroke="#1A7F8E" stroke-width="10" stroke-linecap="round"/>
+  <rect x="119" y="216" width="48" height="42" rx="5" fill="#0D1B2A" stroke="#4AC3D1" stroke-width="8"/>
+  <path d="M167 237 H188" stroke="#1A7F8E" stroke-width="10" stroke-linecap="round"/>
+  <ellipse cx="397" cy="210" rx="25" ry="9" fill="#4AC3D1"/>
+  <rect x="372" y="210" width="50" height="50" rx="9" fill="#146B85" stroke="#0D3151" stroke-width="5"/>
+  <ellipse cx="397" cy="260" rx="25" ry="9" fill="#0D3151"/>
+  <path d="M422 235 H454 L466 246 L454 257 H430" fill="none" stroke="#1A7F8E" stroke-width="10" stroke-linejoin="round"/>
+  <path d="M38 386 C105 365 168 368 251 419 L251 472 C172 424 106 417 31 437 Z" fill="url(#book)" stroke="#0D3151" stroke-width="5"/>
+  <path d="M474 386 C407 365 344 368 261 419 L261 472 C340 424 406 417 481 437 Z" fill="url(#book)" stroke="#0D3151" stroke-width="5"/>
+  <path d="M50 400 C119 382 176 389 247 430" fill="none" stroke="#F2F5F7" stroke-width="8" stroke-linecap="round"/>
+  <path d="M462 400 C393 382 336 389 265 430" fill="none" stroke="#F2F5F7" stroke-width="8" stroke-linecap="round"/>
+  <path d="M56 420 C126 405 179 411 247 447" fill="none" stroke="#4AC3D1" stroke-width="8" stroke-linecap="round"/>
+  <path d="M456 420 C386 405 333 411 265 447" fill="none" stroke="#4AC3D1" stroke-width="8" stroke-linecap="round"/>
+  <path d="M256 418 V473" stroke="#F2F5F7" stroke-width="9" stroke-linecap="round"/>
+  <path d="M256 45 C213 111 160 171 156 244 C151 331 193 385 256 388 C319 385 361 331 356 244 C352 171 299 111 256 45 Z" fill="url(#navyDrop)" stroke="#F7FAFC" stroke-width="13" stroke-linejoin="round"/>
+  <path d="M183 272 C216 305 247 307 279 278 C305 255 326 253 346 270" fill="none" stroke="#F7FAFC" stroke-width="18" stroke-linecap="round"/>
+  <path d="M182 301 C219 334 251 336 285 306 C308 285 328 285 345 298" fill="none" stroke="url(#aqua)" stroke-width="19" stroke-linecap="round"/>
+  <path d="M207 151 C225 118 242 91 255 72" fill="none" stroke="#4AC3D1" stroke-width="10" stroke-linecap="round" opacity="0.65"/>
+</svg>

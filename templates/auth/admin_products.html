@@ -1,0 +1,17 @@
+{% extends "auth/admin_base.html" %}
+{% block title %}Products — Total Water Design Suite{% endblock %}
+{% block content %}
+<section class="admin-toolbar" style="grid-template-columns:1fr"><div><strong>Product commercial policies</strong><div class="admin-debug-note" style="margin:6px 0 0">Commercial activation, price, eligibility and billing cadence are configuration. A blank cadence means no monthly/annual/one-time assumption has been approved.</div></div></section>
+<div class="admin-table-shell"><table class="admin-data-table" style="min-width:1100px"><thead><tr><th>Product</th><th>Release status</th><th>Commercial</th><th>Price</th><th>Cadence</th><th>Pre-commercial policy</th><th>Configure</th></tr></thead><tbody>
+{% for product in products %}{% set policy=policies.get(product.product_id) %}
+<tr>
+<td><strong>{{ product.name }}</strong><small class="admin-ip-last">{{ product.product_id }}</small></td>
+<td>{{ product.status|replace('_',' ')|title }}</td>
+<td>{{ 'Active' if policy and policy.commercial_active else 'Not active' }}</td>
+<td>{% if policy and policy.price_usd_cents is not none %}${{ '%.2f'|format(policy.price_usd_cents/100) }}{% else %}Not set{% endif %}</td>
+<td>{{ policy.billing_cadence if policy and policy.billing_cadence else 'Not defined' }}</td>
+<td>{{ policy.precommercial_access_mode|replace('_',' ')|title if policy else 'Admin approved' }}{% if policy and policy.student_free_access_enabled %}<small class="admin-ip-last">Student free access enabled</small>{% endif %}</td>
+<td><details><summary class="admin-action">Edit</summary><form method="post" action="{{ url_for('suite_commercial.update_commercial_policy', product_id=product.product_id) }}" class="admin-feedback-workflow-form"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><label><span>Price USD</span><input name="price_usd" value="{{ '%.2f'|format(policy.price_usd_cents/100) if policy and policy.price_usd_cents is not none else '' }}" placeholder="Blank = not set"></label><label><span>Billing cadence</span><input name="billing_cadence" value="{{ policy.billing_cadence if policy else '' }}" placeholder="Leave blank until explicitly approved"></label><label><span>Pre-commercial access mode</span><select name="precommercial_access_mode"><option value="admin_approved" {% if policy and policy.precommercial_access_mode == 'admin_approved' %}selected{% endif %}>Administrator approved</option><option value="approved_students" {% if policy and policy.precommercial_access_mode == 'approved_students' %}selected{% endif %}>Approved students</option></select></label><label><span>Eligibility notes</span><textarea name="eligibility_notes" rows="4">{{ policy.eligibility_notes if policy else '' }}</textarea></label><label class="toggle-label"><input type="checkbox" name="student_free_access_enabled" value="1" {% if policy and policy.student_free_access_enabled %}checked{% endif %}><span>Allow free pre-commercial access for approved eligible students</span></label><label class="toggle-label"><input type="checkbox" name="commercial_active" value="1" {% if policy and policy.commercial_active %}checked{% endif %}><span>Commercially active</span></label><button class="admin-primary" type="submit">Save policy</button></form></details></td>
+</tr>
+{% endfor %}</tbody></table></div>
+{% endblock %}

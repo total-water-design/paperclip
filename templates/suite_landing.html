@@ -15,6 +15,7 @@
   <link rel="manifest" href="{{ url_for('static', filename='manifest.webmanifest') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='suite.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='mobile.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='whats_new.css') }}">
 </head>
 <body class="suite-page">
   <header class="suite-public-header">
@@ -24,6 +25,7 @@
     </a>
     <nav aria-label="Suite navigation">
       <a href="#applications">Applications</a>
+      <a href="#whats-new">What's New</a>
       <a href="#founder">Founder</a>
       <a href="#engineering-basis">Engineering basis</a>
       {% if auth_enabled and current_user.is_authenticated %}
@@ -35,12 +37,13 @@
     </nav>
   </header>
 
+  {% set whats_new = twds_whats_new|default({'recently_updated': [], 'roadmap': [], 'commercial_launch_window': ''}, true) %}
   <main>
     <section class="suite-hero">
       <div class="suite-hero-copy">
         <p class="suite-eyebrow">TOTAL WATER DESIGN SUITE · v{{ config.get('SUITE_VERSION', '0.25') }}</p>
         <h1>{{ suite_headline }}</h1>
-        <p class="suite-hero-lead">Use specialized applications for pretreatment, biological treatment, membranes and demineralization, and ZLD. Transfer validated stream data between designs, close the plant-wide water balance, compare lifecycle economics, and optimize the integrated system.</p>
+        <p class="suite-hero-lead">Use specialized applications for pretreatment, biological treatment, membranes and demineralization, and ZLD. Transfer validated stream data between designs, close the plant-wide water balance, compare lifecycle economics, optimize the integrated system, and build engineering skills through Total Water Academy.</p>
         <div class="suite-hero-actions">
           {% if auth_enabled and current_user.is_authenticated %}
             <a class="suite-primary-button" href="{{ url_for('suite_dashboard') }}">Open my applications <span>→</span></a>
@@ -63,10 +66,10 @@
     <section id="applications" class="suite-section suite-applications">
       <div class="suite-section-heading">
         <div><p class="suite-eyebrow">APPLICATION PORTFOLIO</p><h2>Engineering depth by process. One connected family.</h2></div>
-        <p>Total RO Design is the first available engineering application. The remaining products are shown transparently with their current development status.</p>
+        <p>Total RO Design is the first available engineering application. The broader portfolio, including Total Water Academy, is shown transparently with each product's current development status.</p>
       </div>
 
-      {% for category, heading, description in [('design','Design','Detailed process and equipment design'),('analysis','Analysis & Optimization','Plant-wide balance, economics and system integration')] %}
+      {% for category, heading, description in [('design','Design','Detailed process and equipment design'),('analysis','Analysis & Optimization','Plant-wide balance, economics and system integration'),('education','Learning & Development','Applied water-treatment engineering education')] %}
       <section class="suite-product-group">
         <div class="suite-product-group-title"><span>{{ heading }}</span><small>{{ description }}</small></div>
         <div class="suite-product-grid">
@@ -98,6 +101,37 @@
       {% endfor %}
     </section>
 
+    <section id="whats-new" class="suite-section suite-whats-new">
+      <div class="suite-section-heading compact"><div><p class="suite-eyebrow">WHAT'S NEW</p><h2>Recent improvements and approved next steps.</h2></div></div>
+      <div class="suite-whats-new-grid">
+        <article class="suite-whats-new-card">
+          <span>Recently Updated</span>
+          <h3>Changes already deployed</h3>
+          {% for release in whats_new.recently_updated %}
+          <div class="suite-whats-new-item">
+            <strong>{{ release.title }}</strong><small>{{ release.version }}{% if release.deployed_at %} · {{ release.deployed_at.strftime('%Y-%m-%d') }}{% endif %}</small>
+            {% if release.summary %}<p>{{ release.summary }}</p>{% endif %}
+            {% if release.highlights %}<ul>{% for item in release.highlights %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
+          </div>
+          {% else %}<p class="suite-whats-new-empty">No public release update has been published yet.</p>{% endfor %}
+        </article>
+
+        <article class="suite-whats-new-card">
+          <span>What We're Working On</span>
+          <h3>Administrator-approved roadmap</h3>
+          {% for item in whats_new.roadmap %}
+          <div class="suite-whats-new-item"><strong>{{ item.title }}</strong>{% if item.application and item.application != 'suite' %}<small>{{ item.application|replace('_',' ')|title }}</small>{% endif %}<p>{{ item.summary }}</p></div>
+          {% else %}<p class="suite-whats-new-empty">No public roadmap items have been approved for display yet.</p>{% endfor %}
+        </article>
+
+        <article class="suite-whats-new-card">
+          <span>Commercial Launch</span>
+          <h3>Current estimated timing</h3>
+          {% if whats_new.commercial_launch_window %}<p class="suite-launch-window">{{ whats_new.commercial_launch_window }}</p><p>This timing is an estimate and may be updated as validation and deployment progress.</p>{% else %}<p class="suite-whats-new-empty">Commercial launch timing will be published here after it is approved.</p>{% endif %}
+        </article>
+      </div>
+    </section>
+
     <section id="founder" class="suite-section suite-founder-section">
       <div class="suite-founder-copy">
         <p class="suite-eyebrow">A MESSAGE FROM THE FOUNDER</p>
@@ -125,7 +159,7 @@
       <div class="suite-section-heading compact"><div><p class="suite-eyebrow">ENGINEERING BASIS</p><h2>Transparent preliminary-engineering software</h2></div></div>
       <div class="suite-basis-grid">
         <article><strong>Engineering responsibility</strong><p>The applications provide preliminary engineering estimates and decision support. Qualified professionals must independently verify inputs, assumptions, equipment limits and results before design, procurement, operation, contractual reliance or investment.</p></article>
-        <article><strong>Product status</strong><p>The Suite is being built progressively. Only products marked <em>Available</em> provide active access. Coming Soon and In Development cards are roadmap information, not release promises.</p></article>
+        <article><strong>Product status</strong><p>The Suite is being built progressively. Only products marked <em>Available</em> provide active public access. Coming Soon and In Development cards are roadmap information, not release promises.</p></article>
         <article><strong>Vendor-neutral intent</strong><p>Where the underlying data and calculation engine support it, the Suite is designed to enable transparent, vendor-neutral comparison without representing itself as a manufacturer projection or guarantee.</p></article>
       </div>
     </section>

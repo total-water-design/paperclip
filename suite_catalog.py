@@ -139,6 +139,19 @@ PRODUCTS: tuple[ProductDefinition, ...] = (
         description="Bring individual process designs together to evaluate and optimize the complete water-treatment system.",
         launch_priority=60,
     ),
+    ProductDefinition(
+        product_id="academy",
+        name="Total Water Academy",
+        short_name="Academy",
+        category="education",
+        status="in_development",
+        route="/academy",
+        accent="#1A7F8E",
+        icon_asset="branding/suite/total_water_academy_icon.svg",
+        logo_asset="branding/suite/total_water_academy_logo.svg",
+        description="Learn water-treatment engineering by completing progressive concepts, quizzes and hands-on design missions in the Total Water Design Suite.",
+        launch_priority=70,
+    ),
 )
 
 PRODUCT_BY_ID: Mapping[str, ProductDefinition] = {product.product_id: product for product in PRODUCTS}

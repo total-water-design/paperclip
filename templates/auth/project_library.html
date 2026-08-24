@@ -1,0 +1,18 @@
+{% extends "auth/base.html" %}
+{% block title %}Project Library — Total Water Design Suite{% endblock %}
+{% block content %}
+<div class="auth-heading"><span>PROJECT LIBRARY</span><h2>Saved projects and revisions</h2><p>Generate customer-facing reports from the saved project revision. Administrator debugging/project-state inspection remains a separate function.</p></div>
+<div class="project-library-list">
+{% for item in projects %}{% set row=item.row %}
+<article class="project-library-card">
+  <div><span>{{ row.product_id|replace('_',' ')|title }}</span><h3>{{ row.name }}</h3><p><strong>{{ row.visible_id }}</strong> · Revision {{ row.revision }} · Saved {{ row.updated_at.strftime('%Y-%m-%d %H:%M') if row.updated_at else '—' }}</p></div>
+  <div class="project-library-actions">
+    {% if item.provider.available %}<button type="button" class="auth-secondary" data-full-report="{{ row.id }}">Generate Full Report</button>{% else %}<button type="button" class="auth-secondary" disabled title="The specialist application has not registered its full-report provider yet.">Generate Full Report</button>{% endif %}
+  </div>
+</article>
+{% else %}<p>No saved projects yet.</p>{% endfor %}
+</div>
+<div id="projectReportStatus" class="auth-security-note" hidden aria-live="polite"></div>
+<div class="auth-stack-actions"><a class="auth-primary auth-button-link" href="{{ url_for('suite_dashboard') }}">Return to my applications</a></div>
+<script src="{{ url_for('static', filename='project_library.js') }}" defer></script>
+{% endblock %}

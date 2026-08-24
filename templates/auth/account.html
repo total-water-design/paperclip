@@ -21,6 +21,9 @@
 </section>
 <div class="auth-stack-actions">
   <a class="auth-primary auth-button-link" href="{{ url_for('suite_dashboard') }}">Return to my applications</a>
+  <a class="auth-secondary auth-button-link" href="{{ url_for('suite_mfa.account_security') }}">Two-step verification</a>
+  <a class="auth-secondary auth-button-link" href="{{ url_for('suite_communications.account_communications') }}">Email preferences</a>
+  <a class="auth-secondary auth-button-link" href="{{ url_for('suite_reports.project_library') }}">Project Library</a>
   <a class="auth-secondary auth-button-link" href="{{ url_for('auth.forgot_password') }}">Change password</a>
   {% if current_user.is_admin %}<a class="auth-secondary auth-button-link" href="{{ url_for('auth.admin_users') }}">Manage users</a>{% endif %}
 </div>
