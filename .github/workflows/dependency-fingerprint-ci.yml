@@ -1,0 +1,105 @@
+name: Dependency Closure Infrastructure CI
+
+on:
+  pull_request:
+    branches:
+      - alpha
+    paths:
+      - 'deploy/requirements_fingerprint.py'
+      - 'deploy/twds-alpha-deploy'
+      - 'deploy/install_dependency_closure_hardening.sh'
+      - 'deploy/DEPENDENCY_FINGERPRINT.md'
+      - 'tests/test_requirements_fingerprint.py'
+      - 'tests/test_dependency_deployer_contract.py'
+      - '.github/workflows/dependency-fingerprint-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  hosted-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compile helpers and tests
+        run: |
+          python -m py_compile \
+            deploy/requirements_fingerprint.py \
+            tests/test_requirements_fingerprint.py \
+            tests/test_dependency_deployer_contract.py
+          bash -n deploy/twds-alpha-deploy
+          bash -n deploy/install_dependency_closure_hardening.sh
+      - name: Run recursive closure and deployer contract tests
+        run: |
+          python -m unittest \
+            tests.test_requirements_fingerprint \
+            tests.test_dependency_deployer_contract -v
+      - name: Fingerprint actual current server dependency closure
+        run: |
+          python deploy/requirements_fingerprint.py requirements-server.txt --repo-root . --json | tee /tmp/current-closure.json
+          python - <<'PY'
+          import json
+          data=json.load(open('/tmp/current-closure.json'))
+          paths={row['path'] for row in data['manifests']}
+          assert 'requirements-server.txt' in paths
+          assert 'requirements.txt' in paths
+          assert len(data['fingerprint']) == 64
+          print('PASS - current recursive dependency closure fingerprinted')
+          PY
+      - name: Explicit segno acceptance proof
+        run: |
+          python - <<'PY'
+          import tempfile
+          from pathlib import Path
+          from deploy.requirements_fingerprint import fingerprint
+          with tempfile.TemporaryDirectory() as td:
+              root=Path(td)
+              wrapper=b'-r requirements.txt\ngunicorn>=23,<24\n'
+              (root/'requirements-server.txt').write_bytes(wrapper)
+              (root/'requirements.txt').write_text('pyotp>=2.9,<3\ncryptography>=45,<47\n', encoding='utf-8')
+              old,_=fingerprint(root/'requirements-server.txt', root)
+              (root/'requirements.txt').write_text('pyotp>=2.9,<3\ncryptography>=45,<47\nsegno>=1.6,<2\n', encoding='utf-8')
+              new,_=fingerprint(root/'requirements-server.txt', root)
+              assert (root/'requirements-server.txt').read_bytes() == wrapper
+              assert old != new
+              print('PASS - byte-identical requirements-server detects transitive segno addition')
+              print('OLD_CLOSURE='+old)
+              print('NEW_CLOSURE='+new)
+          PY
+
+  ec2-read-only-posture:
+    runs-on:
+      - self-hosted
+      - Linux
+      - X64
+      - twds-alpha
+      - ec2
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - name: Confirm validation does not mutate production runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin alpha
+          test "$(git rev-parse origin/alpha)" = 'e12ba5cb33cd2db829639a4bb117a2aa4541fddd'
+          BEFORE="$(systemctl show totalrodesign.service -p ActiveEnterTimestampMonotonic -p NRestarts -p MainPID --value | tr '\n' '|')"
+          test "$(systemctl show totalrodesign.service -p ProtectSystem --value)" = strict
+          RW="$(systemctl show totalrodesign.service -p ReadWritePaths --value)"
+          printf '%s\n' "$RW" | tr ' ' '\n' | grep -Fx '/opt/totalrodesign/app/instance' >/dev/null
+          sudo -n -l | grep -F 'NOPASSWD: /usr/local/sbin/twds-alpha-deploy' >/dev/null
+          sudo -n -l | grep -v 'NOPASSWD: /usr/local/sbin/twds-alpha-deploy' | grep -q 'NOPASSWD:' && {
+            echo 'ERROR: unexpected additional passwordless sudo rule'; exit 1;
+          } || true
+          python3 -m py_compile deploy/requirements_fingerprint.py tests/test_requirements_fingerprint.py tests/test_dependency_deployer_contract.py
+          python3 -m unittest tests.test_requirements_fingerprint tests.test_dependency_deployer_contract -v
+          bash -n deploy/twds-alpha-deploy
+          bash -n deploy/install_dependency_closure_hardening.sh
+          AFTER="$(systemctl show totalrodesign.service -p ActiveEnterTimestampMonotonic -p NRestarts -p MainPID --value | tr '\n' '|')"
+          test "$BEFORE" = "$AFTER"
+          echo 'PASS - production service/venv untouched during hardening validation'
