@@ -1,0 +1,210 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 027
+
+# Root-owned protected Alpha deployer. The GitHub runner is permitted to sudo
+# only this command; all privileged dependency work remains inside this audited
+# rollback-protected path.
+
+STAGE=/opt/twds-deploy/staging
+APP_ROOT=/opt/totalrodesign
+APP_DIR=$APP_ROOT/app
+VENV_LINK=$APP_ROOT/venv
+BACKUP_ROOT=/opt/twds-deploy/backups
+SERVICE=totalrodesign.service
+BIO_SERVICE=totalbiodesign.service
+SERVICE_USER=totalrodesign
+FP_HELPER=/usr/local/lib/twds-alpha/requirements_fingerprint.py
+FP_NAME=.twds_requirements_fingerprint
+STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+BACKUP_DIR="$BACKUP_ROOT/$STAMP"
+CANDIDATE_VENV="$APP_ROOT/venv-candidate-$STAMP-$$"
+CUTOVER=0
+REFRESH_VENV=0
+OLD_VENV_TARGET=""
+OLD_VENV_WAS_SYMLINK=0
+
+fail() { echo "ERROR: $*" >&2; exit 1; }
+
+if [[ $EUID -ne 0 ]]; then
+  fail "twds-alpha-deploy must run as root through the restricted sudo rule"
+fi
+
+trusted_root_file() {
+  local path="$1" mode owner group
+  [[ -f "$path" ]] || fail "trusted deployment file missing: $path"
+  owner="$(stat -c %U "$path")"
+  group="$(stat -c %G "$path")"
+  mode="$(stat -c %a "$path")"
+  [[ "$owner" == root && "$group" == root ]] || fail "trusted deployment file must be root:root: $path"
+  # Reject group/world writable trusted code.
+  if (( (8#$mode & 0022) != 0 )); then
+    fail "trusted deployment file is group/world writable: $path mode=$mode"
+  fi
+}
+
+fingerprint() {
+  local root="$1"
+  /usr/bin/python3 "$FP_HELPER" "$root/requirements-server.txt" --repo-root "$root"
+}
+
+health_ok() {
+  systemctl is-active --quiet "$SERVICE" \
+    && curl -fsS --max-time 10 http://127.0.0.1:8000/healthz >/dev/null \
+    && curl -fsS --max-time 10 http://127.0.0.1:8000/ >/dev/null
+}
+
+restore_on_error() {
+  local rc=$?
+  if [[ $CUTOVER -eq 1 ]]; then
+    echo "===== DEPLOYMENT FAILED - ROLLING BACK =====" >&2
+    if [[ -d "$BACKUP_DIR/app" ]]; then
+      rsync -a --delete --exclude='instance/' "$BACKUP_DIR/app/" "$APP_DIR/" || true
+    fi
+    if [[ $REFRESH_VENV -eq 1 && -n "$OLD_VENV_TARGET" ]]; then
+      if [[ $OLD_VENV_WAS_SYMLINK -eq 1 ]]; then
+        rm -f "$VENV_LINK" || true
+        ln -s "$OLD_VENV_TARGET" "$VENV_LINK" || true
+      fi
+    fi
+    systemctl daemon-reload || true
+    systemctl restart "$SERVICE" || true
+    for _ in $(seq 1 15); do
+      if health_ok; then
+        echo "ROLLBACK SUCCESSFUL" >&2
+        break
+      fi
+      sleep 2
+    done
+  fi
+  if [[ $REFRESH_VENV -eq 1 && -d "$CANDIDATE_VENV" ]]; then
+    if [[ "$(readlink -f "$VENV_LINK" 2>/dev/null || true)" != "$CANDIDATE_VENV" ]]; then
+      rm -rf "$CANDIDATE_VENV" || true
+    fi
+  fi
+  exit "$rc"
+}
+trap restore_on_error ERR
+
+mkdir -p "$BACKUP_ROOT"
+trusted_root_file "$FP_HELPER"
+
+echo "===== TWDS ALPHA DEPLOYMENT ====="
+echo "UTC deployment: $STAMP"
+
+echo "===== VALIDATING STAGING TREE ====="
+for f in app.py auth.py wsgi.py requirements.txt requirements-server.txt deploy/verify_templates.py deploy/verify_auth_install.py; do
+  [[ -f "$STAGE/$f" ]] || fail "staging file missing: $f"
+done
+[[ -f "$STAGE/.deployment_commit" ]] || fail "staging deployment marker missing"
+RELEASE_SHA="$(tr -d '\r\n ' < "$STAGE/.deployment_commit")"
+[[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || fail "invalid staging deployment SHA"
+if find "$STAGE" \
+  \( -name '.env' -o -name '*.db' -o -name '*.sqlite' -o -name '*.sqlite3' -o -name '*.pem' -o -name '*.key' \) \
+  -print | grep -q .; then
+  fail "forbidden runtime/secret file detected in staging"
+fi
+echo "PASS - staging tree validated"
+
+echo "===== DEPENDENCY CLOSURE SAFETY GATE ====="
+CANDIDATE_FP="$(fingerprint "$STAGE")"
+[[ "$CANDIDATE_FP" =~ ^[0-9a-f]{64}$ ]] || fail "candidate dependency fingerprint invalid"
+[[ -e "$VENV_LINK" || -L "$VENV_LINK" ]] || fail "live venv is missing"
+[[ -f "$VENV_LINK/$FP_NAME" ]] || {
+  echo "ERROR: validated live venv has no dependency fingerprint." >&2
+  echo "Run the authorized one-time dependency-hardening installer/seed before deploying." >&2
+  exit 78
+}
+LIVE_FP="$(tr -d '\r\n ' < "$VENV_LINK/$FP_NAME")"
+[[ "$LIVE_FP" =~ ^[0-9a-f]{64}$ ]] || fail "live venv dependency fingerprint invalid"
+
+echo "Candidate dependency fingerprint: $CANDIDATE_FP"
+echo "Validated live venv fingerprint: $LIVE_FP"
+if [[ "$CANDIDATE_FP" == "$LIVE_FP" ]]; then
+  echo "PASS - dependency closure unchanged; validated live venv will be reused"
+else
+  REFRESH_VENV=1
+  echo "DEPENDENCY CLOSURE CHANGED - building isolated candidate venv before application cutover"
+  rm -rf "$CANDIDATE_VENV"
+  /usr/bin/python3 -m venv "$CANDIDATE_VENV"
+  "$CANDIDATE_VENV/bin/python" -m pip install --upgrade pip setuptools wheel
+  "$CANDIDATE_VENV/bin/python" -m pip install -r "$STAGE/requirements-server.txt"
+  "$CANDIDATE_VENV/bin/python" -m pip check
+  "$CANDIDATE_VENV/bin/python" "$STAGE/deploy/verify_templates.py"
+  "$CANDIDATE_VENV/bin/python" "$STAGE/deploy/verify_auth_install.py"
+  "$CANDIDATE_VENV/bin/python" -m compileall -q "$STAGE"
+  printf '%s\n' "$CANDIDATE_FP" > "$CANDIDATE_VENV/$FP_NAME"
+  chown -R root:"$SERVICE_USER" "$CANDIDATE_VENV"
+  chmod -R g+rX,o-rwx "$CANDIDATE_VENV"
+  chmod 0444 "$CANDIDATE_VENV/$FP_NAME"
+  echo "PASS - isolated candidate venv dependency and runtime validation"
+fi
+
+echo "===== BACKING UP CURRENT LIVE CODE ====="
+mkdir -p "$BACKUP_DIR/app"
+rsync -a --delete --exclude='instance/' "$APP_DIR/" "$BACKUP_DIR/app/"
+printf '%s\n' "$RELEASE_SHA" > "$BACKUP_DIR/incoming_commit"
+if [[ -L "$VENV_LINK" ]]; then
+  OLD_VENV_WAS_SYMLINK=1
+  OLD_VENV_TARGET="$(readlink -f "$VENV_LINK")"
+fi
+if [[ $REFRESH_VENV -eq 1 && $OLD_VENV_WAS_SYMLINK -ne 1 ]]; then
+  fail "dependency refresh requires the managed stable venv symlink layout"
+fi
+echo "Backup: $BACKUP_DIR"
+
+echo "===== DEPLOYING NEW CODE ====="
+CUTOVER=1
+rsync -a --delete \
+  --exclude='instance/' --exclude='__pycache__/' --exclude='*.pyc' \
+  --exclude='.pytest_cache/' --exclude='dist/' --exclude='build/' \
+  "$STAGE/" "$APP_DIR/"
+mkdir -p "$APP_DIR/instance"
+chown -R root:"$SERVICE_USER" "$APP_DIR"
+chmod -R g+rX,o-rwx "$APP_DIR"
+chown -R "$SERVICE_USER":"$SERVICE_USER" "$APP_DIR/instance"
+chmod 750 "$APP_DIR" "$APP_DIR/instance"
+
+if [[ $REFRESH_VENV -eq 1 ]]; then
+  rm -f "$VENV_LINK"
+  ln -s "$CANDIDATE_VENV" "$VENV_LINK"
+fi
+
+echo "===== PYTHON VALIDATION ====="
+"$VENV_LINK/bin/python" -m compileall -q "$APP_DIR"
+echo "PASS - Python compilation"
+
+echo "===== RESTARTING APPLICATION ====="
+systemctl daemon-reload
+systemctl restart "$SERVICE"
+
+echo "===== HEALTH CHECK ====="
+HEALTHY=0
+for _ in $(seq 1 15); do
+  if health_ok; then
+    HEALTHY=1
+    break
+  fi
+  sleep 2
+done
+[[ $HEALTHY -eq 1 ]] || fail "application failed post-cutover health checks"
+echo "PASS - Total RO Design service active"
+echo "PASS - Local HTTP health check successful"
+
+if systemctl list-unit-files --type=service 2>/dev/null | grep -q '^totalbiodesign\.service'; then
+  systemctl is-active --quiet "$BIO_SERVICE" || fail "Total Bio Design is not active"
+  echo "PASS - Total Bio Design remains active"
+fi
+
+CUTOVER=0
+trap - ERR
+
+echo "===== DEPLOYMENT SUCCESSFUL ====="
+echo "Commit: $RELEASE_SHA"
+echo "Dependency fingerprint: $CANDIDATE_FP"
+if [[ $REFRESH_VENV -eq 1 ]]; then
+  echo "Venv: refreshed through validated isolated candidate environment"
+else
+  echo "Venv: existing validated environment reused"
+fi
+echo "Backup retained: $BACKUP_DIR"
