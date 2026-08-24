@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
-"""Isolated authenticated-suite smoke test used by the Ubuntu installer.
+"""Isolated authenticated-suite smoke test used by deployment installers.
 
-The installer runs this against a temporary SQLite database before copying the
-release into the live application directory. It validates the shared suite
-login, additive product entitlements, direct RO entry, and tier enforcement.
+The installer runs this against a temporary SQLite database before privileged
+infrastructure activation/cutover. The smoke deliberately imports the canonical
+production ``wsgi.py`` composition so every Suite service used by the rendered
+admin surface is registered exactly as it is for Gunicorn.
+
+This general smoke validates password authentication, entitlements, projects,
+and admin rendering. Mandatory MFA *enforcement* is disabled only inside this
+temporary test process after the real MFA blueprint/hooks are registered; MFA
+behavior remains enabled in production and is covered by dedicated MFA tests.
 """
 from __future__ import annotations
 
@@ -29,6 +35,7 @@ with tempfile.TemporaryDirectory(prefix="totalwater-suite-auth-check-") as tmp:
             "TOTALRO_COOKIE_SECURE": "0",
             "TOTALRO_TRUSTED_HOSTS": "localhost,127.0.0.1",
             "TOTALRO_SMTP_HOST": "",
+            "TOTALRO_EC2_INSTANCE_TYPE": "installer-validation",
             "CALCOSPOWER_TEST_SERIAL": "1",
             "TOTALRO_COMPUTE_MODE": "cpu",
             "TOTALRO_MAX_ENGINEERING_WORKERS": "auto",
@@ -40,7 +47,10 @@ with tempfile.TemporaryDirectory(prefix="totalwater-suite-auth-check-") as tmp:
         }
     )
 
-    import app as app_module  # noqa: E402
+    # Import the same composition Gunicorn imports in production. This registers
+    # Suite MFA, communications, commercial/products, feedback, reports, metrics,
+    # CCRO, Batch RO and the other additive Suite services before admin rendering.
+    import wsgi as wsgi_module  # noqa: E402
     from auth import (  # noqa: E402
         LoginAddress,
         ProductEntitlement,
@@ -49,9 +59,37 @@ with tempfile.TemporaryDirectory(prefix="totalwater-suite-auth-check-") as tmp:
         db,
         ensure_default_entitlements,
     )
+    from flask import url_for  # noqa: E402
 
-    app = app_module.app
+    app = wsgi_module.app
     app.config.update(TESTING=True)
+
+    # This is intentionally narrower than an MFA functional test. Keep the real
+    # MFA blueprint and request hooks registered, but disable mandatory MFA only
+    # in this disposable process so the existing password/auth/entitlement smoke
+    # can exercise its independent concerns. Dedicated MFA tests verify mandatory
+    # production policy, TOTP, recovery, replay protection and admin reset.
+    os.environ["TWDS_MFA_REQUIRED"] = "0"
+    app.config["SUITE_MFA_REQUIRED"] = False
+
+    # Every endpoint referenced unconditionally by auth/admin_base.html must be
+    # registered by the canonical composition before any admin page is rendered.
+    required_admin_endpoints = (
+        "auth.admin_users",
+        "auth.admin_projects",
+        "auth.admin_metrics",
+        "suite_feedback.feedback_admin_page",
+        "suite_mfa.admin_security",
+        "suite_communications.admin_communications",
+        "suite_commercial.admin_products",
+    )
+    for endpoint in required_admin_endpoints:
+        assert endpoint in app.view_functions, f"Missing production admin endpoint: {endpoint}"
+    with app.test_request_context("/admin/users"):
+        for endpoint in required_admin_endpoints:
+            built = url_for(endpoint)
+            assert built.startswith("/"), (endpoint, built)
+
     accepted = datetime.now(timezone.utc)
     with app.app_context():
         db.create_all()
@@ -225,4 +263,4 @@ with tempfile.TemporaryDirectory(prefix="totalwater-suite-auth-check-") as tmp:
         from auth import AccountAudit
         assert db.session.query(AccountAudit).filter_by(action="admin_project_inspected").count() == 1
 
-print("Total Water Design Suite v0.25 Alpha authenticated-server smoke test: PASSED")
+print("Total Water Design Suite v0.25 Alpha canonical authenticated-server smoke test: PASSED")
