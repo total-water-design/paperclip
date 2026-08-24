@@ -36,6 +36,12 @@ def test_all_unconditional_admin_navigation_endpoints_are_required_by_smoke():
     assert 'client.get("/admin/projects")' in text
 
 
+def test_admin_create_smoke_uses_current_required_country_contract():
+    text = VERIFY.read_text(encoding="utf-8")
+    assert '"country_code": "US"' in text
+    assert 'product_user.country_code == "US"' in text
+
+
 def test_harness_does_not_change_dependency_or_production_mfa_configuration_files():
     # This regression is intentionally scoped to the verifier. Production WSGI
     # must still mandate MFA; the verifier may only override its subprocess env.
