@@ -1,0 +1,70 @@
+{% import "shared/suite_components.html" as ui with context %}
+<!doctype html>
+<html lang="en" data-theme="system">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+  {% if auth_enabled %}<meta name="csrf-token" content="{{ csrf_token() }}">{% endif %}
+  <title>{% block title %}{{ app_name|default('Total Water Design Suite Application') }}{% endblock %}</title>
+  <link rel="icon" href="{{ url_for('static', filename=app_icon_asset|default('branding/suite/total_water_design_suite_icon_32.png')) }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='suite_ui_tokens.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='suite_application_shell.css') }}">
+  {% if config.get('SUITE_FEEDBACK_ENABLED', false) %}<link rel="stylesheet" href="{{ url_for('static', filename='suite_feedback.css') }}">{% endif %}
+  {% block app_styles %}{% endblock %}
+</head>
+<body class="twds-application" style="--twds-app-accent:{{ app_accent|default('#1769D2') }}">
+<div class="twds-app-shell" data-twds-app-shell data-app-id="{{ app_id|default('unknown') }}" data-app-name="{{ app_name|default('Suite Application') }}" data-app-version="{{ app_version|default('') }}">
+  <header class="twds-app-header">
+    <div class="twds-app-header__identity">
+      {{ ui.master_lockup(url_for('suite_dashboard'), 'branding/suite/total_water_design_suite_icon_64.png', true) }}
+      <span class="twds-app-header__divider" aria-hidden="true"></span>
+      {{ ui.application_identity(app_name|default('Suite Application'), app_icon_asset|default('branding/suite/total_water_design_suite_icon_64.png'), app_version|default('')) }}
+    </div>
+    <div class="twds-app-header__actions">
+      {% block header_actions %}{% endblock %}
+      {% if config.get('SUITE_FEEDBACK_ENABLED', false) %}<button type="button" class="twds-button twds-button--quiet" data-twds-feedback-open>Feedback</button>{% endif %}
+      <label class="twds-theme-control"><span>Appearance</span><select data-twds-theme-select aria-label="Appearance"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
+      {{ ui.account_menu() }}
+    </div>
+  </header>
+
+  <div class="twds-app-body">
+    <aside class="twds-app-nav" aria-label="{{ app_name|default('Application') }} navigation">
+      <a class="twds-suite-return" href="{{ url_for('suite_dashboard') }}">← Suite</a>
+      <div class="twds-app-nav__heading"><span>APPLICATION</span><strong>{{ app_name|default('Suite Application') }}</strong></div>
+      {% block application_navigation %}{% endblock %}
+    </aside>
+
+    <section class="twds-app-main">
+      {% block project_bar %}{{ ui.project_bar(project_name|default('Untitled project'), project_id|default(''), project_revision|default(''), false, true) }}{% endblock %}
+      <nav class="twds-workspace-nav" aria-label="Workspace navigation">{% block workspace_navigation %}{% endblock %}</nav>
+      <section class="twds-workspace" data-twds-dirty-watch>
+        <header class="twds-workspace-heading">
+          <div><span class="twds-workspace-heading__eyebrow">{% block workspace_eyebrow %}WORKSPACE{% endblock %}</span><h1>{% block workspace_title %}Engineering workspace{% endblock %}</h1><p>{% block workspace_description %}{% endblock %}</p></div>
+          <div class="twds-workspace-heading__actions">{% block workspace_actions %}{% endblock %}</div>
+        </header>
+        <div class="twds-calculation-live" data-twds-calculation-live aria-live="polite" aria-atomic="true"></div>
+        {% block guidance %}{% endblock %}
+        <main class="twds-workspace-content">{% block content %}{% endblock %}</main>
+      </section>
+    </section>
+  </div>
+</div>
+
+{% if config.get('SUITE_FEEDBACK_ENABLED', false) %}
+<dialog class="twds-feedback-dialog" data-twds-feedback-dialog aria-labelledby="twdsFeedbackTitle">
+  <form method="dialog" class="twds-feedback-dialog__shell" data-twds-feedback-form>
+    <header><div><span>SUITE FEEDBACK</span><h2 id="twdsFeedbackTitle">Tell us what you found</h2><p>Your application, project and current workspace are attached automatically. A screenshot is optional.</p></div><button type="button" class="twds-feedback-close" data-twds-feedback-close aria-label="Close feedback">×</button></header>
+    <label><span>Feedback type</span><select name="category"><option value="calculation">Calculation / result concern</option><option value="usability">Usability / workflow</option><option value="data">Database / product data</option><option value="report">Report</option><option value="bug">Application problem</option><option value="suggestion">Suggestion</option><option value="general">General feedback</option></select></label>
+    <label><span>Description</span><textarea name="message" rows="6" maxlength="12000" required placeholder="Describe what happened, what you expected, or what could be improved."></textarea></label>
+    <label class="twds-feedback-check"><input type="checkbox" name="include_screenshot" checked><span>Include a screenshot of the current tab when the browser allows it</span></label>
+    <div class="twds-feedback-status" data-twds-feedback-status aria-live="polite"></div>
+    <footer><button type="button" class="twds-button twds-button--quiet" data-twds-feedback-close>Cancel</button><button type="submit" class="twds-button twds-button--primary" data-twds-feedback-submit>Submit feedback</button></footer>
+  </form>
+</dialog>
+{% endif %}
+
+<script src="{{ url_for('static', filename='suite_application_shell.js') }}" defer></script>
+{% if config.get('SUITE_FEEDBACK_ENABLED', false) %}<script src="{{ url_for('static', filename='suite_feedback.js') }}" defer></script>{% endif %}
+{% block app_scripts %}{% endblock %}
+</body>
+</html>

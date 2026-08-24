@@ -1,0 +1,70 @@
+{% macro master_lockup(href, icon_asset='branding/suite/total_water_design_suite_icon_128.png', small=false) -%}
+<a class="suite-master-lockup{% if small %} small{% endif %}" href="{{ href }}" aria-label="Total Water Design Suite">
+  <img src="{{ url_for('static', filename=icon_asset) }}" alt="">
+  <span><small>TOTAL WATER</small><strong>DESIGN SUITE</strong></span>
+</a>
+{%- endmacro %}
+
+{% macro application_identity(name, icon_asset, version='', endorsement='Part of the Total Water Design Suite') -%}
+<div class="twds-app-identity">
+  <img class="twds-app-identity__icon" src="{{ url_for('static', filename=icon_asset) }}" alt="">
+  <div class="twds-app-identity__copy"><strong>{{ name }}</strong><span>{{ endorsement }}</span></div>
+  {% if version %}<span class="twds-chip twds-chip--neutral">{{ version }}</span>{% endif %}
+</div>
+{%- endmacro %}
+
+{% macro account_menu() -%}
+{% if auth_enabled and current_user.is_authenticated %}
+<details class="twds-account-menu">
+  <summary><span class="twds-account-avatar" aria-hidden="true">{{ (current_user.full_name or current_user.email)[0]|upper }}</span><span><strong>{{ current_user.full_name }}</strong><small>{{ current_user.licensed_tier|title }}</small></span></summary>
+  <div class="twds-account-menu__panel">
+    <div class="twds-account-menu__identity"><strong>{{ current_user.full_name }}</strong><span>{{ current_user.email }}</span><small>{{ current_user.role|title }} · {{ current_user.licensed_tier|title }}</small></div>
+    <a href="{{ url_for('auth.account') }}">My account</a>
+    {% if current_user.is_admin %}<a href="{{ url_for('auth.admin_users') }}">Manage users</a><a href="{{ url_for('auth.admin_projects') }}">Project database</a>{% endif %}
+    <form method="post" action="{{ url_for('auth.logout') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button type="submit">Sign out</button></form>
+  </div>
+</details>
+{% endif %}
+{%- endmacro %}
+
+{% macro status_chip(label, severity='information') -%}<span class="twds-chip twds-chip--{{ severity|replace('_','-') }}">{{ label }}</span>{%- endmacro %}
+
+{% macro guidance(severity, title, message, action_label='', action_id='') -%}
+<section class="twds-guidance twds-guidance--{{ severity|replace('_','-') }}" role="{% if severity in ['calculation_error','critical'] %}alert{% else %}status{% endif %}">
+  <div class="twds-guidance__marker" aria-hidden="true"></div>
+  <div class="twds-guidance__body"><strong>{{ title }}</strong><p>{{ message }}</p></div>
+  {% if action_label %}<button type="button" class="twds-button twds-button--secondary" {% if action_id %}id="{{ action_id }}"{% endif %}>{{ action_label }}</button>{% endif %}
+</section>
+{%- endmacro %}
+
+{% macro project_bar(project_name='Untitled project', project_id='', revision='', dirty=false, allow_handoff=true) -%}
+<section class="twds-project-bar" data-twds-project-bar>
+  <div class="twds-project-bar__identity">
+    <span class="twds-project-bar__eyebrow">PROJECT</span><strong data-twds-project-name>{{ project_name }}</strong>
+    <small>{% if project_id %}<span data-twds-project-id>{{ project_id }}</span>{% endif %}{% if revision %}<span data-twds-project-revision>{{ revision }}</span>{% endif %}<span class="twds-unsaved" data-twds-unsaved {% if not dirty %}hidden{% endif %}>Unsaved changes</span></small>
+  </div>
+  <div class="twds-project-bar__actions" aria-label="Project controls">
+    <button type="button" class="twds-button twds-button--quiet" data-twds-project-action="new">New Project</button>
+    <button type="button" class="twds-button twds-button--quiet" data-twds-project-action="library">Project Library</button>
+    <button type="button" class="twds-button twds-button--secondary" data-twds-project-action="save">Save</button>
+    <details class="twds-project-more"><summary class="twds-button twds-button--quiet">More</summary><div>
+      <button type="button" data-twds-project-action="save-as">Save As</button><button type="button" data-twds-project-action="revision">Revision</button><button type="button" data-twds-project-action="duplicate">Duplicate</button>{% if allow_handoff %}<button type="button" data-twds-project-action="handoff">Handoff</button>{% endif %}
+    </div></details>
+  </div>
+</section>
+{%- endmacro %}
+
+{% macro calculate_button(state='idle', label='Calculate', button_id='') -%}
+<button type="submit" class="twds-button twds-button--primary twds-calculate" data-twds-calculate-state="{{ state }}" {% if button_id %}id="{{ button_id }}"{% endif %}><span data-twds-calculate-label>{{ label }}</span><span class="twds-calculate__spinner" aria-hidden="true"></span></button>
+{%- endmacro %}
+
+{% macro kpi(label, value='—', unit='', status='') -%}
+<article class="twds-kpi{% if status %} twds-kpi--{{ status }}{% endif %}"><span>{{ label }}</span><strong>{{ value }}</strong>{% if unit %}<small>{{ unit }}</small>{% endif %}</article>
+{%- endmacro %}
+
+{% macro handoff_card(source_app, source_project, receiving_app, stream_name, lineage_id='', inherited_count=0, editable_count=0) -%}
+<section class="twds-handoff-card">
+  <div class="twds-handoff-card__route"><div><span>Source</span><strong>{{ source_app }}</strong><small>{{ source_project }}</small></div><span class="twds-handoff-card__arrow" aria-hidden="true">→</span><div><span>Receiving application</span><strong>{{ receiving_app }}</strong><small>{{ stream_name }}</small></div></div>
+  <dl>{% if lineage_id %}<div><dt>Lineage</dt><dd>{{ lineage_id }}</dd></div>{% endif %}<div><dt>Inherited values</dt><dd>{{ inherited_count }}</dd></div><div><dt>Editable inherited values</dt><dd>{{ editable_count }}</dd></div></dl>
+</section>
+{%- endmacro %}

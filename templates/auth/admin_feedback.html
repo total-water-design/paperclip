@@ -1,0 +1,82 @@
+{% extends "auth/admin_base.html" %}
+{% block title %}Feedback — Total Water Design Suite{% endblock %}
+{% block content %}
+<section class="admin-toolbar" style="grid-template-columns:1fr auto">
+  <div><strong>Suite feedback</strong><div class="admin-debug-note" style="margin:6px 0 0">The Suite database is authoritative. Customer feedback reaches product review or GitHub only after explicit administrator acceptance and authorization.</div></div>
+  <a class="admin-secondary" href="{{ url_for('suite_feedback.feedback_admin_page') }}">Clear filters</a>
+</section>
+<form method="get" class="admin-toolbar" aria-label="Feedback filters" data-feedback-filter-form>
+  <select name="application" aria-label="Application"><option value="">All applications</option>{% for app in applications %}<option value="{{ app }}" {% if request.args.get('application') == app %}selected{% endif %}>{{ app }}</option>{% endfor %}</select>
+  <select name="status" aria-label="Status"><option value="">All statuses</option>{% for state in statuses %}<option value="{{ state }}" {% if request.args.get('status') == state %}selected{% endif %}>{{ state|replace('_',' ')|title }}</option>{% endfor %}</select>
+  <input name="user" type="search" value="{{ request.args.get('user','') }}" placeholder="User email">
+  <label><span class="sr-only">From date</span><input name="date_from" type="date" value="{{ request.args.get('date_from','') }}" aria-label="Feedback from date"></label>
+  <label><span class="sr-only">To date</span><input name="date_to" type="date" value="{{ request.args.get('date_to','') }}" aria-label="Feedback to date"></label>
+  <button class="admin-primary compact" type="submit">Filter</button>
+</form>
+<section class="admin-metric-strip">
+  <div><span>Visible</span><strong id="feedbackVisibleCount">{{ feedback_rows|length }}</strong></div>
+  <div><span>New</span><strong>{{ feedback_rows|selectattr('status','equalto','NEW')|list|length }}</strong></div>
+  <div><span>Accepted</span><strong>{{ feedback_rows|selectattr('acceptance_state','equalto','accepted')|list|length }}</strong></div>
+  <div><span>Replied</span><strong>{{ feedback_rows|selectattr('response_sent_at')|list|length }}</strong></div>
+</section>
+<div class="admin-table-shell">
+<table class="admin-data-table" style="min-width:1250px">
+<thead><tr><th>Ticket / status</th><th>Application</th><th>User</th><th>Feedback</th><th>Project / workspace</th><th>Priority</th><th>Email</th><th>GitHub</th><th>Review</th></tr></thead>
+<tbody>
+{% for row in feedback_rows %}
+<tr data-feedback-row data-created-date="{{ row.created_at.strftime('%Y-%m-%d') if row.created_at else '' }}">
+  <td><strong>{{ row.ticket }}</strong><small class="admin-ip-last">{{ row.status|replace('_',' ')|title }}</small><small class="admin-ip-last">{{ row.created_at.strftime('%Y-%m-%d %H:%M') if row.created_at else '—' }}</small></td>
+  <td>{{ row.application }}{% if row.application_version %}<small class="admin-ip-last">{{ row.application_version }}</small>{% endif %}<small class="admin-ip-last">{{ row.category }}</small></td>
+  <td>{{ row.user_first_name or '—' }}{% if row.user_email %}<small class="admin-ip-last">{{ row.user_email }}</small>{% endif %}</td>
+  <td style="white-space:normal;min-width:280px">{{ row.message }}</td>
+  <td>{{ row.project_id or '—' }}{% if row.project_revision %}<small class="admin-ip-last">{{ row.project_revision }}</small>{% endif %}{% if row.workspace %}<small class="admin-ip-last">{{ row.workspace }}</small>{% endif %}</td>
+  <td>{{ row.priority|title }}</td>
+  <td><small class="admin-ip-last">Support: {{ row.delivery_status }}</small><small class="admin-ip-last">Receipt: {{ row.receipt_email_status }}</small><small class="admin-ip-last">Response: {{ 'sent' if row.response_sent_at else row.response_approval_state }}</small>{% if row.delivery_status != 'sent' %}<button type="button" class="admin-action" data-feedback-retry="{{ row.id }}">Retry support email</button>{% endif %}</td>
+  <td>{% if row.github_issue_url %}<a href="{{ row.github_issue_url }}" target="_blank" rel="noopener">#{{ row.github_issue_id }}</a>{% else %}—{% endif %}</td>
+  <td><details class="admin-feedback-review"><summary class="admin-action">Open review</summary>
+    <form method="post" action="{{ url_for('suite_feedback.feedback_admin_action', report_id=row.id) }}" class="admin-feedback-workflow-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="admin-form-grid two">
+        <label><span>Category</span><select name="category">{% for item in categories %}<option value="{{ item }}" {% if row.category == item %}selected{% endif %}>{{ item|title }}</option>{% endfor %}</select></label>
+        <label><span>Priority</span><select name="priority">{% for item in priorities %}<option value="{{ item }}" {% if row.priority == item %}selected{% endif %}>{{ item|title }}</option>{% endfor %}</select></label>
+        <label><span>Product-owner branch</span><input name="product_owner_branch" value="{{ row.product_owner_branch }}" placeholder="e.g. app/total-ro-design"></label>
+        <label><span>Duplicate of ticket</span><input name="duplicate_of_ticket" value="{{ row.duplicate_of_ticket }}"></label>
+      </div>
+      <label><span>Administrator review</span><textarea name="admin_review" rows="4">{{ row.admin_review }}</textarea></label>
+      <label><span>Sanitized technical requirement</span><textarea name="technical_requirement" rows="4" placeholder="No customer identity or confidential project content">{{ row.technical_requirement }}</textarea></label>
+      <label><span>Sanitized reproduction / verification information</span><textarea name="reproduction_info" rows="4">{{ row.reproduction_info }}</textarea></label>
+      <label><span>Response draft</span><textarea name="response_draft" rows="5">{{ row.response_draft }}</textarea></label>
+      <label class="toggle-label"><input type="checkbox" name="ai_processing_authorized" value="1" {% if row.ai_processing_authorized %}checked{% endif %}><span>Explicitly authorize AI/product-development processing after acceptance</span></label>
+      <div class="admin-row-actions" style="flex-wrap:wrap">
+        <button class="admin-action" name="action" value="save" type="submit">Save review</button>
+        <button class="admin-action approve" name="action" value="accept" type="submit">Accept</button>
+        <button class="admin-action danger" name="action" value="reject" type="submit">Reject</button>
+        <button class="admin-action" name="action" value="request_info" type="submit">Request more info</button>
+        <button class="admin-action" name="action" value="duplicate" type="submit">Mark duplicate</button>
+        <button class="admin-action approve" name="action" value="authorize_product_review" type="submit">Approve product review</button>
+        <button class="admin-action" name="action" value="approve_response" type="submit">Approve response</button>
+        <button class="admin-action" name="action" value="reject_response" type="submit">Reject response</button>
+        <button class="admin-action approve" name="action" value="send_response" type="submit">Send approved response</button>
+        <button class="admin-action" name="action" value="promote_github" type="submit">Create sanitized GitHub issue</button>
+        <button class="admin-action approve" name="action" value="implemented" type="submit">Implemented</button>
+        <button class="admin-action" name="action" value="close" type="submit">Close</button>
+      </div>
+    </form>
+    <form method="post" action="{{ url_for('suite_feedback_state.update_feedback_state', report_id=row.id) }}" class="admin-feedback-workflow-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      {% set delivery=feedback_state(row.id) %}
+      <div class="admin-form-grid two">
+        <label><span>Implementation status</span><select name="implementation_status">{% for value in ['not_started','planned','in_development','validated','deployed','closed'] %}<option value="{{ value }}" {% if delivery.implementation_status == value %}selected{% endif %}>{{ value|replace('_',' ')|title }}</option>{% endfor %}</select></label>
+        <label><span>Release / version</span><input name="release_version" value="{{ delivery.release_version }}" placeholder="e.g. Alpha 0.26"></label>
+      </div>
+      <label><span>Implementation note</span><input name="note" value="{{ delivery.note }}" maxlength="1000"></label>
+      <button class="admin-action" type="submit">Save implementation status</button>
+    </form>
+  </details></td>
+</tr>
+{% else %}<tr><td colspan="9" class="admin-empty">No feedback matches the current filters.</td></tr>{% endfor %}
+</tbody>
+</table>
+</div>
+<script src="{{ url_for('static', filename='admin_feedback.js') }}" defer></script>
+{% endblock %}

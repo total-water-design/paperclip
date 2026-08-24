@@ -1,0 +1,11 @@
+{% extends "auth/base.html" %}
+{% block title %}Two-step verification — Total Water Design Suite{% endblock %}
+{% block content %}
+<div class="auth-heading"><span>ACCOUNT SECURITY</span><h2>Two-step verification</h2><p>Enter the current code from your authenticator app or an unused recovery code.</p></div>
+<form method="post" class="auth-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <label><span>Verification code</span><input name="code" autocomplete="one-time-code" inputmode="text" maxlength="20" required autofocus></label>
+  <button class="auth-primary" type="submit">Verify and continue</button>
+</form>
+<p class="auth-fine-print">Account: {{ user.email }}. Recovery codes are single-use. If you have lost both your authenticator and recovery codes, contact an administrator for a controlled MFA reset.</p>
+{% endblock %}

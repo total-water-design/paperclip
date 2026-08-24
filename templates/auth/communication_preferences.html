@@ -1,0 +1,11 @@
+{% extends "auth/base.html" %}
+{% block title %}Email preferences — Total Water Design Suite{% endblock %}
+{% block content %}
+<div class="auth-heading"><span>COMMUNICATIONS</span><h2>Email preferences</h2><p>Transactional account and security messages remain enabled when necessary. Product-update announcements are optional.</p></div>
+<form method="post" class="auth-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <label class="auth-check-row"><input type="checkbox" name="product_updates_enabled" value="1" {% if preference.product_updates_enabled %}checked{% endif %}><span><strong>Product update emails</strong><small>Receive occasional plain-language announcements only after an approved release is deployed and health-verified.</small></span></label>
+  <button class="auth-primary" type="submit">Save email preferences</button>
+</form>
+<div class="auth-stack-actions"><a class="auth-secondary auth-button-link" href="{{ url_for('auth.account') }}">Return to account</a></div>
+{% endblock %}

@@ -9,6 +9,7 @@
   <link rel="icon" href="{{ url_for('static', filename='branding/suite/total_water_design_suite_icon_32.png') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='auth.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='admin.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='security.css') }}">
   <script src="{{ url_for('static', filename='admin.js') }}" defer></script>
 </head>
 <body class="suite-admin-page">
@@ -21,6 +22,10 @@
       <a href="{{ url_for('auth.admin_users') }}" class="{% if request.endpoint == 'auth.admin_users' %}active{% endif %}">Users</a>
       <a href="{{ url_for('auth.admin_projects') }}" class="{% if request.endpoint == 'auth.admin_projects' %}active{% endif %}">Projects</a>
       <a href="{{ url_for('auth.admin_metrics') }}" class="{% if request.endpoint == 'auth.admin_metrics' %}active{% endif %}">Metrics</a>
+      {% if config.get('SUITE_FEEDBACK_ENABLED', false) %}<a href="{{ url_for('suite_feedback.feedback_admin_page') }}" class="{% if request.endpoint and request.endpoint.startswith('suite_feedback.') %}active{% endif %}">Feedback</a>{% endif %}
+      <a href="{{ url_for('suite_mfa.admin_security') }}" class="{% if request.endpoint and request.endpoint.startswith('suite_mfa.admin_') %}active{% endif %}">Security</a>
+      <a href="{{ url_for('suite_communications.admin_communications') }}" class="{% if request.endpoint and request.endpoint.startswith('suite_communications.admin_') %}active{% endif %}">Communications</a>
+      <a href="{{ url_for('suite_commercial.admin_products') }}" class="{% if request.endpoint and request.endpoint.startswith('suite_commercial.admin_') %}active{% endif %}">Products</a>
       <a href="{{ url_for('suite_dashboard') }}">Return to Suite</a>
     </nav>
   </header>

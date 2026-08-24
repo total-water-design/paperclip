@@ -1,0 +1,10 @@
+{% extends "auth/base.html" %}
+{% block title %}Recovery codes — Total Water Design Suite{% endblock %}
+{% block content %}
+<div class="auth-heading"><span>ACCOUNT SECURITY</span><h2>Save your recovery codes</h2><p>Each recovery code can be used once if your authenticator is unavailable. They will not be shown again.</p></div>
+<div class="auth-recovery-grid" aria-label="Recovery codes">
+  {% for code in recovery_codes %}<code>{{ code }}</code>{% endfor %}
+</div>
+<div class="auth-security-note"><strong>Store these securely</strong><p>Keep a protected copy outside the device that holds your authenticator. Do not email the codes to yourself or store them in the same password note.</p></div>
+<a class="auth-primary auth-button-link" href="{{ next_url }}">I saved my recovery codes</a>
+{% endblock %}

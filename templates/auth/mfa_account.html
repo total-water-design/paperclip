@@ -1,0 +1,20 @@
+{% extends "auth/base.html" %}
+{% block title %}Security — Total Water Design Suite{% endblock %}
+{% block content %}
+<div class="auth-heading"><span>ACCOUNT SECURITY</span><h2>Two-step verification</h2><p>Manage the recovery options for your Suite account.</p></div>
+<div class="account-summary">
+  <div><span>Status</span><strong>{{ 'Enabled' if profile and profile.enabled else 'Enrollment required' }}</strong></div>
+  <div><span>Primary factor</span><strong>{{ profile.primary_method|upper if profile and profile.primary_method else 'TOTP' }}</strong></div>
+  <div><span>Recovery codes remaining</span><strong>{{ recovery_count }}</strong></div>
+  <div><span>Enrolled</span><strong>{{ profile.enrolled_at.strftime('%Y-%m-%d') if profile and profile.enrolled_at else '—' }}</strong></div>
+</div>
+{% if profile and profile.enabled %}
+<form method="post" action="{{ url_for('suite_mfa.regenerate_recovery_codes') }}" class="auth-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <label><span>Current authenticator code</span><input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required></label>
+  <button class="auth-secondary" type="submit">Replace recovery codes</button>
+</form>
+<p class="auth-fine-print">Replacing recovery codes immediately invalidates every previous recovery code.</p>
+{% endif %}
+<div class="auth-stack-actions"><a class="auth-primary auth-button-link" href="{{ url_for('auth.account') }}">Return to account</a></div>
+{% endblock %}

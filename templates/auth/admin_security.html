@@ -1,0 +1,25 @@
+{% extends "auth/admin_base.html" %}
+{% block title %}Security — Total Water Design Suite{% endblock %}
+{% block content %}
+<section class="admin-toolbar" style="grid-template-columns:1fr">
+  <div><strong>Account security</strong><div class="admin-debug-note" style="margin:6px 0 0">Two-step verification is Suite-wide. Administrator resets invalidate existing sessions and require fresh enrollment at the user's next password login.</div></div>
+</section>
+<div class="admin-table-shell">
+<table class="admin-data-table">
+<thead><tr><th>User</th><th>Role</th><th>Account</th><th>MFA</th><th>Method</th><th>Enrolled</th><th>Action</th></tr></thead>
+<tbody>
+{% for user in users %}{% set profile=profiles.get(user.id) %}
+<tr>
+  <td><strong>{{ user.full_name }}</strong><small class="admin-ip-last">{{ user.email }}</small></td>
+  <td>{{ user.role|title }}</td>
+  <td><span class="admin-status status-{{ user.status }}">{{ user.status|title }}</span></td>
+  <td><span class="admin-status status-{{ 'active' if profile and profile.enabled else 'pending' }}">{{ 'Enabled' if profile and profile.enabled else 'Enrollment required' }}</span></td>
+  <td>{{ profile.primary_method|upper if profile and profile.enabled else '—' }}</td>
+  <td>{{ profile.enrolled_at.strftime('%Y-%m-%d %H:%M') if profile and profile.enrolled_at else '—' }}</td>
+  <td>{% if user.id != current_user.id %}<form method="post" action="{{ url_for('suite_mfa.admin_reset_mfa', user_id=user.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="admin-action warning" type="submit">Reset MFA</button></form>{% else %}<small>Use recovery code / server recovery</small>{% endif %}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+{% endblock %}
