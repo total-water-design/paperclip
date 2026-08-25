@@ -35,7 +35,7 @@
       <div class="suite-product-group-title"><span>{{ heading }}</span><small>{{ description }}</small></div>
       <div class="suite-dashboard-grid">
         {% for product in products if product.category == category %}
-        {% set admin_preview = current_user.is_admin and product.product_id in ['bio', 'zld'] %}
+        {% set admin_preview = current_user.is_admin and product.admin_preview_enabled %}
         <article class="suite-dashboard-card status-{{ product.status }} {% if product.accessible or admin_preview %}accessible{% endif %}" style="--product-accent:{{ product.accent }}">
           <div class="suite-dashboard-card-icon"><img src="{{ url_for('static', filename=product.icon_asset) }}" alt="{{ product.name }} icon"></div>
           <div class="suite-dashboard-card-copy">
@@ -44,7 +44,7 @@
             {% if product.accessible or admin_preview %}
               <div class="suite-entitlement-row">
                 <span>{% if product.status == 'available' %}Subscription{% else %}Access{% endif %}</span>
-                <strong>{% if product.status == 'available' %}{{ product.entitlement.tier|title }}{% else %}Administrator preview{% endif %}</strong>
+                <strong>{% if admin_preview and product.status != 'available' %}Administrator preview{% elif product.status == 'available' %}{{ product.entitlement.tier|title }}{% else %}Authorized access{% endif %}</strong>
               </div>
               <a class="suite-product-cta" href="{{ product.route }}">
                 Open application <span>→</span>
