@@ -1,0 +1,31 @@
+{
+  "source_workbook": "FO_Sizing_Calculator (1)(1).xlsx",
+  "case": "saved default",
+  "expected": {
+    "stage_flux_lmh": [
+      13.3985826222008,
+      12.0542505209452,
+      10.8209178271133,
+      9.68619672104289,
+      8.63423322802102,
+      7.66263101441004,
+      6.77388907000666,
+      5.96274485392392,
+      5.22733947968191,
+      4.5621900663801
+    ],
+    "total_water_recovered_m3_h": 42.3914877018629,
+    "feed_water_recovery": 0.423914877018629,
+    "final_bulk_cf": 1.73585458139376,
+    "final_feed_osmotic_pressure_bar": 45.2981729222148,
+    "average_flux_lmh": 8.47829754037257,
+    "max_cp_modulus": 1.04217734672993,
+    "max_wall_cf": 1.76044486506706,
+    "wall_equivalent_recovery": 0.431961761573311,
+    "total_draw_solute_lost_kg_h": 15.0724823109494,
+    "diluted_draw_molality": 1.40457834402824,
+    "diluted_draw_osmotic_pressure_bar": 66.239009542651,
+    "specific_area": 117.948207790317,
+    "reverse_draw_solute_added_mg_l": 261.636374724379
+  }
+}

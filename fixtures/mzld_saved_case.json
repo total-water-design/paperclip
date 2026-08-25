@@ -1,0 +1,22 @@
+{
+  "source_workbook": "Total_MZLD_Design(1).xlsx",
+  "case": "saved default",
+  "expected": {
+    "bc_distillate_m3_h": 130.0,
+    "bc_concentrate_m3_h": 120.0,
+    "bc_power_kw": 9831.4051306183,
+    "vffe_distillate_m3_h": 12.8571428571429,
+    "vffe_concentrate_m3_h": 107.142857142857,
+    "vffe_film_re": 2024.74840075791,
+    "vffe_film_htc_w_m2_k": 3651.02096678418,
+    "vffe_live_steam_t_h": 3.78151260504202,
+    "fcc_supersaturation": 0.0606060606060606,
+    "fcc_dominant_crystal_mm": 0.145024156644741,
+    "fcc_dry_salt_t_h": 11.6142857142857,
+    "fcc_mother_liquor_m3_h": 69.6428571428571,
+    "overall_recovery": 0.721428571428571,
+    "total_power_kw": 10101.4051306183,
+    "total_live_steam_t_h": 5.78151260504202,
+    "screening_capex_usd": 47103642.8571429
+  }
+}
