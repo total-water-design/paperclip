@@ -12,8 +12,20 @@ class WaterEconomicsFinanceUiTests(unittest.TestCase):
     def test_finance_overlay_preserves_existing_suite_ui(self):
         overlay = read("templates/economics_suite_v04.html")
         self.assertIn('{% extends "economics_suite.html" %}', overlay)
+        self.assertIn("economics_polish.css", overlay)
         self.assertIn("economics_finance.css", overlay)
         self.assertIn("economics_finance.js", overlay)
+
+    def test_visual_polish_uses_suite_tokens_and_stays_app_scoped(self):
+        css = read("static/economics_polish.css")
+        self.assertIn('[data-app-id="economics"]', css)
+        self.assertIn("var(--twds-app-accent)", css)
+        self.assertIn("var(--twds-surface)", css)
+        self.assertIn("var(--twds-line)", css)
+        self.assertIn("@media(max-width:760px)", css)
+        self.assertIn("prefers-reduced-motion", css)
+        self.assertNotIn(".twds-app-shell{", css)
+        self.assertNotIn(".twds-app-header{", css)
 
     def test_product_preview_uses_finance_overlay(self):
         text = read("templates/product_status.html")
@@ -65,6 +77,7 @@ class WaterEconomicsFinanceUiTests(unittest.TestCase):
     def test_finance_ui_is_responsive_and_uses_shared_tokens(self):
         css = read("static/economics_finance.css")
         self.assertIn("var(--twds-line)", css)
+        self.assertIn("var(--twds-app-accent)", css)
         self.assertIn("@media(max-width:1050px)", css)
         self.assertIn("@media(max-width:760px)", css)
 
