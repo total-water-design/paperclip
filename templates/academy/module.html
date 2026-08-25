@@ -1,0 +1,106 @@
+{% extends "academy/base.html" %}
+
+{% block workspace_eyebrow %}<bdi dir="ltr">{{ module.id }}</bdi> · {{ module.hours }} {{ academy_tr('guided_hours') }}{% endblock %}
+{% block workspace_title %}{{ module.title }}{% endblock %}
+{% block workspace_description %}{{ module.learning_objective if module.learning_objective is defined else academy_tr('module_arch_description') }}{% endblock %}
+
+{% block content %}
+{% if not is_pilot %}
+<section class="academy-empty-state">
+  <span class="academy-badge">{{ academy_tr('curriculum_architecture') }}</span>
+  <h2>{{ academy_tr('not_authored') }}</h2>
+  <p>{{ academy_tr('not_authored_copy', pilot=course.levels[0].modules[0].id) }}</p>
+  <a class="twds-button twds-button--primary" href="{{ url_for('academy.module', module_id='L01-M01') }}">{{ academy_tr('open_pilot') }}</a>
+</section>
+{% else %}
+<div class="academy-module" data-academy-module="{{ module.id }}">
+  <section class="academy-design-basis">
+    <span class="academy-eyebrow">{{ academy_tr('teaching_design_basis') }}</span>
+    <p>{{ module.teaching_assumption }}</p>
+  </section>
+
+  <nav class="academy-stepper" aria-label="{{ academy_tr('module_steps') }}">
+    {% for step in module.steps %}<a href="#{{ step.id }}"><span>{{ loop.index }}</span>{{ step.title }}</a>{% endfor %}
+  </nav>
+
+  {% for step in module.steps %}
+    {% if step.kind == 'concept' %}
+    <section class="academy-lesson-card" id="{{ step.id }}" data-academy-step="{{ step.id }}" data-step-kind="concept">
+      <div class="academy-lesson-card__number">{{ loop.index }}</div>
+      <div class="academy-lesson-card__body">
+        <span class="academy-eyebrow">{{ academy_tr('concept') }}</span>
+        <h2>{{ step.title }}</h2>
+        <p class="academy-concept-copy">{{ step.body }}</p>
+        <div class="academy-takeaway"><strong>{{ academy_tr('engineering_takeaway') }}</strong><span>{{ step.takeaway }}</span></div>
+        <button type="button" class="twds-button twds-button--primary" data-complete-concept>{{ academy_tr('got_it') }}</button>
+        <div class="academy-feedback" data-feedback aria-live="polite"></div>
+      </div>
+    </section>
+
+    {% elif step.kind == 'quiz' %}
+    <section class="academy-lesson-card" id="{{ step.id }}" data-academy-step="{{ step.id }}" data-step-kind="quiz">
+      <div class="academy-lesson-card__number">{{ loop.index }}</div>
+      <div class="academy-lesson-card__body">
+        <span class="academy-eyebrow">{{ academy_tr('quiz_checkpoint') }}</span>
+        <h2>{{ step.title }}</h2>
+        <p class="academy-question">{{ step.question }}</p>
+        <div class="academy-choice-list">
+          {% for choice in step.choices %}
+          <label><input type="radio" name="{{ step.id }}" value="{{ loop.index0 }}"><span>{{ choice }}</span></label>
+          {% endfor %}
+        </div>
+        <button type="button" class="twds-button twds-button--primary" data-submit-quiz>{{ academy_tr('check_reasoning') }}</button>
+        <div class="academy-feedback" data-feedback aria-live="polite"></div>
+      </div>
+    </section>
+
+    {% elif step.kind == 'practical' %}
+    <section class="academy-lesson-card academy-lesson-card--mission" id="{{ step.id }}" data-academy-step="{{ step.id }}" data-step-kind="practical">
+      <div class="academy-lesson-card__number">{{ loop.index }}</div>
+      <div class="academy-lesson-card__body">
+        <span class="academy-eyebrow">{{ academy_tr('interactive_design_mission') }}</span>
+        <h2>{{ step.title }}</h2>
+        <p>{{ step.scenario }}</p>
+        <div class="academy-practical-grid">
+          <div>
+            <h3>{{ academy_tr('process_toolbox') }}</h3>
+            <p>{{ academy_tr('select_processes') }}</p>
+            <div class="academy-toolbox" data-toolbox>
+              {% for unit in step.available_units %}<button type="button" data-unit-id="{{ unit.id }}" data-unit-label="{{ unit.label }}">+ {{ unit.label }}</button>{% endfor %}
+            </div>
+          </div>
+          <div>
+            <h3>{{ academy_tr('your_train') }}</h3>
+            <p>{{ academy_tr('arrange_stream') }}</p>
+            <ol class="academy-train" data-academy-train></ol>
+            <button type="button" class="twds-button twds-button--quiet" data-clear-train>{{ academy_tr('clear_train') }}</button>
+          </div>
+        </div>
+        <button type="button" class="twds-button twds-button--primary" data-submit-practical>{{ academy_tr('run_design_review') }}</button>
+        <div class="academy-feedback" data-feedback aria-live="polite"></div>
+      </div>
+    </section>
+
+    {% elif step.kind == 'test' %}
+    <section class="academy-lesson-card academy-lesson-card--test" id="{{ step.id }}" data-academy-step="{{ step.id }}" data-step-kind="test">
+      <div class="academy-lesson-card__number">{{ loop.index }}</div>
+      <div class="academy-lesson-card__body">
+        <span class="academy-eyebrow">{{ academy_tr('module_test', percent=step.pass_percent|int) }}</span>
+        <h2>{{ step.title }}</h2>
+        <div class="academy-test-questions">
+          {% for q in step.questions %}
+          <fieldset data-test-question="{{ q.id }}">
+            <legend>{{ loop.index }}. {{ q.prompt }}</legend>
+            {% for choice in q.choices %}<label><input type="radio" name="{{ q.id }}" value="{{ loop.index0 }}"><span>{{ choice }}</span></label>{% endfor %}
+          </fieldset>
+          {% endfor %}
+        </div>
+        <button type="button" class="twds-button twds-button--primary" data-submit-test>{{ academy_tr('submit_test') }}</button>
+        <div class="academy-feedback" data-feedback aria-live="polite"></div>
+      </div>
+    </section>
+    {% endif %}
+  {% endfor %}
+</div>
+{% endif %}
+{% endblock %}

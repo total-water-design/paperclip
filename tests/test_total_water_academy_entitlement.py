@@ -7,7 +7,7 @@ def read(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
 
 
-def test_academy_is_registered_as_future_suite_product():
+def test_academy_is_registered_as_in_development_suite_product():
     catalog = read("suite_catalog.py")
     assert 'product_id="academy"' in catalog
     assert 'name="Total Water Academy"' in catalog

@@ -1,0 +1,83 @@
+{% extends "academy/base.html" %}
+
+{% block workspace_eyebrow %}{{ academy_tr('level') }} {{ level.level }} · {{ level.hours }} {{ academy_tr('guided_hours') }}{% endblock %}
+{% block workspace_title %}{{ level.title }}{% endblock %}
+{% block workspace_description %}{{ level.mission }}{% endblock %}
+
+{% block content %}
+{% if level.id == 'L03' %}{% set target_range = '$49–$79' %}
+{% elif level.id == 'L04' %}{% set target_range = '$99–$149' %}
+{% elif level.id == 'L05' %}{% set target_range = '$69–$109' %}
+{% elif level.id == 'L06' %}{% set target_range = '$59–$79' %}
+{% elif level.id == 'L07' %}{% set target_range = '$69–$89' %}
+{% elif level.id == 'L08' %}{% set target_range = '$79–$149' %}
+{% elif level.id == 'L09' %}{% set target_range = '$79–$119' %}
+{% elif level.id == 'L10' %}{% set target_range = '$99–$199' %}
+{% else %}{% set target_range = 'FREE' %}{% endif %}
+
+<section class="academy-section academy-section--split">
+  <article class="academy-panel">
+    <span class="academy-eyebrow">{{ academy_tr('competencies') }}</span>
+    <h2>{{ academy_tr('what_you_can_do') }}</h2>
+    <div class="academy-chip-row">
+      {% for competency in level.competencies %}<span class="academy-chip">{{ competency }}</span>{% endfor %}
+    </div>
+  </article>
+  <article class="academy-panel">
+    <span class="academy-eyebrow">{{ academy_tr('enrollment') }}</span>
+    <h2>{{ academy_tr('choose_only_courses') }}</h2>
+    {% if level.id in ['L01', 'L02'] %}
+      <p>{{ academy_tr('free_level_copy') }}</p>
+      <div class="academy-chip-row"><span class="academy-chip">{{ academy_tr('free_foundation') }}</span></div>
+    {% else %}
+      <p>{{ academy_tr('paid_level_copy', range=target_range) }}</p>
+      <div class="academy-chip-row"><span class="academy-chip">{{ academy_tr('free_alpha') }}</span><span class="academy-chip">{{ academy_tr('target_course', range=target_range) }}</span></div>
+    {% endif %}
+    <p class="academy-note">{{ academy_tr('course_accumulate_pdh') }}</p>
+  </article>
+</section>
+
+<section class="academy-section academy-section--split">
+  <article class="academy-panel">
+    <span class="academy-eyebrow">{{ academy_tr('suite_connection') }}</span>
+    <h2>{{ academy_tr('same_environment') }}</h2>
+    <p>{{ academy_tr('suite_connection_copy') }}</p>
+    <ul class="academy-plain-list academy-technical" dir="ltr">{% for dependency in level.suite_connections %}<li>{{ dependency }}</li>{% endfor %}</ul>
+  </article>
+  <article class="academy-panel">
+    <span class="academy-eyebrow">{{ academy_tr('continuing_education') }}</span>
+    <h2>{{ academy_tr('pdh_arch_title') }}</h2>
+    <p>{{ academy_tr('pdh_arch_copy') }}</p>
+    <p class="academy-note">{{ academy_tr('guided_not_approved') }}</p>
+  </article>
+</section>
+
+<section class="academy-section">
+  <div class="academy-section__heading"><div><span class="academy-eyebrow">{{ academy_tr('individual_courses_label') }}</span><h2>{{ academy_tr('level_catalog', level=level.level) }}</h2></div></div>
+  <div class="academy-module-list">
+    {% for module in level.modules %}
+    <article class="academy-module-row">
+      <div>
+        <span><bdi dir="ltr">{{ module.id }}</bdi> · {{ academy_tr('individual_course') }}</span>
+        <h3>{{ module.title }}</h3>
+        <div class="academy-chip-row">
+          <span class="academy-chip" data-academy-course-price data-module-id="{{ module.id }}"
+                data-label-free="{{ academy_tr('price_foundation') }}"
+                data-label-target="{{ academy_tr('price_target', price='{price}') }}"
+                data-label-review="{{ academy_tr('price_review') }}">
+            {% if level.id in ['L01', 'L02'] %}{{ academy_tr('price_foundation') }}{% else %}{{ academy_tr('price_review') }}{% endif %}
+          </span>
+        </div>
+        <p class="academy-note">{{ academy_tr('course_meta', hours=module.hours) }}</p>
+      </div>
+      <strong>{{ module.hours }} h</strong>
+      {% if module.pilot %}
+        <a class="twds-button twds-button--primary" href="{{ url_for('academy.module', module_id=module.id) }}">{{ academy_tr('open_course') }}</a>
+      {% else %}
+        <a class="twds-button twds-button--quiet" href="{{ url_for('academy.module', module_id=module.id) }}">{{ academy_tr('preview_course') }}</a>
+      {% endif %}
+    </article>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}

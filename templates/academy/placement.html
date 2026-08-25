@@ -1,0 +1,111 @@
+{% extends "academy/base.html" %}
+
+{% block workspace_eyebrow %}{{ academy_tr('entry_diagnostic') }}{% endblock %}
+{% block workspace_title %}{{ academy_tr('tell_us_know') }}{% endblock %}
+{% block workspace_description %}{{ academy_tr('diagnostic_description') }}{% endblock %}
+
+{% block content %}
+{% if profile %}
+<section class="academy-section academy-section--split">
+  <article class="academy-panel">
+    <span class="academy-eyebrow">{{ academy_tr('recommended_path') }}</span>
+    <h2>{{ localized_track }}</h2>
+    <div class="academy-progress-big"><strong>{{ '%.1f'|format(profile.diagnostic_score) }}%</strong><span>{{ academy_tr('entry_diagnostic_label') }}</span></div>
+    <p>{{ academy_tr('recommendation_copy') }}</p>
+  </article>
+  <article class="academy-panel">
+    <span class="academy-eyebrow">{{ academy_tr('focus_areas') }}</span>
+    <h2>{{ academy_tr('extra_time') }}</h2>
+    {% if localized_gaps %}
+    <div class="academy-chip-row">
+      {% for gap in localized_gaps %}<span class="academy-chip">{{ gap }}</span>{% endfor %}
+    </div>
+    {% else %}
+    <p>{{ academy_tr('no_gaps') }}</p>
+    {% endif %}
+    <p><a class="twds-button twds-button--primary" href="{{ destination }}">{{ academy_tr('continue_academy') }}</a></p>
+    {% if request.args.get('retake') != '1' %}
+    <p><a class="twds-button twds-button--quiet" href="{{ url_for('academy_placement.placement', retake=1, next=destination) }}">{{ academy_tr('retake') }}</a></p>
+    {% endif %}
+  </article>
+</section>
+{% endif %}
+
+{% if not profile or request.args.get('retake') == '1' %}
+<section class="academy-section">
+  <div class="academy-section__heading">
+    <div><span class="academy-eyebrow">{{ academy_tr('background') }}</span><h2>{% if profile %}{{ academy_tr('retake_title') }}{% else %}{{ academy_tr('experience_title') }}{% endif %}</h2></div>
+    <p>{{ academy_tr('self_rating_combined') }}</p>
+  </div>
+
+  <form method="post" class="academy-panel">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="next" value="{{ destination }}">
+
+    <div class="academy-level-grid">
+      <label>
+        <strong>{{ academy_tr('current_background') }}</strong>
+        <select name="background" required>
+          <option value="secondary_student">{{ academy_tr('secondary_student') }}</option>
+          <option value="technical_student">{{ academy_tr('technical_student') }}</option>
+          <option value="engineering_student">{{ academy_tr('engineering_student') }}</option>
+          <option value="graduate_engineer">{{ academy_tr('graduate_engineer') }}</option>
+          <option value="operator_technician">{{ academy_tr('operator_technician') }}</option>
+          <option value="water_professional">{{ academy_tr('water_professional') }}</option>
+          <option value="other">{{ academy_tr('other_background') }}</option>
+        </select>
+      </label>
+      <label>
+        <strong>{{ academy_tr('years_experience') }}</strong>
+        <input type="number" name="years_experience" min="0" max="60" value="{{ profile.years_experience if profile else 0 }}">
+      </label>
+      <label>
+        <strong>{{ academy_tr('main_goal') }}</strong>
+        <select name="learning_goal">
+          <option value="full_diploma">{{ academy_tr('goal_full_diploma') }}</option>
+          <option value="engineering_foundations">{{ academy_tr('goal_foundations') }}</option>
+          <option value="water_specialist">{{ academy_tr('goal_water_specialist') }}</option>
+          <option value="professional_refresh">{{ academy_tr('goal_refresh') }}</option>
+          <option value="specific_topics">{{ academy_tr('goal_specific') }}</option>
+        </select>
+      </label>
+    </div>
+
+    <hr>
+    <span class="academy-eyebrow">{{ academy_tr('self_rating') }}</span>
+    <h3>{{ academy_tr('comfortable_today') }}</h3>
+    <div class="academy-level-grid">
+      {% for key, label in self_rating_domains %}
+      <label>
+        <strong>{{ label }}</strong>
+        <select name="rating_{{ key }}">
+          {% for value, text in rating_labels.items() %}<option value="{{ value }}">{{ value }} · {{ text }}</option>{% endfor %}
+        </select>
+      </label>
+      {% endfor %}
+    </div>
+
+    <hr>
+    <span class="academy-eyebrow">{{ academy_tr('concept_check') }}</span>
+    <h3>{{ academy_tr('use_what_you_know') }}</h3>
+    <p class="academy-note">{{ academy_tr('placement_note') }}</p>
+
+    <div class="academy-flow-list">
+      {% for question in questions %}
+      <fieldset class="academy-panel">
+        <legend><strong>{{ loop.index }}. {{ question.prompt }}</strong></legend>
+        {% for choice in question.choices %}
+        <label><input type="radio" name="{{ question.id }}" value="{{ loop.index0 }}" required> {{ choice }}</label>
+        {% endfor %}
+      </fieldset>
+      {% endfor %}
+    </div>
+
+    <div class="academy-chip-row">
+      <button type="submit" class="twds-button twds-button--primary">{{ academy_tr('save_profile') }}</button>
+      <a class="twds-button twds-button--quiet" href="{{ url_for('academy.home', skip_placement=1) }}">{{ academy_tr('skip_now') }}</a>
+    </div>
+  </form>
+</section>
+{% endif %}
+{% endblock %}

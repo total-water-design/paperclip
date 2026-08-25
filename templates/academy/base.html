@@ -1,0 +1,95 @@
+{% extends "shared/application_shell.html" %}
+{% set academy_locale = academy_current_locale() %}
+{% set academy_meta = academy_locale_info(academy_locale) %}
+
+{% block title %}{{ app_name|default('Total Water Academy') }}{% endblock %}
+
+{% block app_styles %}
+<meta name="csrf-token" content="{{ csrf_token() }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='academy.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='academy_i18n.css') }}">
+<script src="{{ url_for('static', filename='academy_i18n_boot.js') }}" data-academy-locale="{{ academy_meta.html_lang }}" data-academy-dir="{{ academy_meta.dir }}"></script>
+{% endblock %}
+
+{% block application_navigation %}
+<nav class="academy-side-nav" aria-label="{{ academy_tr('learning_journey') }}" dir="{{ academy_meta.dir }}">
+  <a href="{{ url_for('academy.home') }}">{{ academy_tr('learning_journey') }}</a>
+  <a href="{{ url_for('academy.home') }}#course-catalog">{{ academy_tr('courses_pricing') }}</a>
+  <a href="{{ url_for('academy_placement.placement') }}">{{ academy_tr('knowledge_check') }}</a>
+  <a href="{{ url_for('academy.level', level_id='L01') }}">{{ academy_tr('level') }} 1 · {{ academy_tr('nav_foundations') }}</a>
+  <a href="{{ url_for('academy.level', level_id='L02') }}">{{ academy_tr('level') }} 2 · {{ academy_tr('nav_unit_operations') }}</a>
+  <a href="{{ url_for('academy.level', level_id='L03') }}">{{ academy_tr('level') }} 3 · {{ academy_tr('nav_pretreatment') }}</a>
+  <a href="{{ url_for('academy.level', level_id='L04') }}">{{ academy_tr('level') }} 4 · {{ academy_tr('nav_membranes') }}</a>
+  <a href="{{ url_for('academy.level', level_id='L05') }}">{{ academy_tr('level') }} 5 · {{ academy_tr('nav_biological') }}</a>
+  <a href="{{ url_for('academy.level', level_id='L06') }}">{{ academy_tr('level') }} 6 · {{ academy_tr('nav_electrical') }}</a>
+  <a href="{{ url_for('academy.level', level_id='L07') }}">{{ academy_tr('level') }} 7 · {{ academy_tr('nav_plc_control') }}</a>
+  <a href="{{ url_for('academy.level', level_id='L08') }}">{{ academy_tr('level') }} 8 · {{ academy_tr('nav_zld') }}</a>
+  <a href="{{ url_for('academy.level', level_id='L09') }}">{{ academy_tr('level') }} 9 · {{ academy_tr('nav_integration_economics') }}</a>
+  <a href="{{ url_for('academy.level', level_id='L10') }}">{{ academy_tr('level') }} 10 · {{ academy_tr('nav_capstone') }}</a>
+  <a href="{{ url_for('academy.diploma') }}">{{ academy_tr('diploma') }}</a>
+</nav>
+{% endblock %}
+
+{% block project_bar %}
+{% set p = overall if overall is defined else progress if progress is defined else none %}
+<div class="academy-learning-bar" aria-label="{{ academy_tr('learning_journey') }}" dir="{{ academy_meta.dir }}">
+  <div>
+    <span class="academy-eyebrow">{{ academy_tr('learning_journey') }}</span>
+    <strong>{{ academy_tr('applied_design') }}</strong>
+  </div>
+  <div class="academy-learning-bar__actions">
+    {% if p %}
+    <div class="academy-learning-bar__progress">
+      <span>{{ p.completed_modules }}/{{ p.total_modules }} {{ academy_tr('modules') }}</span>
+      <progress max="100" value="{{ p.percent }}">{{ p.percent }}%</progress>
+      <strong>{{ p.percent }}%</strong>
+    </div>
+    {% endif %}
+    <form method="post" action="{{ url_for('academy.set_language') }}" class="academy-language-switch" aria-label="{{ academy_tr('language') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="next" value="{{ request.full_path if request.full_path else request.path }}">
+      <span aria-hidden="true">🌐</span>
+      <label>
+        <span class="academy-language-switch__label">{{ academy_tr('language') }}</span>
+        <select name="locale" onchange="this.form.submit()">
+          {% for option in academy_language_options() %}
+          <option value="{{ option.code }}" {% if option.code == academy_locale %}selected{% endif %}>{{ option.native_label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </form>
+  </div>
+</div>
+<div id="academy-i18n-data" hidden
+  data-good-reasoning="{{ academy_tr('good_reasoning') }}"
+  data-review-reasoning="{{ academy_tr('review_reasoning') }}"
+  data-hint="{{ academy_tr('hint') }}"
+  data-score="{{ academy_tr('score') }}"
+  data-concept-recorded="{{ academy_tr('concept_recorded') }}"
+  data-choose-answer-first="{{ academy_tr('choose_answer_first') }}"
+  data-select-process-begin="{{ academy_tr('select_process_begin') }}"
+  data-move-earlier="{{ academy_tr('move_earlier', label='{label}') }}"
+  data-move-later="{{ academy_tr('move_later', label='{label}') }}"
+  data-remove-unit="{{ academy_tr('remove_unit', label='{label}') }}"
+  data-build-train-first="{{ academy_tr('build_train_first') }}"
+  data-answer-all="{{ academy_tr('answer_all') }}"
+  data-module-complete="{{ academy_tr('module_complete') }}"
+  data-unreadable-response="{{ academy_tr('unreadable_response') }}"
+  data-save-failed="{{ academy_tr('save_failed') }}"
+  data-diploma-issued="{{ academy_tr('diploma_issued_js', title='{title}', token='{token}') }}">
+</div>
+{% endblock %}
+
+{% block workspace_navigation %}
+<a href="{{ url_for('academy.home') }}">{{ academy_tr('levels_10') }}</a>
+<a href="{{ url_for('academy.home') }}#course-catalog">{{ academy_tr('courses_pricing') }}</a>
+<a href="{{ url_for('academy_placement.placement') }}">{{ academy_tr('knowledge_check') }}</a>
+<a href="{{ url_for('academy.module', module_id='L01-M01') }}">{{ academy_tr('pilot_mission') }}</a>
+<a href="{{ url_for('academy.diploma') }}">{{ academy_tr('completion') }}</a>
+{% endblock %}
+
+{% block app_scripts %}
+<script src="{{ url_for('static', filename='academy_i18n.js') }}" defer></script>
+<script src="{{ url_for('static', filename='academy.js') }}" defer></script>
+<script src="{{ url_for('static', filename='academy_pricing.js') }}" defer></script>
+{% endblock %}

@@ -1,0 +1,14 @@
+{% extends "academy/base.html" %}
+
+{% block workspace_eyebrow %}{{ academy_tr('academy_access') }}{% endblock %}
+{% block workspace_title %}{{ academy_tr('student_approval_required') }}{% endblock %}
+{% block workspace_description %}{{ academy_tr('access_description') }}{% endblock %}
+
+{% block content %}
+<section class="academy-empty-state">
+  <span class="academy-badge">{{ academy_tr('precommercial_access') }}</span>
+  <h2>{{ academy_tr('no_entitlement') }}</h2>
+  <p>{{ academy_tr('email_not_student_proof') }}</p>
+  <a class="twds-button twds-button--primary" href="{{ url_for('suite_dashboard') }}">{{ academy_tr('return_suite') }}</a>
+</section>
+{% endblock %}

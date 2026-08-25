@@ -1,0 +1,17 @@
+.academy-learning-bar__actions{display:flex;align-items:center;justify-content:flex-end;gap:14px;flex-wrap:wrap}
+.academy-language-switch{display:flex;align-items:center;gap:7px;padding:6px 8px;border:1px solid var(--twds-border,#d8dee8);border-radius:10px;background:var(--twds-surface,#fff)}
+.academy-language-switch label{display:flex;align-items:center;gap:7px}.academy-language-switch__label{font-size:.72rem;font-weight:800;color:var(--twds-muted,#667085);white-space:nowrap}.academy-language-switch select{min-width:104px;border:0;background:transparent;color:inherit;font:inherit;font-weight:750;cursor:pointer;padding:3px 20px 3px 3px}
+.academy-technical,[dir="rtl"] code,[dir="rtl"] bdi{direction:ltr;unicode-bidi:isolate;text-align:left}
+html[dir="rtl"] .academy-side-nav,html[dir="rtl"] .academy-hero,html[dir="rtl"] .academy-section,html[dir="rtl"] .academy-panel,html[dir="rtl"] .academy-module,html[dir="rtl"] .academy-empty-state,html[dir="rtl"] .academy-learning-bar{text-align:right}
+html[dir="rtl"] .academy-level-card:before{inset:0 0 0 auto}
+html[dir="rtl"] .academy-flow-list{padding-left:0;padding-right:22px}
+html[dir="rtl"] .academy-flow-list li{padding-left:0;padding-right:4px}
+html[dir="rtl"] .academy-note{border-left:0;border-right:3px solid var(--twds-app-accent)}
+html[dir="rtl"] .academy-train{padding:8px 30px 8px 8px}
+html[dir="rtl"] .academy-choice-list label,html[dir="rtl"] .academy-test-questions label{direction:rtl;text-align:right}
+html[dir="rtl"] .academy-choice-list input,html[dir="rtl"] .academy-test-questions input{margin-left:7px;margin-right:0}
+html[dir="rtl"] .academy-stepper{direction:rtl}
+html[dir="rtl"] .academy-toolbox,html[dir="rtl"] .academy-chip-row{justify-content:flex-start}
+html[dir="rtl"] input[type="number"],html[dir="rtl"] code{direction:ltr;text-align:left}
+@media(max-width:900px){.academy-learning-bar__actions{width:100%;justify-content:space-between}.academy-language-switch{margin-inline-start:auto}}
+@media(max-width:620px){.academy-learning-bar__actions{display:grid;grid-template-columns:1fr}.academy-language-switch{width:100%;justify-content:space-between;margin:0}.academy-language-switch label{flex:1;justify-content:space-between}.academy-language-switch select{min-width:128px}.academy-language-switch__label{display:none}}
