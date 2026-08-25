@@ -3881,7 +3881,7 @@ async function pollComputeStatus(){
     }
   }catch(e){}
 }
-function startComputePolling(){if(computePollTimer)return;pollComputeStatus();computePollTimer=setInterval(pollComputeStatus,450)}
+function startComputePolling(){if(computePollTimer)return;pollComputeStatus();computePollTimer=setInterval(pollComputeStatus,1500)}
 function stopComputePolling(){if(computePollTimer){clearInterval(computePollTimer);computePollTimer=null}}
 function toggleComputePanel(force){const panel=$('#computePanel');if(!panel)return;computePanelOpen=typeof force==='boolean'?force:!computePanelOpen;panel.hidden=!computePanelOpen;if(computePanelOpen){startComputePolling();loadComputeCapabilities();}else if(!document.body.classList.contains('calculating'))stopComputePolling()}
 function enterCalculatorFromLanding(){
