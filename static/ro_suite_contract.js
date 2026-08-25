@@ -4,16 +4,6 @@
   const $ = (s) => document.querySelector(s);
   const THEME_KEY = 'twds-theme';
   const VALID_THEMES = new Set(['system', 'light', 'dark']);
-  const CALC_LABELS = Object.freeze({
-    validating: 'Validating…',
-    calculating: 'Calculating…',
-    converging: 'Converging…',
-    converged: 'Converged',
-    attention: 'Needs attention',
-    failed: 'Calculation failed',
-    stale: 'Recalculate'
-  });
-
   function resolveTheme(pref) {
     if (pref === 'light' || pref === 'dark') return pref;
     return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
@@ -57,73 +47,22 @@
     }
   }
 
-  function calculateButton() { return $('#calculateBtn'); }
-  function calculateLabel() { return calculateButton()?.querySelector('.calc-btn-label'); }
-
-  function rememberIdleLabel() {
-    const button = calculateButton();
-    const label = calculateLabel();
-    if (!button || !label || button.dataset.twdsBusy === '1') return;
-    const text = label.textContent.trim();
-    if (text && !Object.values(CALC_LABELS).includes(text)) button.dataset.twdsIdleLabel = text;
-  }
-
-  function setCalcState(state, detail = '') {
-    const button = calculateButton();
-    const label = calculateLabel();
-    if (!button || !label) return;
-    if (state === 'idle') {
-      button.dataset.twdsBusy = '0';
-      label.textContent = button.dataset.twdsIdleLabel || 'Calculate';
-      button.removeAttribute('data-twds-calculate-state');
-      button.setAttribute('aria-busy', 'false');
-    } else {
-      if (button.dataset.twdsBusy !== '1') rememberIdleLabel();
-      button.dataset.twdsBusy = '1';
-      button.dataset.twdsCalculateState = state;
-      button.setAttribute('aria-busy', ['validating', 'calculating', 'converging'].includes(state) ? 'true' : 'false');
-      if (CALC_LABELS[state]) label.textContent = CALC_LABELS[state];
-    }
-    const live = $('#twdsRoCalculationLive');
-    if (live) live.textContent = detail || CALC_LABELS[state] || '';
-  }
-
   function initCalculationState() {
-    const form = $('#calcForm');
-    const button = calculateButton();
-    if (!form || !button) return;
-    rememberIdleLabel();
-    const live = document.createElement('div');
-    live.id = 'twdsRoCalculationLive';
-    live.setAttribute('aria-live', 'polite');
-    live.setAttribute('aria-atomic', 'true');
-    live.style.cssText = 'position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)';
-    document.body.appendChild(live);
-    button.setAttribute('aria-describedby', live.id);
-
-    form.addEventListener('submit', () => setCalcState('validating'));
-
-    const overlay = $('#calculationOverlay');
-    if (overlay) {
-      new MutationObserver(() => {
-        if (!overlay.hidden) {
-          const title = $('#calculationTitle')?.textContent || '';
-          setCalcState(/converg/i.test(title) ? 'converging' : 'calculating', title);
-        } else if (!document.body.classList.contains('calculating')) {
-          setCalcState('idle');
-        }
-      }).observe(overlay, {attributes: true, childList: true, subtree: true, characterData: true});
+    let live = $('#twdsRoCalculationLive');
+    if (!live) {
+      live = document.createElement('div');
+      live.id = 'twdsRoCalculationLive';
+      live.setAttribute('aria-live', 'polite');
+      live.setAttribute('aria-atomic', 'true');
+      live.style.cssText = 'position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)';
+      document.body.appendChild(live);
     }
-
-    const error = $('#error');
-    if (error) {
-      new MutationObserver(() => {
-        const text = error.textContent.trim();
-        if (text) setCalcState('failed', text);
-      }).observe(error, {childList: true, subtree: true, characterData: true});
-    }
-
-    new MutationObserver(() => rememberIdleLabel()).observe(button, {childList: true, subtree: true, characterData: true});
+    const button = $('#calculateBtn');
+    if (button) button.setAttribute('aria-describedby', live.id);
+    document.addEventListener('twds:ro-calculation-state', (event) => {
+      const detail = event.detail || {};
+      live.textContent = detail.message || detail.state || '';
+    });
   }
 
   function initProjectVocabulary() {
@@ -142,15 +81,18 @@
     return document.querySelector(`.sidebar-nav [data-mode="${mode}"]`);
   }
 
+  let advancedPlacementScheduled = false;
+
   function ensureAdvancedRoPlacement() {
     const plant = advancedConfigButton('multistage');
     const ccro = advancedConfigButton('ccro');
     const batch = advancedConfigButton('batch_ro');
-    if (!plant || (!ccro && !batch)) return;
+    if (!plant || (!ccro && !batch)) return false;
 
     const group = plant.closest('.nav-group');
-    if (!group) return;
+    if (!group) return false;
 
+    let changed = false;
     let heading = group.querySelector('[data-advanced-ro-heading]');
     if (!heading) {
       heading = document.createElement('span');
@@ -160,24 +102,50 @@
     }
 
     const first = ccro || batch;
-    if (first.parentElement !== group) group.appendChild(first);
-    first.insertAdjacentElement('beforebegin', heading);
+    if (heading.parentElement !== group || heading.nextElementSibling !== first) {
+      group.insertBefore(heading, first);
+      changed = true;
+    }
 
     if (ccro) {
-      if (ccro.parentElement !== group) group.appendChild(ccro);
-      heading.insertAdjacentElement('afterend', ccro);
+      if (heading.nextElementSibling !== ccro) {
+        group.insertBefore(ccro, heading.nextSibling);
+        changed = true;
+      }
       const detail = ccro.querySelector('.nav-detail');
-      if (detail) detail.textContent = 'Continuous fresh-feed makeup · concentrating recirculating loop';
-      ccro.title = ccro.disabled ? (ccro.title || 'Calculate Plant Design before opening CCRO') : 'Closed Circuit RO · continuous fresh-feed makeup into a concentrating recirculating loop';
+      const detailText = 'Continuous fresh-feed makeup · concentrating recirculating loop';
+      if (detail && detail.textContent !== detailText) detail.textContent = detailText;
+      const title = ccro.disabled
+        ? (ccro.title || 'Calculate Plant Design before opening CCRO')
+        : 'Closed Circuit RO · continuous fresh-feed makeup into a concentrating recirculating loop';
+      if (ccro.title !== title) ccro.title = title;
     }
 
     if (batch) {
-      if (batch.parentElement !== group) group.appendChild(batch);
-      (ccro || heading).insertAdjacentElement('afterend', batch);
+      const anchor = ccro || heading;
+      if (anchor.nextElementSibling !== batch) {
+        group.insertBefore(batch, anchor.nextSibling);
+        changed = true;
+      }
       const detail = batch.querySelector('.nav-detail');
-      if (detail) detail.textContent = 'Full Batch RO · initially charged inventory · cyclic concentration';
-      batch.title = batch.disabled ? (batch.title || 'Calculate Plant Design before opening Batch RO') : 'Full Batch RO · processes an initially charged inventory without continuous fresh-feed mixing';
+      const detailText = 'Full Batch RO · initially charged inventory · cyclic concentration';
+      if (detail && detail.textContent !== detailText) detail.textContent = detailText;
+      const title = batch.disabled
+        ? (batch.title || 'Calculate Plant Design before opening Batch RO')
+        : 'Full Batch RO · processes an initially charged inventory without continuous fresh-feed mixing';
+      if (batch.title !== title) batch.title = title;
     }
+
+    return changed;
+  }
+
+  function scheduleAdvancedRoPlacement() {
+    if (advancedPlacementScheduled) return;
+    advancedPlacementScheduled = true;
+    queueMicrotask(() => {
+      advancedPlacementScheduled = false;
+      ensureAdvancedRoPlacement();
+    });
   }
 
   function normalizeGuidance(root = document) {
@@ -216,10 +184,10 @@
     normalizeResults();
 
     const nav = $('.sidebar-nav');
-    if (nav) new MutationObserver(() => ensureAdvancedRoPlacement()).observe(nav, {childList: true, subtree: true});
+    if (nav) new MutationObserver(scheduleAdvancedRoPlacement).observe(nav, {childList: true, subtree: true});
     const results = $('.results');
     if (results) new MutationObserver(() => { normalizeGuidance(results); normalizeResults(); }).observe(results, {childList: true, subtree: true});
     const fields = $('#fields');
-    if (fields) new MutationObserver(() => { rememberIdleLabel(); normalizeGuidance(fields); }).observe(fields, {childList: true, subtree: true});
+    if (fields) new MutationObserver(() => normalizeGuidance(fields)).observe(fields, {childList: true, subtree: true});
   });
 })();

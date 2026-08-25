@@ -2,6 +2,7 @@ const $=s=>document.querySelector(s); let mode='water'; let membranes=[]; let se
 let caseResults={}; let modeStates={}; let advancedDesignResult=null; let advancedDesignInput={};
 let computeCapabilities=null; let computeLiveStatus=null; let lastComputeRun=null; let computePollTimer=null; let computePanelOpen=false; let lastGpuTest=null; let gpuTestRunning=false; let lastDesignOptimization=null; let designOptimizationRunning=false;
 let activeCalculationController=null; let calculationCancelRequested=false;
+let canonicalCalculationInFlight=false; let canonicalCalculationSequence=0;
 let waterProfile={}; let lastChemistryResult=null; let chemistryStream='feed'; let chemistryTechnology='auto'; let waterBalanceNotice='';
 let embeddedChemistryCache={}; let tailChemistryCache={}; let embeddedChemistryStreamByMode={multistage:'concentrate',single:'concentrate',px:'concentrate',interstage_px:'concentrate',interstage:'concentrate',biturbo:'concentrate',dweer:'concentrate',pelton:'concentrate'};
 let currentUnits={flow:'m3/h',pressure:'bar',flux:'LMH'};
@@ -96,7 +97,7 @@ function refreshTierView(){
   enforceTierCaseAccess();const target=modeEntitlementAccess(mode).ok?mode:'water';
   if(target!==mode){mode=target;lastResult=caseResults[mode]||null;}
   updateWaterWorkspaceTabs();renderFields(modeStates[mode]||convertedDefaults());
-  if(mode==='water')$('#results').innerHTML='';else if(mode==='summary')$('#results').innerHTML=summaryResults();else if(mode==='comparison')$('#results').innerHTML=comparisonResults();else if(mode==='envelope')$('#results').innerHTML=hydraulicEnvelopeStatusHtml();else if(mode==='advanced')$('#results').innerHTML=advancedResultHtml();else if(mode==='economic')$('#results').innerHTML=lastEconomicResult?economicResults(lastEconomicResult):'<p class="muted">Run the comparison after calculating the technology cases you want to evaluate.</p>';else if(caseResults[mode]){lastResult=caseResults[mode];show(lastResult);}else $('#results').innerHTML='<p class="muted">Enter required inputs and calculate.</p>';
+  if(mode==='water')renderCurrentWaterChemistry();else if(mode==='summary')$('#results').innerHTML=summaryResults();else if(mode==='comparison')$('#results').innerHTML=comparisonResults();else if(mode==='envelope')$('#results').innerHTML=hydraulicEnvelopeStatusHtml();else if(mode==='advanced')$('#results').innerHTML=advancedResultHtml();else if(mode==='economic')$('#results').innerHTML=lastEconomicResult?economicResults(lastEconomicResult):'<p class="muted">Run the comparison after calculating the technology cases you want to evaluate.</p>';else if(caseResults[mode]){lastResult=caseResults[mode];show(lastResult);}else $('#results').innerHTML='<p class="muted">Enter required inputs and calculate.</p>';
   renderCaseBar();applyTierEntitlements();
 }
 function setAdminTierPreview(tier){
@@ -194,7 +195,9 @@ function updateWorkspaceChrome(){
   if(project)project.textContent=projectMeta.project_name||'Total RO Design Project';
   if(meta){const client=projectMeta.client?` · ${projectMeta.client}`:'';const projectId=serverProjectRecord?.visible_id?` · ${escapeHtml(serverProjectRecord.visible_id)}`:'';const n=visibleIds.length||1;const preserved=!tierAllows('multi_case')&&allIds.length>n?` · ${allIds.length-n} preserved`:'';meta.innerHTML=`<i></i> Case ${activeCase} · ${n} operating case${n===1?'':'s'}${preserved}${projectId}${escapeHtml(client)}`;}
   const layout=document.querySelector('.layout'),resultsPanel=document.querySelector('.results');
-  const waterOnly=mode==='water';if(layout)layout.classList.toggle('water-only',waterOnly);if(resultsPanel)resultsPanel.hidden=waterOnly;updateSolutionNavState();updateErdNavAccess();
+  const waterHasResults=mode==='water'&&Boolean(lastChemistryResult);
+  const waterOnly=mode==='water'&&!waterHasResults;
+  if(layout)layout.classList.toggle('water-only',waterOnly);if(resultsPanel)resultsPanel.hidden=waterOnly;updateSolutionNavState();updateErdNavAccess();
 }
 
 // v18.2 Suite UI — free multistage plant design added; validated membrane osmotic/transport and carbonate thermodynamics retained. Guided errors retained from v16.7. Keep the red inline error for traceability,
@@ -712,7 +715,18 @@ function inputHtml(k,f,val){
 }
 function needsManualEntry(k,f){if(f.optional||f.readOnly)return false;return ['flow','pressure','recoveryPct','integer'].includes(f.type)||k.startsWith('vessels_')||k.startsWith('elements_per_vessel_')||['operating_trains','fouling_factor','salt_passage_factor'].includes(k);}
 function updateRequiredFieldStates(){document.querySelectorAll('#fields .field').forEach(field=>{const input=field.querySelector('input,select,textarea');const note=field.querySelector('.mandatory-note');const missing=field.dataset.manualEntry==='1'&&!!input&&input.required&&!input.readOnly&&!input.disabled&&String(input.value??'').trim()==='';field.classList.toggle('missing-required',missing);if(note)note.hidden=!missing;});}
-function setPrimaryLabel(text){const b=$('.primary');if(b)b.innerHTML=`<span class="calc-btn-label">${escapeHtml(text)}</span><span class="calc-btn-spinner" aria-hidden="true"></span><span class="button-arrow">→</span>`;}
+function calculateButton(){return document.querySelector('#calculateBtn')}
+function calculateButtonLabel(){return calculateButton()?.querySelector('.calc-btn-label')}
+function workspaceCalculateLabel(modeKey=mode,fallback='Calculate'){
+  if(modeKey==='water')return 'Calculate water chemistry';
+  if(modeKey==='multistage')return 'Calculate Plant Design';
+  return fallback||'Calculate';
+}
+function setPrimaryLabel(text=''){
+  const button=calculateButton(),label=calculateButtonLabel();if(!button||!label)return;
+  const resolved=workspaceCalculateLabel(mode,text||button.dataset.twdsIdleLabel||'Calculate');
+  label.textContent=resolved;button.dataset.twdsIdleLabel=resolved;
+}
 function solveArrowHtml(){return `<span class="solve-arrows"><button type="button" class="solve-arrow" data-solve="pressure" title="Pressure setpoint: calculate permeate flow and overall recovery">P→Q</button><button type="button" class="solve-arrow" data-solve="product" title="Permeate-flow setpoint: solve required membrane feed pressure and recovery">Q→P</button><button type="button" class="solve-arrow" data-solve="recovery" title="Overall-recovery setpoint: calculate permeate flow from feed flow and solve required membrane feed pressure">R→P</button></span>`}
 const STANDARD_SW={ammonium:0,sodium:10783.7,potassium:399.1,magnesium:1283.7,calcium:412.1,strontium:7.9,barium:0,iron_ii:0,iron_iii:0,manganese_ii:0,fluoride:1.3,chloride:19352.4,sulfate:2712.3,nitrate:0,carbonate:15.6,bicarbonate:108,phosphate:0,boron:4.5,bromide:67.3,silica:2};
 const CASPIAN_SW={ammonium:0,sodium:2990,potassium:90,magnesium:700,calcium:340,strontium:0,barium:0,iron_ii:0,iron_iii:0,manganese_ii:0,fluoride:0,chloride:5180,sulfate:2980,nitrate:0,carbonate:0,bicarbonate:0,phosphate:0,boron:0,bromide:0,silica:0};
@@ -828,7 +842,7 @@ function switchCase(id){
   id=Number(id);if(!tierAllows('multi_case')){const first=Object.keys(caseStore).map(Number).sort((a,b)=>a-b)[0];if(id!==first)return;}if(!caseStore[id]||id===activeCase)return;
   persistActiveCase(); loadCaseGlobals(id); caseSetupNotice=''; renderCaseBar();
   const vals=modeStates[mode]||convertedDefaults(); renderFields(vals); $('#warnings').innerHTML='';
-  if(mode==='water')$('#results').innerHTML='';
+  if(mode==='water')renderCurrentWaterChemistry();
   else if(mode==='advanced'){$('#results').innerHTML=advancedResultHtml();}
     else if(mode==='envelope')$('#results').innerHTML=hydraulicEnvelopeStatusHtml();
   else if(mode==='scenario')$('#results').innerHTML=scenarioMatrixResults();
@@ -1174,7 +1188,7 @@ function renderWaterTab(){
     <div class="water-neutral-qc"><h4>UNCHARGED / QC ANALYTICAL INPUTS</h4><div class="grid chemistry-neutral-grid">${neutralFields}${labCarbonate}</div></div>
     <p class="micro-note">Standard-ocean presets preserve representative major-ion ratios. Calculated carbonate is derived from pH + total alkalinity; lab-reported carbonate is QC only.</p>
   </section>`;
-  $('#modeLabel').textContent=`Water Quality · Case ${activeCase}`; setPrimaryLabel('Calculate water chemistry'); $('.solve-hint').textContent=`Case ${activeCase}: reference water and chemistry. Configure operating extremes in Hydraulic Envelope.`; bindWaterTab();
+  $('#modeLabel').textContent=`Water Quality · Case ${activeCase}`; setPrimaryLabel('Calculate water chemistry'); $('.solve-hint').textContent=`Case ${activeCase}: reference water and chemistry. Configure operating extremes in Hydraulic Envelope.`; bindWaterTab();renderCurrentWaterChemistry();
 }
 function captureWater(){
   let o={...waterProfile};const fd=new FormData($('#calcForm'));
@@ -1186,16 +1200,26 @@ function profileChemPayload(w=waterProfile,comp=null,phOverride=null,alkOverride
 function applyCompositionToProfile(w,comp){Object.entries(comp||{}).forEach(([k,v])=>{if(('ion_'+k) in chemistry)w['ion_'+k]=Number(v||0)});return w}
 async function rescaleWaterTds(target){let w=captureWater();const payload={...profileChemPayload(w),target_tds:Number(target||0)};const j=await requestJson('/api/chemistry/scale-tds',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)},'TDS scaling failed');applyCompositionToProfile(w,j.composition);w.analysis_tds=Number(target||0);w.feed_tds=w.analysis_tds;w._tds_scale_factor=j.factor;waterProfile=w;lastChemistryResult=null;markAllTurboDesignStale();syncActiveCaseStore();renderWaterTab();if($('#results'))$('#results').innerHTML=''}
 async function refreshCalculatedCarbonate(){const el=$('#calculatedCarbonate'),note=$('#carbonateQcNote');if(!el)return;try{const w=captureWater();const j=await requestJson('/api/chemistry/speciate-ph',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(profileChemPayload(w))},'Carbonate speciation failed');el.value=fmt(j.co3_mg_l,3);const reported=Number(w.ion_carbonate||0),calc=Number(j.co3_mg_l||0);if(note){if(reported>0&&calc>0){const d=100*(reported-calc)/calc;note.textContent=`Lab QC: ${fmt(reported,3)} mg/L · difference ${fmt(d,1)}%${Math.abs(d)>20?' · REVIEW ANALYSIS':''}`;note.classList.toggle('chem-qc-warning',Math.abs(d)>20)}else{note.textContent='Optional QC only; equilibrium carbonate is used by the model.';note.classList.remove('chem-qc-warning')}}}catch(e){el.value='Unavailable';if(note)note.textContent=e.message||'Carbonate speciation failed'}}
-async function refreshWaterChargeBalance(){
+function markWaterChargePending(message='Calculate water chemistry to evaluate charge balance.'){
+  document.querySelectorAll('[data-water-meq]').forEach(el=>{el.textContent='—'});
+  for(const id of ['waterCationMeq','waterAnionMeq','waterCationMeqKpi','waterAnionMeqKpi','waterChargeImbalance']){const el=$('#'+id);if(el)el.textContent='—';}
+  const status=$('#waterChargeStatus');if(status)status.textContent=message;
+  const box=document.querySelector('.water-charge-summary');if(box)box.classList.remove('charge-good','charge-review','charge-bad');
+  const sel=$('#waterBalanceIon');if(sel){sel.value='';Array.from(sel.options).forEach(option=>{if(option.value)option.disabled=true});sel.title='Calculate water chemistry before balancing the analysis.';}
+}
+function applyWaterChargeAnalysis(result){
   const cat=$('#waterCationMeq'),an=$('#waterAnionMeq'),imb=$('#waterChargeImbalance');if(!cat||!an||!imb)return;
-  try{
-    const w=captureWater();const j=await requestJson('/api/chemistry/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(profileChemPayload(w))},'Charge balance calculation failed');const ch=j.charge||{};
-    const rows=Object.fromEntries((ch.rows||[]).map(r=>[r.key,r]));document.querySelectorAll('[data-water-meq]').forEach(el=>{const r=rows[el.dataset.waterMeq];el.textContent=r?fmt(r.meq_l,3):'—'});
-    cat.textContent=fmt(ch.cations_meq_l,3);an.textContent=fmt(ch.anions_meq_l,3);const ck=$('#waterCationMeqKpi'),ak=$('#waterAnionMeqKpi');if(ck)ck.textContent=fmt(ch.cations_meq_l,3);if(ak)ak.textContent=fmt(ch.anions_meq_l,3);
-    const v=Number(ch.imbalance_pct||0);imb.textContent=`${v>=0?'+':''}${fmt(v,2)}%`;const status=$('#waterChargeStatus');if(status)status.innerHTML=chemStatusText(v);
-    const sel=$('#waterBalanceIon');if(sel){const excessCations=Number(ch.cations_meq_l)>Number(ch.anions_meq_l)+1e-9,excessAnions=Number(ch.anions_meq_l)>Number(ch.cations_meq_l)+1e-9;Array.from(sel.options).forEach(o=>{if(!o.value)return;o.disabled=(excessCations&&!['chloride','sulfate','alkalinity'].includes(o.value))||(excessAnions&&!['sodium','calcium','magnesium'].includes(o.value))||(!excessCations&&!excessAnions)});if(sel.selectedOptions[0]?.disabled)sel.value='';sel.title=excessCations?'Excess cation charge: add an anion.':excessAnions?'Excess anion charge: add a cation.':'Charge is already balanced.'}
-    const box=document.querySelector('.water-charge-summary');if(box){box.classList.toggle('charge-good',Math.abs(v)<2);box.classList.toggle('charge-review',Math.abs(v)>=2&&Math.abs(v)<5);box.classList.toggle('charge-bad',Math.abs(v)>=5)}
-  }catch(e){cat.textContent='Unavailable';an.textContent='Unavailable';imb.textContent='Unavailable';const status=$('#waterChargeStatus');if(status)status.textContent=e.message||'Charge calculation failed'}
+  const ch=result?.charge||{};if(!Array.isArray(ch.rows)){markWaterChargePending('Charge balance is unavailable for this result.');return;}
+  const rows=Object.fromEntries(ch.rows.map(row=>[row.key,row]));document.querySelectorAll('[data-water-meq]').forEach(el=>{const row=rows[el.dataset.waterMeq];el.textContent=row?fmt(row.meq_l,3):'—'});
+  cat.textContent=fmt(ch.cations_meq_l,3);an.textContent=fmt(ch.anions_meq_l,3);const ck=$('#waterCationMeqKpi'),ak=$('#waterAnionMeqKpi');if(ck)ck.textContent=fmt(ch.cations_meq_l,3);if(ak)ak.textContent=fmt(ch.anions_meq_l,3);
+  const value=Number(ch.imbalance_pct||0);imb.textContent=`${value>=0?'+':''}${fmt(value,2)}%`;const status=$('#waterChargeStatus');if(status)status.innerHTML=chemStatusText(value);
+  const sel=$('#waterBalanceIon');if(sel){const excessCations=Number(ch.cations_meq_l)>Number(ch.anions_meq_l)+1e-9,excessAnions=Number(ch.anions_meq_l)>Number(ch.cations_meq_l)+1e-9;Array.from(sel.options).forEach(option=>{if(!option.value)return;option.disabled=(excessCations&&!['chloride','sulfate','alkalinity'].includes(option.value))||(excessAnions&&!['sodium','calcium','magnesium'].includes(option.value))||(!excessCations&&!excessAnions)});if(sel.selectedOptions[0]?.disabled)sel.value='';sel.title=excessCations?'Excess cation charge: add an anion.':excessAnions?'Excess anion charge: add a cation.':'Charge is already balanced.';}
+  const box=document.querySelector('.water-charge-summary');if(box){box.classList.toggle('charge-good',Math.abs(value)<2);box.classList.toggle('charge-review',Math.abs(value)>=2&&Math.abs(value)<5);box.classList.toggle('charge-bad',Math.abs(value)>=5);}
+}
+async function refreshWaterChargeBalance(){
+  const cat=$('#waterCationMeq'),an=$('#waterAnionMeq'),imb=$('#waterChargeImbalance');if(!cat||!an||!imb)return null;
+  try{const water=captureWater();const result=await requestJson('/api/chemistry/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(profileChemPayload(water))},'Charge balance calculation failed');applyWaterChargeAnalysis(result);return result;}
+  catch(error){markWaterChargePending(error?.message||'Charge calculation failed');return null;}
 }
 async function balanceWaterFromInput(){
   const sel=$('#waterBalanceIon'),ion=sel?.value;if(!ion)return;
@@ -1224,8 +1248,8 @@ function bindWaterTab(){
   const sel=document.querySelector('[name="water_region"]');if(sel)sel.addEventListener('change',()=>{const pr=presetById(sel.value);const preserved={envelope_label:waterProfile.envelope_label,source_water_type:waterProfile.source_water_type,acid_enabled:waterProfile.acid_enabled,acid_type:waterProfile.acid_type,acid_target_ph:waterProfile.acid_target_ph,acid_solution_strength_pct:waterProfile.acid_solution_strength_pct,acid_solution_density_kg_l:waterProfile.acid_solution_density_kg_l,temperature_min_c:waterProfile.temperature_min_c,temperature_max_c:waterProfile.temperature_max_c,new_membrane_fouling_factor:waterProfile.new_membrane_fouling_factor,old_membrane_fouling_factor:waterProfile.old_membrane_fouling_factor};waterProfile={...makeWaterProfile(pr),...preserved,_last_speciated_ph:pr.ph??8.1};caseSetupNotice='';lastChemistryResult=null;markAllTurboDesignStale();syncActiveCaseStore();renderWaterTab()});
   const sal=document.querySelector('[name="salinity_psu"]');if(sal)sal.addEventListener('change',()=>{let w=captureWater();w.analysis_tds=roundTdsFromPsu(w.salinity_psu);const pr=presetById(w.water_region);if(pr)Object.assign(w,scaledChemistry(pr.chemistry||'standard',w.analysis_tds));waterProfile=w;lastChemistryResult=null;markAllTurboDesignStale();syncActiveCaseStore();renderWaterTab()});
   const tds=document.querySelector('[name="analysis_tds"]');if(tds)tds.addEventListener('change',async()=>{try{await rescaleWaterTds(tds.value)}catch(e){showCalcError(e,'startup')}});
-  const ph=document.querySelector('[name="feed_ph"]');if(ph)ph.addEventListener('change',async()=>{waterProfile=captureWater();lastChemistryResult=null;markAllTurboDesignStale();syncActiveCaseStore();await Promise.all([refreshCalculatedCarbonate(),refreshWaterChargeBalance()])});
-  document.querySelectorAll('#fields input,#fields select').forEach(el=>{if(['case_selector','water_region','salinity_psu','analysis_tds','feed_ph','acid_type','acid_enabled'].includes(el.name)||['waterBalanceIon'].includes(el.id))return;el.addEventListener('change',async()=>{waterProfile=captureWater();lastChemistryResult=null;markAllTurboDesignStale();syncActiveCaseStore();if(el.name?.startsWith('ion_')||el.name==='temperature_c')await Promise.all([refreshCalculatedCarbonate(),refreshWaterChargeBalance()])})});$('#waterBalanceBtn')?.addEventListener('click',balanceWaterFromInput);Promise.all([refreshCalculatedCarbonate(),refreshWaterChargeBalance()]);
+  const ph=document.querySelector('[name="feed_ph"]');if(ph)ph.addEventListener('change',async()=>{waterProfile=captureWater();lastChemistryResult=null;markAllTurboDesignStale();syncActiveCaseStore();markWaterChargePending();await refreshCalculatedCarbonate()});
+  document.querySelectorAll('#fields input,#fields select').forEach(el=>{if(['case_selector','water_region','salinity_psu','analysis_tds','feed_ph','acid_type','acid_enabled'].includes(el.name)||['waterBalanceIon'].includes(el.id))return;el.addEventListener('change',async()=>{waterProfile=captureWater();lastChemistryResult=null;markAllTurboDesignStale();syncActiveCaseStore();if(el.name?.startsWith('ion_')||el.name==='temperature_c'){markWaterChargePending();await refreshCalculatedCarbonate()}})});$('#waterBalanceBtn')?.addEventListener('click',balanceWaterFromInput);refreshCalculatedCarbonate();if(lastChemistryResult)applyWaterChargeAnalysis(lastChemistryResult);else markWaterChargePending();
 }
 function saveWaterFromTab(){if(mode==='water'){waterProfile=captureWater();syncActiveCaseStore()}}
 function availableChemistryTechnology(){if(chemistryTechnology!=='auto'&&caseResults[chemistryTechnology])return chemistryTechnology;return comparisonOrder?.find(([k])=>caseResults[k])?.[0]||null}
@@ -2559,9 +2583,10 @@ function multiPassEditorHtml(){
       <div class="mp-calc-row">
         <button
           type="button"
-          class="primary"
+          id="multiPassCalculateBtn"
+          class="ghost mp-calculate-secondary"
           data-mp-calculate="1"
-          ${cfg.passes.length<2?'disabled':''}>
+          ${cfg.passes.length<2?'disabled hidden aria-hidden="true"':'aria-hidden="false"'}>
           <span class="calc-btn-label">
             Calculate multi-pass flowsheet
           </span>
@@ -3030,7 +3055,7 @@ function updateSolveUI(){
   if(autoPlant)updateAutoDesignHydraulics();
   else {const feed=document.querySelector('[name="feed_flow"]'),cap=document.querySelector('[name="required_capacity_m3d"]');if(feed){feed.readOnly=false;feed.setAttribute('aria-readonly','false');feed.closest('.field')?.classList.remove('calculated-field');}if(cap){cap.required=false;cap.removeAttribute('aria-required');}}
   updateRejectFlowMode();updateMassBalancePreview();updateRequiredFieldStates();
-  const btn=document.querySelector('.primary');if(btn)setPrimaryLabel(autoPlant?'Auto Design · size array & solve pressure':pressureInput?'Calculate permeate & recovery':productInput?'Solve feed pressure & recovery':'Solve feed pressure & permeate');
+  const btn=calculateButton();if(btn)setPrimaryLabel(autoPlant?'Auto Design · size array & solve pressure':pressureInput?'Calculate permeate & recovery':productInput?'Solve feed pressure & recovery':'Solve feed pressure & permeate');
   const hint=document.querySelector('.solve-hint');
   if(!hint)return;
   if(mode==='multistage'){
@@ -3428,12 +3453,26 @@ function tailChemistryRiskHtml(j){if(!j)return '<span>Scaling analysis</span><b>
 async function loadTailChemistryRisks(r){const streams=tailChemistryStreams(r);await Promise.all(streams.map(async([key,stream])=>{const host=document.querySelector(`[data-tail-risk="${key}"]`);if(!host||!stream?.composition_mg_l)return;const ck=tailChemistryRiskKey(key,stream,r);try{let j=tailChemistryCache[ck];if(!j){const comp=stream.composition_mg_l,payload={...profileChemPayload(waterProfile,comp,stream.ph,stream.alkalinity_mg_l_as_hco3),reported_tds:Number(stream.tds_mg_l??compositionTds(comp)),source_ph:Number(stream.ph??waterProfile.feed_ph)};const resp=await totalroFetch('/api/chemistry/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});j=await resp.json();if(!resp.ok)throw new Error(j.error||'Tail chemistry analysis failed');tailChemistryCache[ck]=j;}host.innerHTML=tailChemistryRiskHtml(j);}catch(e){host.innerHTML='<span>Scaling analysis</span><b>Unavailable</b>';}}))}
 function tailElementWaterChemistryHtml(r){const n=resultStageCount(r),t=r?.[`stage${n}_tail_element_chemistry`];if(!t)return `<section class="report-section"><h3>TAIL ELEMENT WATER CHEMISTRY</h3><p class="muted">Tail-element chemistry requires Full water chemistry and a coupled membrane calculation.</p></section>`;const cards=tailChemistryStreams(r).map(([key,stream])=>chemistryStreamMiniTable(stream,key)).join('');return `<section class="report-section tail-chemistry-intro"><div class="chart-title-row"><h3>TAIL ELEMENT WATER CHEMISTRY</h3><span>Stage ${n} · element ${t.tail_element||r[`stage${n}_elements_per_vessel`]} · ${escapeHtml(t.tail_membrane_model||'')}</span></div><p class="micro-note">This tab captures the chemistry entering the system and the final element, plus the interconnected permeate-tube chemistry immediately before and after the tail element. Each stream also runs a thermodynamic scaling snapshot so permeate-side CaCO₃ risk in NF service is visible rather than inferred only from calcium and alkalinity concentrations.</p></section><div class="tail-chem-grid">${cards}</div>`}
 function processPerformanceBody(r){if(mode==='dweer'||mode==='pelton')return solveStatus(r)+solverDiagnostics(r)+showMembraneHeader(r)+multistageKpis(r)+acidDosingReport(r)+performanceVisualizations(r)+multistagePlantReport(r)+stageReport(r)+mechanicalErdReport(r)+fluxProfileChart(r)+polarizationProfileChart(r)+osmoticProfileChart(r)+tieredPumpCurveHtml(r)+membraneChecks(r);if(mode==='multistage')return solveStatus(r)+solverDiagnostics(r)+showMembraneHeader(r)+multistageKpis(r)+acidDosingReport(r)+performanceVisualizations(r)+multistagePlantReport(r)+autoDesignJointReport(r)+stageReport(r)+multistageTurboAssessment(r)+fluxProfileChart(r)+polarizationProfileChart(r)+osmoticProfileChart(r)+tieredPumpCurveHtml(r)+tieredPumpReportHtml(r)+membraneChecks(r);if(mode==='interstage'&&r?.generalized_interstage_turbo)return solveStatus(r)+solverDiagnostics(r)+showMembraneHeader(r)+multistageKpis(r)+acidDosingReport(r)+performanceVisualizations(r)+multistagePlantReport(r)+autoDesignJointReport(r)+stageReport(r)+multistageTurboAssessment(r)+fluxProfileChart(r)+polarizationProfileChart(r)+osmoticProfileChart(r)+tieredPumpCurveHtml(r)+tieredPumpReportHtml(r)+membraneChecks(r);if(mode==='biturbo'&&r?.generalized_biturbo)return solveStatus(r)+solverDiagnostics(r)+showMembraneHeader(r)+multistageKpis(r)+acidDosingReport(r)+biturboFeasibilityReport(r)+performanceVisualizations(r)+stageReport(r)+multistageTurboAssessment(r)+fluxProfileChart(r)+polarizationProfileChart(r)+osmoticProfileChart(r)+tieredPumpCurveHtml(r)+tieredPumpReportHtml(r)+membraneChecks(r);if(mode==='px'||mode==='interstage_px')return solveStatus(r)+solverDiagnostics(r)+showMembraneHeader(r)+pxKpis(r)+acidDosingReport(r)+performanceVisualizations(r)+stageReport(r)+fluxProfileChart(r)+polarizationProfileChart(r)+osmoticProfileChart(r)+(r.is_brackish_multistage_px||mode==='interstage_px'?multistagePxReport(r):pxReport(r))+tieredVcmpPxPumpSummary(r)+multistageTurboAssessment(r)+membraneChecks(r);return solveStatus(r)+turboDesignStatus(r)+fluxOptimizationPanel(r)+solverDiagnostics(r)+showMembraneHeader(r)+kpis(r)+acidDosingReport(r)+(mode==='biturbo'?biturboFeasibilityReport(r):'')+performanceVisualizations(r)+stageReport(r)+fluxProfileChart(r)+polarizationProfileChart(r)+osmoticProfileChart(r)+turboRows(r)+dutyCards(r)+membraneChecks(r)}
-function renderProcessResultSubtab(r){const host=$('#processResultSubtabBody');if(!host)return;const tab=resultSubtabByMode[mode]||'performance';if(tab==='chemistry'){host.innerHTML=embeddedChemistrySection(r);bindEmbeddedChemistry(r);}else if(tab==='tail'){host.innerHTML=tailElementWaterChemistryHtml(r);loadTailChemistryRisks(r);}else{host.innerHTML=processPerformanceBody(r);bindFluxOptimizationActions();const envBtn=$('#viewHydraulicEnvelopeBtn');if(envBtn)envBtn.addEventListener('click',()=>changeMode('envelope'));}document.querySelectorAll('[data-result-subtab]').forEach(b=>b.classList.toggle('active',b.dataset.resultSubtab===tab));}
+function renderProcessResultSubtab(r){const host=$('#processResultSubtabBody');if(!host)return;const tab=resultSubtabByMode[mode]||'performance';if(tab==='chemistry'){host.innerHTML=embeddedChemistrySection(r);bindEmbeddedChemistry(r);}else if(tab==='tail'){host.innerHTML=tailElementWaterChemistryHtml(r);loadTailChemistryRisks(r);}else{const performanceHtml=processPerformanceBody(r);host.innerHTML=performanceHtml;bindFluxOptimizationActions();const envBtn=$('#viewHydraulicEnvelopeBtn');if(envBtn)envBtn.addEventListener('click',()=>changeMode('envelope'));}document.querySelectorAll('[data-result-subtab]').forEach(b=>b.classList.toggle('active',b.dataset.resultSubtab===tab));}
 function bindProcessResultTabs(r){document.querySelectorAll('[data-result-subtab]').forEach(b=>b.addEventListener('click',()=>{resultSubtabByMode[mode]=b.dataset.resultSubtab;renderProcessResultSubtab(r)}));renderProcessResultSubtab(r)}
 function showMultistage(r){showWarnings(r);$('#results').innerHTML=processResultTabsHtml();bindProcessResultTabs(r)}
 function show(r){showWarnings(r);$('#results').innerHTML=processResultTabsHtml();bindProcessResultTabs(r);updateErdNavAccess()}
 
 function syncSolveResult(r){lastResult=r;const autoPlant=isAutoPlantDesign();const basis=autoPlant?'recovery':(document.querySelector('[name="solve_basis"]')?.value||'pressure');const q=document.querySelector('[name="target_product_flow"]');const feed=document.querySelector('[name="feed_flow"]');const p=document.querySelector('[name="membrane_pressure_1"]');const p2=document.querySelector('[name="membrane_pressure_2"]');const rec=document.querySelector('[name="target_recovery"]');const qrej1=document.querySelector('[name="reject_flow_1"]');const qrej2=document.querySelector('[name="reject_flow_2"]');if(autoPlant){if(feed&&r.feed_flow!==undefined)feed.value=Number(r.feed_flow).toFixed(3);if(q&&r.product_flow!==undefined)q.value=Number(r.product_flow).toFixed(3);if(p&&r.membrane_pressure_1!==undefined)p.value=Number(r.membrane_pressure_1).toFixed(2);if(rec&&r.recovery!==undefined)rec.value=(Number(r.recovery)*100).toFixed(2);}else if(basis==='pressure'){if(q)q.value=Number(r.product_flow).toFixed(1);if(rec)rec.value=(Number(r.recovery)*100).toFixed(1);}else if(basis==='product'){if(p)p.value=Number(r.membrane_pressure_1).toFixed(1);if(p2&&r.membrane_pressure_2!==undefined)p2.value=Number(r.membrane_pressure_2).toFixed(1);if(rec)rec.value=(Number(r.recovery)*100).toFixed(1);}else if(basis==='recovery'){if(p)p.value=Number(r.membrane_pressure_1).toFixed(1);if(p2&&r.membrane_pressure_2!==undefined)p2.value=Number(r.membrane_pressure_2).toFixed(1);if(q)q.value=Number(r.product_flow).toFixed(1);}if(r.membrane_coupling){if(qrej1&&r.reject_flow_1!==undefined)qrej1.value=Number(r.reject_flow_1).toFixed(1);if(qrej2&&r.reject_flow_2!==undefined)qrej2.value=Number(r.reject_flow_2).toFixed(1);}updateRequiredFieldStates();}
+function renderWaterChemistryResult(result=lastChemistryResult){
+  if(!result)return;
+  const host=document.querySelector('#results');if(!host)return;
+  host.innerHTML=chemistryResultsHtml(result);
+  const balanceButton=document.querySelector('#balanceWaterBtn');
+  if(balanceButton&&typeof balanceActiveWater==='function')balanceButton.addEventListener('click',balanceActiveWater,{once:true});
+  applyWaterChargeAnalysis(result);
+  updateWorkspaceChrome();
+}
+function renderCurrentWaterChemistry(){
+  const host=document.querySelector('#results');
+  if(lastChemistryResult)renderWaterChemistryResult(lastChemistryResult);
+  else{if(host)host.innerHTML='';updateWorkspaceChrome();}
+}
 function waterSummary(){const w=waterProfile;const ions=Object.keys(chemistry).filter(k=>k.startsWith('ion_')).reduce((a,k)=>a+Number(w[k]||0),0);return `<div class="water-summary-result"><h3>${escapeHtml(w.water_region_name||'Water quality')}</h3><div class="kpi-strip three"><div><span>Temperature</span><strong>${fmt(w.temperature_c)} °C</strong></div><div><span>Salinity</span><strong>${fmt(w.salinity_psu)} PSU</strong></div><div><span>Rounded TDS</span><strong>${fmt(w.analysis_tds)} mg/L</strong></div></div><p class="micro-note">Species sum: ${fmt(ions)} mg/L. Membrane-condition A/B multipliers are configured in Plant Design.</p></div>`}
 
 
@@ -3514,6 +3553,25 @@ function economicResults(r){const order=['px','single','biturbo'].filter(k=>r.ca
 }
 async function calcEconomic(){const data=captureEconomic();const cases={};Object.entries(caseResults).forEach(([k,r])=>{if(['px','single','biturbo'].includes(k))cases[k]=resultCaseForEconomics(r)});data.cases=cases;const j=await requestJson('/api/economics',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)},'Economic calculation error');lastEconomicResult=j;$('#warnings').innerHTML='';$('#results').innerHTML=economicResults(j)}
 
+async function pollComputeStatus(){
+  try{
+    const response=await totalroFetch('/api/compute/status',{cache:'no-store'});if(!response.ok)return;
+    computeLiveStatus=await response.json();updateComputeStatus();renderComputePanel();
+    const detail=$('#calculationDetail'),eta=$('#calculationEta'),bar=$('#calculationProgressBar');
+    if(computeLiveStatus?.active){
+      const phase=String(computeLiveStatus.phase||'Engineering calculation in progress');
+      if(detail)detail.textContent=phase;
+      const elapsed=Math.max(0,Number(computeLiveStatus.elapsed_seconds||0));
+      const remaining=computeLiveStatus.eta_seconds==null?null:Math.max(0,Number(computeLiveStatus.eta_seconds));
+      if(eta)eta.textContent=remaining==null?`Elapsed ${formatRunTime(elapsed)} · Estimated remaining: calculating…`:`Elapsed ${formatRunTime(elapsed)} · Estimated remaining ~${formatRunTime(remaining)}`;
+      const progress=Number(computeLiveStatus.progress_fraction||0);
+      if(bar&&progress>0){bar.classList.add('determinate');bar.style.width=`${Math.max(2,Math.min(100,progress*100))}%`;}
+    }
+  }catch(_){}
+}
+function startComputePolling(){if(computePollTimer)return;pollComputeStatus();computePollTimer=setInterval(pollComputeStatus,1500)}
+function stopComputePolling(){if(computePollTimer){clearInterval(computePollTimer);computePollTimer=null}}
+
 function formatRunTime(seconds){
   const n=Math.max(0,Number(seconds)||0);if(n<60)return `${Math.round(n)} s`;const m=Math.floor(n/60),sec=Math.round(n-m*60);if(m<60)return `${m}m ${String(sec).padStart(2,'0')}s`;const h=Math.floor(m/60),mm=m-h*60;return `${h}h ${mm}m`;
 }
@@ -3525,26 +3583,48 @@ async function cancelActiveCalculation(){
   try{await totalroFetch('/api/compute/cancel',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({run_id:computeLiveStatus?.run_id??null})});}catch(_){}
   try{activeCalculationController?.abort();}catch(_){}
 }
+function emitCalculationState(state,message=''){
+  document.dispatchEvent(new CustomEvent('twds:ro-calculation-state',{detail:{state,mode,message}}));
+}
 function setCalculating(active){
   const overlay=$('#calculationOverlay');
-  const btn=$('#calculateBtn');
+  const btn=calculateButton();
   document.body.classList.toggle('calculating',active);
   if(overlay)overlay.hidden=!active;
-  if(btn){btn.disabled=active;btn.setAttribute('aria-busy',active?'true':'false');}
+  if(btn){
+    btn.disabled=active;btn.setAttribute('aria-busy',active?'true':'false');btn.dataset.twdsBusy=active?'1':'0';
+    if(active){
+      btn.dataset.twdsCalculateState='calculating';
+      if(!btn.dataset.twdsIdleLabel)btn.dataset.twdsIdleLabel=workspaceCalculateLabel(mode);
+      const label=calculateButtonLabel();if(label)label.textContent=mode==='water'?'Calculating water chemistry…':mode==='multistage'?'Calculating Plant Design…':'Calculating…';
+    }else{
+      const idleLabel=btn.dataset.twdsIdleLabel||workspaceCalculateLabel(mode);
+      btn.removeAttribute('data-twds-calculate-state');setPrimaryLabel(idleLabel);
+    }
+  }
   if(active){
     calculationCancelRequested=false;activeCalculationController=new AbortController();
     const detail=$('#calculationDetail'),eta=$('#calculationEta'),title=$('#calculationTitle'),bar=$('#calculationProgressBar'),cancel=$('#cancelCalculationBtn');
-    if(title)title.textContent='Calculating duty point…';if(detail)detail.textContent='Waiting for compute engine status…';if(eta)eta.textContent='Estimating run time…';if(bar){bar.classList.remove('determinate');bar.style.width='';}if(cancel){cancel.disabled=false;cancel.textContent='Stop calculation';}
-    startComputePolling();
-  } else {
-    activeCalculationController=null;calculationCancelRequested=false;
+    const chemistryRun=mode==='water';
+    if(title)title.textContent=chemistryRun?'Analyzing water chemistry…':'Calculating duty point…';
+    if(detail)detail.textContent=chemistryRun?'Evaluating ion balance, speciation, osmotic pressure and scaling indices.':'Waiting for calculation status…';
+    if(eta)eta.textContent=chemistryRun?'Results will appear when the chemistry analysis completes.':'Estimating run time…';
+    if(bar){bar.classList.remove('determinate');bar.style.width='';}if(cancel){cancel.disabled=false;cancel.textContent='Stop calculation';}
+    if(chemistryRun)stopComputePolling();else startComputePolling();
+    emitCalculationState('calculating',title?.textContent||'Calculation started');
+  }else{
+    activeCalculationController=null;calculationCancelRequested=false;emitCalculationState('idle',workspaceCalculateLabel(mode));
     setTimeout(async()=>{await pollComputeStatus();if(!computePanelOpen)stopComputePolling();},550);
   }
 }
 
 async function calc(){
   if(mode==='water'){
-    waterProfile=captureWater();caseSetupNotice='';const chem=await requestJson('/api/chemistry/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(profileChemPayload(waterProfile))},'Water chemistry calculation failed');lastChemistryResult=chem;const c=activeCaseData();if(c){c.chemistryResult=deepClone(chem);if(c.baseDesignSeed)c.baseDesignSeed.stale=true;c.caseResults={};c.advancedDesignResult=null;}syncActiveCaseStore();if($('#results'))$('#results').innerHTML=waterSummary();renderCaseBar();updateWorkflowGates();changeMode('multistage');return;
+    const runSequence=canonicalCalculationSequence;
+    waterProfile=captureWater();caseSetupNotice='';
+    const chem=await requestJson('/api/chemistry/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(profileChemPayload(waterProfile))},'Water chemistry calculation failed');
+    if(runSequence!==canonicalCalculationSequence||calculationCancelRequested){const error=new Error('Calculation stopped by user.');error.kind='cancelled';error.cancelled=true;throw error;}
+    lastChemistryResult=chem;const c=activeCaseData();if(c){c.chemistryResult=deepClone(chem);if(c.baseDesignSeed)c.baseDesignSeed.stale=true;c.caseResults={};c.advancedDesignResult=null;}syncActiveCaseStore();renderWaterChemistryResult(chem);renderCaseBar();updateWorkflowGates();return;
   }
   if(mode==='chemistry'){await loadChemistryResults();return;}
   if(mode==='envelope'){waterProfile=captureEnvelopeSettings();syncActiveCaseStore();await calculateHydraulicEnvelope();return;}
@@ -3555,18 +3635,20 @@ async function calc(){
   let captured=capture();const previousState=modeStates[mode]||{};const workflowMeta={};Object.entries(previousState).forEach(([k,v])=>{if(k.startsWith('_')||['generated_from_base_plant','solution_enabled','generalized_biturbo','plant_solution'].includes(k))workflowMeta[k]=v;});if(mode==='multistage'){delete workflowMeta._last_calculated_signature;delete workflowMeta._erd_populated_signature;captured.design_mode='manual';}let data={...waterProfile,...captured,...workflowMeta,...activeTurboLockFields(mode)};if(mode==='multistage'&&!tierAllows('vcmp_pump_selection'))data.pump_curve_basis='auto';modeStates[mode]={...captured,...workflowMeta};data.flow_unit=$('#flowUnit').value;data.pressure_unit=$('#pressureUnit').value;if(data.max_design_flux_lmh!==undefined&&data.max_design_flux_lmh!=='')data.max_design_flux_lmh=convert(data.max_design_flux_lmh,'flux',$('#fluxUnit').value,'LMH');
   if(mode==='px'){data.px_lp_inlet_pressure=data.suction_pressure;data.mpe_hp_dp=.66;data.mpe_lp_dp=.74;data.mpe_mixing=.02;data.mpe_motor_power=.8;}
   const j=await requestJson(`/api/calculate/${mode}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)},'Calculation error');
+
   if(mode==='multistage'){invalidateDerivedResultsFromBasePlant();caseResults.multistage=j;captured._last_calculated_signature=basePlantSignature(captured);modeStates.multistage={...captured};const c=activeCaseData();if(c){c.baseDesignSeed=makeBaseDesignSeed({...data,...captured},j);c.advancedDesignInput={};c.advancedDesignResult=null;}advancedDesignInput={};advancedDesignResult=null;}else{embeddedChemistryCache={};tailChemistryCache={};caseResults[mode]=j;}
   modeStates[mode]={...captured,...workflowMeta};caseResults[mode]=j;syncActiveCaseStore();syncSolveResult(j);show(j);renderCaseBar();updateWorkflowGates();
 }
 function convertedDefaults(){if(mode==='water')return waterProfile;if(mode==='advanced'||mode==='chemistry'||mode==='envelope'||mode==='scenario'||mode==='comparison'||mode==='summary')return {};if(mode==='economic')return economicState;const base=defaults[mode],d=defn(),v={...base};Object.entries(d).forEach(([k,f])=>{if(f.type==='flow')v[k]=convert(base[k],'flow','m3/h',$('#flowUnit').value);if(f.type==='pressure')v[k]=convert(base[k],'pressure','bar',$('#pressureUnit').value);if(f.type==='flux')v[k]=convert(base[k],'flux','LMH',$('#fluxUnit').value)});return v}
 function changeMode(newMode){
+  if(canonicalCalculationInFlight||document.body.classList.contains('calculating'))return;
   if(newMode==='chemistry')newMode=caseResults?.multistage?'multistage':'water';
   const entitlement=modeEntitlementAccess(newMode);if(!entitlement.ok){showCalcError(new Error(entitlement.reason),'subscription tier');return;}
   persistActiveCase();if(newMode==='multistage'&&!caseWaterIsValid()){showCalcError(new Error('Calculate valid Water Quality before Plant Design.'),'workflow');return;}if((newMode==='advanced'||newMode==='envelope')&&!casePlantIsValid()){showCalcError(new Error('Calculate a valid Plant Design first.'),'workflow');return;}if(ERD_MODES.includes(newMode)){const a=erdModeAccess(newMode);if(!a.ok){showCalcError(new Error(a.reason),'input');updateErdNavAccess();return;}ensureErdWorkspaceFromBase(newMode);} mode=newMode; lastResult=caseResults[mode]||null; updateWaterWorkspaceTabs(); currentUnits={flow:$('#flowUnit').value,pressure:$('#pressureUnit').value,flux:$('#fluxUnit')?.value||'LMH'};
   const vals=modeStates[mode]||convertedDefaults();
   const resultsHost=$('#results');if(resultsHost)resultsHost.innerHTML='<p class="muted">Loading configuration…</p>';
   try{renderFields(vals);}catch(e){if(resultsHost)resultsHost.innerHTML='<p class="muted">This configuration could not be rendered. No results from another technology are being shown.</p>';showCalcError(new Error(`Could not render ${newMode}: ${e?.message||e}`),'input');return;}$('#warnings').innerHTML='';
-  if(mode==='water')$('#results').innerHTML='';
+  if(mode==='water')renderCurrentWaterChemistry();
   else if(mode==='advanced'){$('#results').innerHTML=advancedResultHtml();}
     else if(mode==='envelope')$('#results').innerHTML=hydraulicEnvelopeStatusHtml();
   else if(mode==='scenario')$('#results').innerHTML=scenarioMatrixResults();
@@ -3641,7 +3723,7 @@ function openImportedProject(p,serverRecord=null){
   mode=wanted; if(p.units){currentUnits={flow:p.units.flow||'m3/h',pressure:p.units.pressure||'bar',flux:p.units.flux||'LMH'};$('#flowUnit').value=currentUnits.flow;$('#pressureUnit').value=currentUnits.pressure;if($('#fluxUnit'))$('#fluxUnit').value=currentUnits.flux;}
   enforceTierCaseAccess();loadCaseGlobals(activeCase);mode=modeEntitlementAccess(wanted).ok?wanted:'water';lastResult=caseResults[mode]||null;renderCaseBar();updateWaterWorkspaceTabs();
   const vals=modeStates[mode]||convertedDefaults();renderFields(vals);$('#warnings').innerHTML='';
-  if(mode==='water')$('#results').innerHTML='';
+  if(mode==='water')renderCurrentWaterChemistry();
   else if(mode==='advanced'){$('#results').innerHTML=advancedResultHtml();}
     else if(mode==='envelope')$('#results').innerHTML=hydraulicEnvelopeStatusHtml();
   else if(mode==='scenario')$('#results').innerHTML=scenarioMatrixResults();
@@ -4037,15 +4119,19 @@ $('#projectLibrarySearch')?.addEventListener('input',filterProjectLibrary);
 $('#projectLibraryBody')?.addEventListener('click',async e=>{const open=e.target.closest('[data-project-open]'),copy=e.target.closest('[data-project-copy]');try{if(open)await loadServerProject(open.dataset.projectOpen);else if(copy)await createServerProjectRevision(copy.dataset.projectCopy);}catch(err){alert(`Project library action failed: ${err.message||err}`)}});
 $('#projectFileInput')?.addEventListener('change',async e=>{const f=e.target.files?.[0];if(f)await importProjectFile(f);e.target.value='';});
 $('#flowUnit').addEventListener('change',e=>changeUnits('flow',e.target.value));$('#pressureUnit').addEventListener('change',e=>changeUnits('pressure',e.target.value));$('#fluxUnit')?.addEventListener('change',e=>changeUnits('flux',e.target.value));
-$('#resetBtn').addEventListener('click',()=>{if(mode==='water'){const label=waterProfile.envelope_label;waterProfile=blankWaterProfile();waterProfile.envelope_label=label||'Base design';syncActiveCaseStore();renderWaterTab();if($('#results'))$('#results').innerHTML=''}else if(mode==='envelope'){renderEnvelopeTab();$('#results').innerHTML=hydraulicEnvelopeStatusHtml()}else if(mode==='scenario'){scenarioMatrixState={normal_trains:10,required_capacity_m3d:100000,maintain_capacity_nminus1:true};renderScenarioMatrixTab();$('#results').innerHTML=scenarioMatrixResults()}else if(mode==='comparison'){renderComparisonTab();$('#results').innerHTML=comparisonResults()}else if(mode==='summary'){renderSummaryTab();$('#results').innerHTML=summaryResults()}else if(mode==='economic'){economicState={...economicDefaults};lastEconomicResult=null;syncActiveCaseStore();renderEconomicTab();$('#results').innerHTML='<p class="muted">Economic assumptions reset.</p>'}else{modeStates[mode]={...defaults[mode]};caseResults[mode]=undefined;syncActiveCaseStore();renderFields(convertedDefaults());$('#results').innerHTML='<p class="muted">Defaults restored. Enter required inputs and calculate.</p>';$('#warnings').innerHTML='';updateRequiredFieldStates();}});
-$('#calcForm').addEventListener('submit',async e=>{e.preventDefault();clearCalcError();updateRequiredFieldStates();if(!$('#calcForm').checkValidity()){const err=new Error('Please complete the highlighted mandatory fields before calculating.');showCalcError(err,'input');$('#calcForm').reportValidity();return;}if(mode==='water'||mode==='comparison'||mode==='summary'){
-  if(mode==='water'&&!waterProfileHasAnalyticalBasis(captureWater())){
-    showCalcError(new Error('Select a water preset or enter a valid analytical water composition before calculating water chemistry.'),'input');
-    return;
-  }
-  try{await calc()}catch(err){showCalcError(err,mode)}
-  return;
-}setCalculating(true);try{await new Promise(requestAnimationFrame);await calc()}catch(err){if(err?.kind==='cancelled'||err?.cancelled)showCalculationCancelledNotice();else showCalcError(err,mode)}finally{setCalculating(false)}});
+$('#resetBtn').addEventListener('click',()=>{if(mode==='water'){const label=waterProfile.envelope_label;waterProfile=blankWaterProfile();waterProfile.envelope_label=label||'Base design';lastChemistryResult=null;lastResult=null;caseResults={};modeStates={};advancedDesignInput={};advancedDesignResult=null;const current=activeCaseData();if(current){current.waterProfile=deepClone(waterProfile);current.chemistryResult=null;current.caseResults={};current.modeStates={};current.baseDesignSeed=null;current.advancedDesignInput={};current.advancedDesignResult=null;}syncActiveCaseStore();renderWaterTab();renderCurrentWaterChemistry()}else if(mode==='envelope'){renderEnvelopeTab();$('#results').innerHTML=hydraulicEnvelopeStatusHtml()}else if(mode==='scenario'){scenarioMatrixState={normal_trains:10,required_capacity_m3d:100000,maintain_capacity_nminus1:true};renderScenarioMatrixTab();$('#results').innerHTML=scenarioMatrixResults()}else if(mode==='comparison'){renderComparisonTab();$('#results').innerHTML=comparisonResults()}else if(mode==='summary'){renderSummaryTab();$('#results').innerHTML=summaryResults()}else if(mode==='economic'){economicState={...economicDefaults};lastEconomicResult=null;syncActiveCaseStore();renderEconomicTab();$('#results').innerHTML='<p class="muted">Economic assumptions reset.</p>'}else{modeStates[mode]={...defaults[mode]};caseResults[mode]=undefined;syncActiveCaseStore();renderFields(convertedDefaults());$('#results').innerHTML='<p class="muted">Defaults restored. Enter required inputs and calculate.</p>';$('#warnings').innerHTML='';updateRequiredFieldStates();}});
+$('#calcForm').addEventListener('submit',async event=>{
+  event.preventDefault();
+  if(canonicalCalculationInFlight)return;
+  clearCalcError();updateRequiredFieldStates();
+  if(!$('#calcForm').checkValidity()){const error=new Error('Please complete the highlighted mandatory fields before calculating.');showCalcError(error,'input');$('#calcForm').reportValidity();return;}
+  if(mode==='water'&&!waterProfileHasAnalyticalBasis(captureWater())){showCalcError(new Error('Select a water preset or enter a valid analytical water composition before calculating water chemistry.'),'input');return;}
+  if(mode==='comparison'||mode==='summary'){try{await calc()}catch(error){showCalcError(error,mode)}return;}
+  canonicalCalculationInFlight=true;canonicalCalculationSequence+=1;setCalculating(true);
+  try{await new Promise(requestAnimationFrame);await calc()}
+  catch(error){if(error?.kind==='cancelled'||error?.cancelled){emitCalculationState('cancelled',error.message||'Calculation stopped');showCalculationCancelledNotice()}else{emitCalculationState('failed',error?.message||'Calculation failed');showCalcError(error,mode)}}
+  finally{setCalculating(false);canonicalCalculationInFlight=false;}
+});
 $('#enterCalculatorBtn')?.addEventListener('click',enterCalculatorFromLanding);
 $('#landingDisclaimerBtn')?.addEventListener('click',()=>{const t=$('#landingEngineeringBasis');t?.scrollIntoView({behavior:'smooth',block:'start'});flashLandingTarget(t)});
 $('#landingReleaseNotesBtn')?.addEventListener('click',()=>openLandingDialog('landingReleaseNotesDialog'));

@@ -23,3 +23,28 @@
      inline absolute popover is visibility-hidden and otherwise widens scrollWidth. */
   #calculatorApp .info-popover{display:none!important}
 }
+
+
+/* Total RO native result-table containment */
+@media (max-width:760px){
+  html,body{max-width:100%;overflow-x:clip}
+  #calculatorApp{width:100%!important;max-width:100vw!important;overflow-x:clip!important}
+  #calculatorApp .app-main,
+  #calculatorApp .workspace-scroll,
+  #calculatorApp .layout,
+  #calculatorApp .suite-panel,
+  #calculatorApp .results,
+  #calculatorApp #results,
+  #calculatorApp .report-section{min-width:0!important;max-width:100%!important}
+  #calculatorApp .results{overflow-x:hidden!important}
+  #calculatorApp .table-wrap{
+    display:block;
+    width:100%!important;
+    min-width:0!important;
+    max-width:100%!important;
+    overflow-x:auto!important;
+    overflow-y:hidden;
+    contain:inline-size;
+    -webkit-overflow-scrolling:touch;
+  }
+}
