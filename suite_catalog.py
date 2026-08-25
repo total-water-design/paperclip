@@ -38,6 +38,7 @@ class ProductDefinition:
     logo_asset: str | None
     description: str
     public_tiers: tuple[str, ...] = ()
+    admin_preview_enabled: bool = False
     launch_priority: int = 100
 
     def as_dict(self) -> dict:
@@ -71,6 +72,7 @@ PRODUCTS: tuple[ProductDefinition, ...] = (
         icon_asset="branding/suite/total_bio_design_icon_512.png",
         logo_asset="branding/suite/total_bio_design_logo.png",
         description="Engineering environment for biological wastewater treatment and process-performance evaluation.",
+        admin_preview_enabled=True,
         launch_priority=10,
     ),
     ProductDefinition(
@@ -87,6 +89,26 @@ PRODUCTS: tuple[ProductDefinition, ...] = (
         public_tiers=("entry", "silver", "gold", "platinum"),
         launch_priority=0,
     ),
+    # Dedicated Post-Treatment artwork is not yet published. Use the official
+    # Suite master icon as a neutral portfolio placeholder until dedicated
+    # Post-Treatment branding is approved; never borrow another product icon.
+    ProductDefinition(
+        product_id="post_treatment",
+        name="Total Post-Treatment Design",
+        short_name="Post-Treatment",
+        category="design",
+        status="in_development",
+        route="/post-treatment/",
+        accent="#455468",
+        icon_asset="branding/suite/total_water_design_suite_icon_512.png",
+        logo_asset=None,
+        description=(
+            "Engineering tools in development for product-water stabilization, remineralization, blending, "
+            "pH and alkalinity adjustment, calcite/CO2 foundations, and finished-water conditioning after "
+            "membrane treatment; disinfection and corrosion-control capabilities will follow as validated."
+        ),
+        launch_priority=25,
+    ),
     ProductDefinition(
         product_id="zld",
         name="Total ZLD Design",
@@ -98,6 +120,7 @@ PRODUCTS: tuple[ProductDefinition, ...] = (
         icon_asset="branding/suite/total_zld_design_icon_512.png",
         logo_asset="branding/suite/total_zld_design_logo.png",
         description="Engineering tools for concentrate management, brine concentration and zero-liquid-discharge process design.",
+        admin_preview_enabled=True,
         launch_priority=30,
     ),
     ProductDefinition(
@@ -150,6 +173,7 @@ PRODUCTS: tuple[ProductDefinition, ...] = (
         icon_asset="branding/suite/total_water_academy_icon.svg",
         logo_asset="branding/suite/total_water_academy_logo.svg",
         description="Learn water-treatment engineering by completing progressive concepts, quizzes and hands-on design missions in the Total Water Design Suite.",
+        admin_preview_enabled=True,
         launch_priority=70,
     ),
 )
