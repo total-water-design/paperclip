@@ -1,4 +1,6 @@
 /* Responsive corrections from rendered UI validation. No engineering behavior. */
+html,body,button,input,select,textarea{font-family:Inter,"Segoe UI",Arial,sans-serif!important}
+.twds-app-identity__icon,.about-icon{object-fit:contain}
 .bio-app-body>.sidebar .side-header{display:flex!important;flex-direction:column!important;align-items:flex-start!important;gap:2px!important;padding:10px!important}
 .bio-app-body>.sidebar .side-header>span,.bio-app-body>.sidebar .side-header>strong,.bio-app-body>.sidebar .side-header>small{display:block!important;width:100%!important;line-height:1.25!important}
 .bio-app-body>.sidebar .side-header>span{font-size:8px!important;letter-spacing:.12em!important;font-weight:850!important}

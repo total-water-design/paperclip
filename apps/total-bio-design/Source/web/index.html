@@ -6,10 +6,11 @@
   <meta name="theme-color" content="#0E7A55" />
   <meta name="color-scheme" content="light dark" />
   <title>Total Bio Design — Biological Wastewater Treatment</title>
-  <link rel="icon" href="assets/icon.png" />
+  <link rel="icon" href="assets/total_bio_design_icon_512.png" />
   <link rel="stylesheet" href="styles.css" />
   <link rel="stylesheet" href="suite_contract_v1.css" />
   <link rel="stylesheet" href="suite_contract_v1_responsive.css" />
+  <link rel="stylesheet" href="mbr_equipment_sizing.css" />
 </head>
 <body class="twds-application bio-application" style="--twds-app-accent:#0E7A55">
   <div id="appShell" class="twds-app-shell bio-app-shell" data-twds-app-shell data-app-id="bio">
@@ -21,7 +22,7 @@
         </a>
         <span class="twds-app-header__divider" aria-hidden="true"></span>
         <div class="twds-app-identity">
-          <img class="twds-app-identity__icon" src="assets/icon.svg" alt="" />
+          <img class="twds-app-identity__icon" src="assets/total_bio_design_icon_512.png" alt="" />
           <div class="twds-app-identity__copy"><strong>Total Bio Design</strong><span>Part of the Total Water Design Suite</span></div>
           <span class="twds-chip twds-chip--neutral">v0.2.3</span>
         </div>
@@ -92,7 +93,7 @@
   </div>
 
   <div id="toast"></div>
-  <div id="modal" class="modal hidden" role="dialog" aria-modal="true"><div class="modal-card"><button id="modalClose" class="modal-close">×</button><img src="assets/icon.png" class="about-icon" alt="" /><h2>Total Bio Design</h2><p>Biological wastewater treatment design, process mass balance, residuals handling, compliance review, and cross-application handoff.</p><p class="muted"><strong>Part of the Total Water Design Suite.</strong> Steady-state design tool; project-specific engineering review remains required.</p></div></div>
+  <div id="modal" class="modal hidden" role="dialog" aria-modal="true"><div class="modal-card"><button id="modalClose" class="modal-close">×</button><img src="assets/total_bio_design_icon_512.png" class="about-icon" alt="" /><h2>Total Bio Design</h2><p>Biological wastewater treatment design, process mass balance, residuals handling, compliance review, and cross-application handoff.</p><p class="muted"><strong>Part of the Total Water Design Suite.</strong> Steady-state design tool; project-specific engineering review remains required.</p></div></div>
   <div id="networkModal" class="network-modal hidden"></div>
 
   <dialog id="handoffDialog" class="bio-handoff-dialog" aria-labelledby="handoffTitle">
@@ -107,7 +108,9 @@
   <script src="unit_catalog.js"></script>
   <script src="process_network.js"></script>
   <script src="compliance_advisor.js"></script>
+  <script src="mbr_equipment_sizing.js"></script>
   <script src="app.js"></script>
   <script src="suite_contract_adapter.js"></script>
+  <script src="mbr_equipment_ui.js"></script>
 </body>
 </html>
