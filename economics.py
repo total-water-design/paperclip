@@ -1,14 +1,14 @@
-"""Economic comparison for RO energy-recovery configurations.
+"""Economic analysis routing for Total RO Design and Total Economic Design.
 
-The baseline category allocation and FEDCO Turbocharger savings assumptions are
-based on the user-supplied workbook PX_vs_Turbocharger_CAPEX_OPEX_Revised_v10.
-The model is intentionally transparent: calculated process SEC and recovery/feed
-requirements come from the RO calculator, while project-cost assumptions remain
-editable in the Economic Analysis tab.
+The legacy RO energy-recovery comparison remains unchanged for existing callers.
+A payload with ``model=total_economic_design`` is routed to the plant/project
+cost and finance engine owned by Total Economic Design.
 """
 from __future__ import annotations
 
 import math
+
+from economic_aggregator import analyze_total_economic_design
 
 # Baseline installed-capital fractions from the workbook's PX / Isobaric ERD case.
 CAPEX_CATEGORIES = [
@@ -72,6 +72,9 @@ def _pv_annuity_factor(rate: float, years: float) -> float:
 
 
 def economic_analysis(data: dict) -> dict:
+    if str(data.get("model") or "").strip().lower() == "total_economic_design":
+        return analyze_total_economic_design(data)
+
     cases = data.get("cases") or {}
     if "px" not in cases:
         raise ValueError("Calculate the Isobaric Chamber case before running the economic comparison.")
@@ -89,7 +92,6 @@ def economic_analysis(data: dict) -> dict:
     if capacity <= 0 or not (0 < availability <= 1.0) or base_capex_rate <= 0:
         raise ValueError("Capacity, availability and baseline CAPEX must be positive.")
 
-    # User-editable savings; defaults reproduce the workbook for a conventional Turbo.
     ro_saving = _f(data, "turbo_ro_equipment_saving", WORKBOOK_TURBO_SAVINGS["ro_equipment"])
     elec_saving = _f(data, "turbo_electrical_saving", WORKBOOK_TURBO_SAVINGS["electrical"])
     building_saving = _f(data, "turbo_building_saving", WORKBOOK_TURBO_SAVINGS["building"])
