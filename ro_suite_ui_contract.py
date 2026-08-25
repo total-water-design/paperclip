@@ -1,7 +1,7 @@
 """Native Total RO Design adoption of Suite Core UI/UX Contract v1.0.
 
 The mature RO template remains authoritative.  This module injects only the
-small RO-owned behavior adapter plus a narrowly scoped mobile compatibility
+small RO-owned behavior adapters plus a narrowly scoped mobile compatibility
 stylesheet.  It does not create a second shell/project bar, replace specialist
 markup, change engineering calculations, or load Suite Core CSS over the RO
 application.
@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from flask import request
 
+_CALCULATE_HOTFIX = '<script src="/static/ro_calculate_hotfix.js"></script>'
 _SCRIPT = '<script src="/static/ro_suite_contract.js"></script>'
 _MOBILE_CSS = '<link rel="stylesheet" href="/static/ro_mobile_compat.css">'
 _MARKER = '<meta name="twds-ui-contract" content="1.0" data-twds-ro-contract="native">'
@@ -24,8 +25,14 @@ def _augment_html(text: str) -> str:
             additions.append(_MOBILE_CSS)
         additions.append(_MARKER)
         text = text.replace('</head>', '\n'.join(additions) + '\n</head>', 1)
-    if _SCRIPT not in text and '</body>' in text:
-        text = text.replace('</body>', f'{_SCRIPT}\n</body>', 1)
+    if '</body>' in text:
+        scripts = []
+        if _CALCULATE_HOTFIX not in text:
+            scripts.append(_CALCULATE_HOTFIX)
+        if _SCRIPT not in text:
+            scripts.append(_SCRIPT)
+        if scripts:
+            text = text.replace('</body>', '\n'.join(scripts) + '\n</body>', 1)
     return text
 
 
@@ -56,5 +63,6 @@ def register_ro_suite_ui_contract(app):
         'structural_dom_changes': False,
         'engineering_changes': False,
         'mobile_compat_css': '/static/ro_mobile_compat.css',
+        'calculate_hotfix_js': '/static/ro_calculate_hotfix.js',
     }
     return app
