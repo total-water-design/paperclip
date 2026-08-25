@@ -1,0 +1,37 @@
+{% extends "academy/base.html" %}
+
+{% block workspace_eyebrow %}{{ academy_tr('course_completion') }}{% endblock %}
+{% block workspace_title %}{{ diploma_title }}{% endblock %}
+{% block workspace_description %}{{ academy_tr('diploma_workspace_description') }}{% endblock %}
+
+{% block content %}
+<section class="academy-section academy-section--split">
+  <article class="academy-panel academy-diploma-card">
+    <span class="academy-eyebrow">{{ academy_tr('completion_status') }}</span>
+    <h2>{{ academy_tr('modules_complete_count', done=diploma.completed_modules, total=diploma.required_modules) }}</h2>
+    <progress max="{{ diploma.required_modules }}" value="{{ diploma.completed_modules }}">{{ diploma.completed_modules }}/{{ diploma.required_modules }}</progress>
+    {% if diploma.eligible %}
+      <p>{{ academy_tr('diploma_requirements_met') }}</p>
+    {% elif not current_user.is_authenticated %}
+      <p>{{ academy_tr('diploma_signin') }}</p>
+    {% else %}
+      <p>{{ academy_tr('diploma_requirements_pending') }}</p>
+    {% endif %}
+    <p>{{ academy_tr('capstone_min', percent=diploma.capstone_required_percent|default(80)|int) }}</p>
+    {% if diploma.eligible and not award %}
+      <button type="button" class="twds-button twds-button--primary" data-issue-diploma>{{ academy_tr('issue_diploma') }}</button>
+      <div class="academy-feedback" data-diploma-feedback aria-live="polite"></div>
+    {% elif award %}
+      <div class="academy-award-issued"><strong>{{ academy_tr('diploma_issued') }}</strong><span>{{ award.issued_at }}</span><code dir="ltr">{{ award.verification_token }}</code></div>
+    {% else %}
+      <a class="twds-button twds-button--primary" href="{{ url_for('academy.home') }}">{{ academy_tr('continue_learning') }}</a>
+    {% endif %}
+  </article>
+  <article class="academy-panel">
+    <span class="academy-eyebrow">{{ academy_tr('what_it_represents') }}</span>
+    <h2>{{ academy_tr('completion_not_licensure') }}</h2>
+    <p>{{ academy_tr('completion_not_licensure_copy') }}</p>
+    <p class="academy-note">{{ diploma_disclaimer }}</p>
+  </article>
+</section>
+{% endblock %}

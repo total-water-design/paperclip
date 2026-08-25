@@ -1,0 +1,90 @@
+{% extends "academy/base.html" %}
+
+{% block workspace_eyebrow %}TOTAL WATER ACADEMY{% endblock %}
+{% block workspace_title %}{{ academy_tr('workspace_home_title') }}{% endblock %}
+{% block workspace_description %}{{ academy_tr('workspace_home_description') }}{% endblock %}
+
+{% block content %}
+{% set level_floor = {
+  'L01': 0, 'L02': 0, 'L03': 49, 'L04': 99, 'L05': 69,
+  'L06': 59, 'L07': 69, 'L08': 79, 'L09': 79, 'L10': 99
+} %}
+<section class="academy-hero">
+  <div>
+    <span class="academy-badge">{{ academy_tr('hero_badge') }}</span>
+    <h2>{{ academy_tr('hero_title') }}</h2>
+    <p>{{ academy_tr('hero_copy') }}</p>
+    <div class="academy-chip-row">
+      <a class="twds-button twds-button--primary" href="{{ url_for('academy.level', level_id='L01') }}">{{ academy_tr('start_free') }}</a>
+      <a class="twds-button twds-button--quiet" href="#course-catalog">{{ academy_tr('explore_catalog') }}</a>
+    </div>
+  </div>
+  <div class="academy-stat-grid" aria-label="{{ academy_tr('course_catalog') }}">
+    <div><strong>50</strong><span>{{ academy_tr('individual_courses_modules') }}</span></div>
+    <div><strong>10</strong><span>{{ academy_tr('progressive_levels') }}</span></div>
+    <div><strong>{{ course.guided_hours }}</strong><span>{{ academy_tr('guided_hours') }}</span></div>
+    <div><strong>$0</strong><span>{{ academy_tr('all_alpha_free') }}</span></div>
+  </div>
+</section>
+
+<section class="academy-section academy-section--split">
+  <article class="academy-panel">
+    <span class="academy-eyebrow">{{ academy_tr('choose_your_path') }}</span>
+    <h2>{{ academy_tr('individual_courses') }}</h2>
+    <p>{{ academy_tr('individual_courses_copy') }}</p>
+    <p class="academy-note">{{ academy_tr('commercial_intent') }}</p>
+  </article>
+  <article class="academy-panel">
+    <span class="academy-eyebrow">{{ academy_tr('continuing_education') }}</span>
+    <h2>{{ academy_tr('pdh_ready_title') }}</h2>
+    <p>{{ academy_tr('pdh_ready_copy') }}</p>
+    <p class="academy-note">{{ academy_tr('guided_not_credit') }}</p>
+  </article>
+</section>
+
+<section class="academy-section" id="course-catalog">
+  <div class="academy-section__heading">
+    <div><span class="academy-eyebrow">{{ academy_tr('course_catalog') }}</span><h2>{{ academy_tr('ten_levels_applied') }}</h2></div>
+    <p>{{ academy_tr('catalog_copy') }}</p>
+  </div>
+  <div class="academy-level-grid">
+    {% for level in course.levels %}
+    <article class="academy-level-card">
+      <div class="academy-level-card__top"><span>{{ academy_tr('level') }} {{ level.level }}</span><strong>{{ level.hours }} h</strong></div>
+      <h3>{{ level.title }}</h3>
+      <p>{{ level.mission }}</p>
+      {% if level.id in ['L01', 'L02'] %}
+        <div class="academy-chip-row"><span class="academy-chip">{{ academy_tr('free_foundation') }}</span><span class="academy-chip">{{ academy_tr('planned_free') }}</span></div>
+      {% else %}
+        <div class="academy-chip-row"><span class="academy-chip">{{ academy_tr('free_alpha') }}</span><span class="academy-chip">{{ academy_tr('target_from', price=level_floor[level.id]) }}</span></div>
+      {% endif %}
+      <div class="academy-chip-row">
+        {% for competency in level.competencies[:3] %}<span class="academy-chip">{{ competency }}</span>{% endfor %}
+      </div>
+      <a href="{{ url_for('academy.level', level_id=level.id) }}">{{ academy_tr('choose_courses') }}</a>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="academy-section academy-section--split">
+  <article class="academy-panel">
+    <span class="academy-eyebrow">{{ academy_tr('how_you_learn') }}</span>
+    <h2>{{ academy_tr('learning_flow') }}</h2>
+    <ol class="academy-flow-list">
+      <li><strong>{{ academy_tr('understand_principle') }}</strong><span>{{ academy_tr('understand_principle_copy') }}</span></li>
+      <li><strong>{{ academy_tr('prove_reasoning') }}</strong><span>{{ academy_tr('prove_reasoning_copy') }}</span></li>
+      <li><strong>{{ academy_tr('design_something') }}</strong><span>{{ academy_tr('design_something_copy') }}</span></li>
+      <li><strong>{{ academy_tr('pass_module') }}</strong><span>{{ academy_tr('pass_module_copy') }}</span></li>
+    </ol>
+  </article>
+  <article class="academy-panel">
+    <span class="academy-eyebrow">{{ academy_tr('full_program_completion') }}</span>
+    <h2>{{ course.diploma_title }}</h2>
+    <p>{{ academy_tr('diploma_accumulate') }}</p>
+    <div class="academy-progress-big"><strong>{{ diploma.completed_modules }}/{{ diploma.required_modules }}</strong><span>{{ academy_tr('modules_completed') }}</span></div>
+    <p class="academy-note">{{ course.diploma_disclaimer }}</p>
+    <a href="{{ url_for('academy.diploma') }}">{{ academy_tr('view_diploma') }}</a>
+  </article>
+</section>
+{% endblock %}

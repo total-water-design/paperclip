@@ -1,0 +1,249 @@
+{% extends "shared/application_shell.html" %}
+{% import "shared/suite_components.html" as ui with context %}
+{% set auth_enabled = config.get('AUTH_ENABLED', False) %}
+{% set app_id = 'economics' %}
+{% set app_name = 'Total Water Economics' %}
+{% set app_version = 'Development v0.3' %}
+{% set app_accent = '#985A00' %}
+{% set app_icon_asset = 'branding/suite/total_water_economics_icon_512.png' %}
+
+{% block title %}Total Water Economics — Total Water Design Suite{% endblock %}
+
+{% block app_styles %}
+<link rel="stylesheet" href="{{ url_for('static', filename='economics.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='economics_sources.css') }}">
+{% endblock %}
+
+{% block header_actions %}
+{% if current_user.is_authenticated and current_user.is_admin %}{{ ui.status_chip('Administrator preview', 'review') }}{% endif %}
+<button type="button" class="twds-button twds-button--quiet" id="exportEstimateBtn">Export Snapshot</button>
+{% endblock %}
+
+{% block application_navigation %}
+<span class="ted-nav-label">ECONOMIC WORKFLOW</span>
+<button type="button" class="ted-nav-btn active" data-panel="sources"><b>01</b><span>Connected Data</span></button>
+<button type="button" class="ted-nav-btn" data-panel="overview"><b>02</b><span>Project Estimate</span></button>
+<button type="button" class="ted-nav-btn" data-panel="operating"><b>03</b><span>Lifecycle Cost</span></button>
+<button type="button" class="ted-nav-btn" data-panel="finance"><b>04</b><span>Project Finance</span></button>
+<button type="button" class="ted-nav-btn" data-panel="maturity"><b>05</b><span>Delivery & Maturity</span></button>
+<button type="button" class="ted-nav-btn" data-panel="results"><b>06</b><span>Results</span></button>
+{% endblock %}
+
+{% block project_bar %}
+{{ ui.project_bar('New Water Infrastructure Project', 'TWECO-DRAFT', 'Unsaved', false, true) }}
+{% endblock %}
+
+{% block workspace_navigation %}
+<button type="button" class="ted-workspace-tab active" data-panel="sources">Sources</button>
+<button type="button" class="ted-workspace-tab" data-panel="overview">Overview</button>
+<button type="button" class="ted-workspace-tab" data-panel="basis">Estimate Basis</button>
+<button type="button" class="ted-workspace-tab" data-panel="costs">Cost Build-Up</button>
+<button type="button" class="ted-workspace-tab" data-panel="maturity">AACE Maturity</button>
+<button type="button" class="ted-workspace-tab" data-panel="reconciliation">Reconciliation</button>
+<button type="button" class="ted-workspace-tab" data-panel="operating">OPEX</button>
+<button type="button" class="ted-workspace-tab" data-panel="finance">Finance</button>
+<button type="button" class="ted-workspace-tab" data-panel="pdb">PDB</button>
+<button type="button" class="ted-workspace-tab" data-panel="results">Results</button>
+{% endblock %}
+
+{% block workspace_eyebrow %}ECONOMIC ENGINEERING WORKSPACE{% endblock %}
+{% block workspace_title %}<span id="workspaceTitle">Application Summaries</span>{% endblock %}
+{% block workspace_description %}<span id="workspaceSubtitle">Use one specialist application or combine several application economic summaries into one project-level CAPEX, OPEX and annualized cost model.</span>{% endblock %}
+{% block workspace_actions %}
+{{ ui.calculate_button('idle', 'Calculate', 'calculateEstimateBtn') }}
+<button type="button" class="twds-button twds-button--secondary" id="reportEstimateBtn">Report</button>
+{% endblock %}
+
+{% block guidance %}
+{{ ui.guidance('information', 'Connected economics', 'Specialist applications remain authoritative for their process scope. Total Water Economics combines selected scopes and applies project-level cost, lifecycle and finance logic once.') }}
+<section id="tedReview" class="twds-guidance twds-guidance--warning" role="status" hidden>
+  <div class="twds-guidance__marker" aria-hidden="true"></div><div class="twds-guidance__body"><strong id="tedReviewTitle">Review economic basis</strong><p id="tedReviewMessage"></p></div>
+</section>
+<section id="tedError" class="twds-guidance twds-guidance--calculation-error" role="alert" hidden>
+  <div class="twds-guidance__marker" aria-hidden="true"></div><div class="twds-guidance__body"><strong>Calculation failed</strong><p id="tedErrorMessage"></p></div>
+</section>
+{% endblock %}
+
+{% block content %}
+<div id="tedRuntime" data-auth-enabled="{{ '1' if auth_enabled else '0' }}" hidden></div>
+<div class="ted-origin-legend" aria-label="Economic data origins">
+  <span class="ted-origin ted-origin--user">User input</span>
+  <span class="ted-origin ted-origin--inherited">Inherited</span>
+  <span class="ted-origin ted-origin--database">Database / reference</span>
+  <span class="ted-origin ted-origin--calculated">Calculated</span>
+  <span class="ted-origin ted-origin--override">Overridden inherited</span>
+</div>
+
+<div class="ted-panels">
+  <section class="ted-panel active" data-panel-content="sources">
+    <div class="ted-section-grid">
+      <article class="twds-panel">
+        <div class="twds-panel__title"><div><span>SUITE HANDOFF</span><h2>Economic summaries from specialist applications</h2></div>{{ ui.status_chip('twds.economic_summary v1.0', 'information') }}</div>
+        <p class="ted-copy">Use one application by itself or combine Pretreatment, Bio, RO, ZLD, Water Balance, System Integration and external scopes. Project-level contingency, escalation, financing and annualization remain here.</p>
+        <div class="ted-mode-strip"><div><strong>ONE APP</strong><span>Standalone economic assessment</span></div><div><strong>MULTIPLE APPS</strong><span>Treatment-train economics</span></div><div><strong>FULL SUITE</strong><span>Plant-wide economics</span></div></div>
+      </article>
+      <article class="twds-panel">
+        <div class="twds-panel__title"><div><span>LINEAGE</span><h2>Inherited design basis</h2></div>{{ ui.status_chip('Traceable', 'information') }}</div>
+        <div id="sourceLineageCards" class="ted-lineage-stack"><p class="ted-empty-inline">No inherited application summaries loaded.</p></div>
+      </article>
+    </div>
+
+    <article class="twds-panel ted-panel-gap">
+      <div class="twds-panel__title"><div><span>CONNECTED APPLICATIONS</span><h2>Included economic scopes</h2></div><button type="button" class="twds-button twds-button--secondary" id="addSourceBtn">+ Add application summary</button></div>
+      <p class="ted-copy">Manual rows are user-entered. Imported rows preserve source lineage and are read-only until explicitly overridden.</p>
+      <div class="twds-engineering-table-wrap"><table class="twds-engineering-table ted-source-table"><thead><tr><th>Use</th><th>Origin</th><th>Application</th><th>Project / case</th><th>Equipment CAPEX</th><th>Direct CAPEX</th><th>Energy OPEX / y</th><th>Chemicals / y</th><th>Labor + maint. / y</th><th>Replacement / y</th><th>Other OPEX / y</th><th>Action</th></tr></thead><tbody id="sourceSummaryRows"></tbody></table></div>
+      <div id="sourceEmptyState" class="ted-empty-state">No application summaries added yet. Add one application for a standalone assessment or import Suite lineage.</div>
+    </article>
+
+    <article class="twds-panel ted-panel-gap">
+      <div class="twds-panel__title"><div><span>IMPORT HANDOFF</span><h2>Import application economic-summary JSON</h2></div></div>
+      <label class="ted-field" data-origin="inherited"><span>Economic summary JSON</span><textarea id="summaryImportText" placeholder='{"contract":"twds.economic_summary","version":"1.0","source":{"application_id":"ro","application_name":"Total RO Design","project_id":"TROD-25-0","project_revision":"0"},"currency":"USD","capex":{"buckets":{"equipment_purchase":0,"direct_installation":0}},"opex":{"annual":{"energy":0,"chemicals":0,"replacement":0}}}'></textarea><small class="ted-field-origin">Inherited / Suite handoff</small></label>
+      <div class="ted-inline-actions"><button type="button" class="twds-button twds-button--secondary" id="importSummaryBtn">Import Summary JSON</button></div>
+    </article>
+  </section>
+
+  <section class="ted-panel" data-panel-content="overview">
+    <article class="twds-panel">
+      <div class="twds-panel__title"><div><span>PROJECT</span><h2>Estimate identity and reporting basis</h2></div>{{ ui.status_chip('User input', 'information') }}</div>
+      <div class="ted-grid">
+        <label class="ted-field" data-origin="user"><span>Project name</span><input data-path="project.project_name"><small class="ted-field-origin">User input</small></label>
+        <label class="ted-field" data-origin="user"><span>Estimate ID</span><input data-path="project.estimate_id"><small class="ted-field-origin">User input</small></label>
+        <label class="ted-field" data-origin="user"><span>Delivery method</span><select data-path="project.delivery_method"><option>Progressive Design-Build</option><option>Design-Build</option><option>EPC</option><option>EPCM</option><option>CM-at-Risk</option><option>Design-Bid-Build</option><option>Owner-managed procurement</option><option>BOOT / DBFOM</option></select><small class="ted-field-origin">User input</small></label>
+        <label class="ted-field" data-origin="user"><span>Plant product capacity</span><div class="ted-field-control"><input type="number" min="0" step="1" data-path="project.capacity_m3d"><span>m³/day</span></div><small class="ted-field-origin">User input</small></label>
+        <label class="ted-field" data-origin="user"><span>Project location</span><input data-path="project.location" placeholder="City / region / country"><small class="ted-field-origin">User input</small></label>
+        <label class="ted-field" data-origin="user"><span>Reporting currency</span><select data-path="project.currency"><option>USD</option><option>EUR</option><option>GBP</option><option>CAD</option><option>AUD</option><option>CLP</option><option>BRL</option></select><small class="ted-field-origin">User input</small></label>
+        <label class="ted-field" data-origin="user"><span>Base date</span><input type="date" data-path="project.base_date"><small class="ted-field-origin">User input</small></label>
+        <label class="ted-field" data-origin="user"><span>Estimate date</span><input type="date" data-path="project.estimate_date"><small class="ted-field-origin">User input</small></label>
+      </div>
+      <div class="ted-guidance-inline">Native source currencies are preserved in Suite summaries. Until the shared FX service is integrated, non-zero mixed-currency summaries are blocked rather than silently converted.</div>
+    </article>
+    <article class="twds-panel ted-panel-gap">
+      <div class="twds-panel__title"><div><span>COST LANGUAGE</span><h2>From process scopes to full project cost</h2></div></div>
+      <div class="ted-principle-flow"><div><span>01</span><strong>Application Scope CAPEX</strong></div><div><span>02</span><strong>Total Installed Cost (TIC)</strong></div><div><span>03</span><strong>Total Project Cost</strong></div><div><span>04</span><strong>Total Capital Requirement</strong></div></div>
+    </article>
+  </section>
+
+  <section class="ted-panel" data-panel-content="basis">
+    <div class="ted-section-grid">
+      <article class="twds-panel"><div class="twds-panel__title"><div><span>PROVENANCE</span><h2>Cost-source quality</h2></div></div><div class="ted-source-ladder"><div><span>Vendor / subcontractor quotation</span><small>Preferred when current and applicable</small></div><div><span>Quantity takeoff + unit rate</span><small>Project-specific measured basis</small></div><div><span>Controlled database / historical project</span><small>Document source, date and applicability</small></div><div><span>Capacity-factor estimate</span><small>Document exponent and reference project</small></div><div><span>Parametric / allowance</span><small>Conceptual basis; replace as definition improves</small></div></div></article>
+      <article class="twds-panel"><div class="twds-panel__title"><div><span>REFERENCE DISCIPLINE</span><h2>AACE-informed estimate classification</h2></div>{{ ui.status_chip('Review', 'review') }}</div><p class="ted-copy">Classification is driven by maturity and quality of project-definition deliverables, not a single percent-complete slider.</p><div class="ted-guidance-inline">Reference basis: AACE International RP 18R-97. Suite scoring weights and thresholds are implementation heuristics and are not AACE-prescribed accuracy ranges.</div></article>
+    </div>
+  </section>
+
+  <section class="ted-panel" data-panel-content="costs">
+    <article class="twds-panel">
+      <div class="twds-panel__title"><div><span>PROJECT-LEVEL COST BREAKDOWN</span><h2>Additional cost items</h2></div><button type="button" class="twds-button twds-button--secondary" id="addCostItemBtn">+ Add Project Cost</button></div>
+      <p class="ted-copy">Add costs not already owned by a specialist application: shared site work, common infrastructure, owner scope or other project costs.</p>
+      <div class="twds-engineering-table-wrap"><table class="twds-engineering-table"><thead><tr><th>Description</th><th>Cost bucket</th><th>Discipline</th><th>Qty</th><th>Unit cost</th><th>Origin / source</th><th>Reference</th><th></th></tr></thead><tbody id="costItemRows"></tbody></table></div>
+    </article>
+    <article class="twds-panel ted-panel-gap"><div class="twds-panel__title"><div><span>PROJECT ALLOWANCES</span><h2>Apply common project-level factors once</h2></div>{{ ui.status_chip('User input', 'information') }}</div>
+      <div class="ted-grid">
+        <label class="ted-field" data-origin="user"><span>Construction indirects</span><div class="ted-field-control"><input type="number" min="0" step="0.1" data-path="allowances.construction_indirect_pct"><span>%</span></div><small class="ted-field-origin">User input</small></label>
+        <label class="ted-field" data-origin="user"><span>Engineering / procurement / PM</span><div class="ted-field-control"><input type="number" min="0" step="0.1" data-path="allowances.engineering_procurement_pct"><span>%</span></div><small class="ted-field-origin">User input</small></label>
+        <label class="ted-field" data-origin="user"><span>Owner costs</span><div class="ted-field-control"><input type="number" min="0" step="0.1" data-path="allowances.owner_cost_pct"><span>%</span></div><small class="ted-field-origin">User input</small></label>
+        <label class="ted-field" data-origin="user"><span>Contingency</span><div class="ted-field-control"><input type="number" min="0" step="0.1" data-path="allowances.contingency_pct"><span>%</span></div><small class="ted-field-origin">User input</small></label>
+        <label class="ted-field" data-origin="user"><span>Escalation allowance</span><div class="ted-field-control"><input type="number" min="0" step="0.1" data-path="allowances.escalation_pct"><span>%</span></div><small class="ted-field-origin">User input</small></label>
+        <label class="ted-field" data-origin="user"><span>Financing / IDC allowance</span><div class="ted-field-control"><input type="number" min="0" step="0.1" data-path="allowances.financing_pct"><span>%</span></div><small class="ted-field-origin">User input</small></label>
+        <label class="ted-field" data-origin="user"><span>Working capital</span><div class="ted-field-control"><input type="number" min="0" step="0.1" data-path="allowances.working_capital_pct"><span>%</span></div><small class="ted-field-origin">User input</small></label>
+      </div>
+    </article>
+  </section>
+
+  <section class="ted-panel" data-panel-content="maturity">
+    <article class="twds-panel"><div class="twds-panel__title"><div><span>ESTIMATE READINESS</span><h2>Project-definition maturity</h2></div>{{ ui.status_chip('Review', 'review') }}</div><p class="ted-copy">Score what actually exists for the combined project. Estimate class, expected accuracy, contingency and project risk remain separate concepts.</p><div id="maturityRows" class="ted-maturity-list"></div></article>
+  </section>
+
+  <section class="ted-panel" data-panel-content="reconciliation">
+    <article class="twds-panel"><div class="twds-panel__title"><div><span>ESTIMATE HISTORY</span><h2>Reconcile against the prior estimate</h2></div></div><p class="ted-copy">Changes in specialist-app revisions, quantities, pricing and project assumptions remain explicit.</p>
+      <div class="ted-grid two"><label class="ted-field" data-origin="user"><span>Prior estimate ID</span><input data-path="reconciliation.prior_estimate_id" placeholder="E00"><small class="ted-field-origin">User input</small></label><label class="ted-field" data-origin="user"><span>Prior Total Project Cost</span><input type="number" min="0" step="1" data-path="reconciliation.prior_total_project_cost"><small class="ted-field-origin">User input</small></label></div>
+      <label class="ted-field ted-panel-gap" data-origin="user"><span>Change summary / estimate movement basis</span><textarea data-path="reconciliation.change_summary" placeholder="Added scope, app revision, quantity development, vendor pricing, escalation, risk movement, value engineering…"></textarea><small class="ted-field-origin">User input</small></label>
+      <div class="ted-guidance-inline" id="reconciliationResult"><p>No prior estimate entered.</p></div>
+    </article>
+  </section>
+
+  <section class="ted-panel" data-panel-content="operating">
+    <article class="twds-panel"><div class="twds-panel__title"><div><span>PROJECT OPEX ADDERS</span><h2>Costs outside specialist application summaries</h2></div>{{ ui.status_chip('User input', 'information') }}</div><p class="ted-copy">Application OPEX is already imported. Use these inputs only for common plant-level costs not represented upstream.</p>
+      <div class="ted-grid">
+        <label class="ted-field" data-origin="user"><span>Plant capacity</span><div class="ted-field-control"><input type="number" min="0" data-path="operating.capacity_m3d"><span>m³/day</span></div><small class="ted-field-origin">User input</small></label>
+        <label class="ted-field" data-origin="user"><span>Availability</span><input type="number" min="0" max="1" step="0.01" data-path="operating.availability"><small class="ted-field-origin">User input · fraction</small></label>
+        <label class="ted-field" data-origin="user"><span>Project fixed OPEX / year</span><input type="number" min="0" data-path="operating.fixed_opex_y"><small class="ted-field-origin">User input</small></label>
+        <label class="ted-field" data-origin="user"><span>Additional variable OPEX</span><div class="ted-field-control"><input type="number" min="0" step="0.001" data-path="operating.variable_opex_m3"><span>/m³</span></div><small class="ted-field-origin">User input</small></label>
+        <label class="ted-field" data-origin="user"><span>Additional common energy</span><div class="ted-field-control"><input type="number" min="0" step="0.01" data-path="operating.energy_kwh_m3"><span>kWh/m³</span></div><small class="ted-field-origin">User input</small></label>
+        <label class="ted-field" data-origin="user"><span>Electricity price</span><div class="ted-field-control"><input type="number" min="0" step="0.001" data-path="operating.electricity_price_kwh"><span>/kWh</span></div><small class="ted-field-origin">User input</small></label>
+        <label class="ted-field" data-origin="user"><span>Other project OPEX / year</span><input type="number" min="0" data-path="operating.other_opex_y"><small class="ted-field-origin">User input</small></label>
+        <label class="ted-field" data-origin="user"><span>Project life</span><div class="ted-field-control"><input type="number" min="1" data-path="operating.project_life_years"><span>years</span></div><small class="ted-field-origin">User input</small></label>
+        <label class="ted-field" data-origin="user"><span>Discount rate</span><input type="number" min="0" step="0.001" data-path="operating.discount_rate"><small class="ted-field-origin">User input · fraction</small></label>
+      </div>
+    </article>
+  </section>
+
+  <section class="ted-panel" data-panel-content="finance">
+    <article class="twds-panel"><div class="twds-panel__title"><div><span>FINANCING SCREEN</span><h2>Combined capital, debt, DSCR and required tariff</h2></div>{{ ui.status_chip('User input', 'information') }}</div><p class="ted-copy">Finance is applied to the complete selected project scope, not separately to each process application.</p>
+      <div class="ted-grid">
+        <label class="ted-field" data-origin="user"><span>Debt fraction</span><input type="number" min="0" max="1" step="0.01" data-path="finance.debt_fraction"><small class="ted-field-origin">User input · fraction</small></label>
+        <label class="ted-field" data-origin="user"><span>Interest rate</span><input type="number" min="0" step="0.001" data-path="finance.interest_rate"><small class="ted-field-origin">User input · fraction</small></label>
+        <label class="ted-field" data-origin="user"><span>Debt tenor</span><div class="ted-field-control"><input type="number" min="1" data-path="finance.debt_tenor_years"><span>years</span></div><small class="ted-field-origin">User input</small></label>
+        <label class="ted-field" data-origin="user"><span>Target DSCR</span><input type="number" min="0" step="0.01" data-path="finance.target_dscr"><small class="ted-field-origin">User input · ×</small></label>
+        <label class="ted-field" data-origin="user"><span>Current tariff</span><div class="ted-field-control"><input type="number" min="0" step="0.001" data-path="finance.tariff_m3"><span>/m³</span></div><small class="ted-field-origin">User input</small></label>
+      </div>
+    </article>
+  </section>
+
+  <section class="ted-panel" data-panel-content="pdb">
+    <article class="twds-panel"><div class="twds-panel__title"><div><span>PROGRESSIVE DESIGN-BUILD</span><h2>Combined cost development workflow</h2></div>{{ ui.status_chip('Workflow', 'information') }}</div><p class="ted-copy">As specialist app designs mature, refreshed economic summaries move the common project estimate forward.</p><div class="ted-pdb-flow"><div><span>01</span><strong>Owner Budget</strong></div><div><span>02</span><strong>Validation Estimate</strong></div><div><span>03</span><strong>Open-Book Development</strong></div><div><span>04</span><strong>Risk Reconciliation</strong></div><div><span>05</span><strong>Target / GMP / Agreed Price</strong></div></div></article>
+  </section>
+
+  <section class="ted-panel" data-panel-content="results">
+    <div class="twds-results-stack">
+      <section class="twds-results-section" id="systemSummarySection"><header><div><span class="ted-section-label">SYSTEM SUMMARY</span><h2>Project economic KPIs</h2></div>{{ ui.status_chip('Calculated', 'information') }}</header>
+        <div class="twds-kpi-grid ted-kpi-wide">
+          <article class="twds-kpi"><span>Total Project Cost</span><strong id="resultTotalProjectCost">—</strong></article>
+          <article class="twds-kpi"><span>Total Installed Cost</span><strong id="resultTIC">—</strong></article>
+          <article class="twds-kpi"><span>Capital Requirement</span><strong id="resultCapital">—</strong></article>
+          <article class="twds-kpi"><span>Annual OPEX</span><strong id="resultOpex">—</strong></article>
+          <article class="twds-kpi"><span>Lifecycle Cost</span><strong id="resultLifecycleCost">—</strong></article>
+          <article class="twds-kpi"><span>LCOW</span><strong id="resultLcow">—</strong></article>
+          <article class="twds-kpi"><span>Estimate Class</span><strong id="resultClass">—</strong><small id="resultMaturity">—</small></article>
+          <article class="twds-kpi"><span>Required Tariff</span><strong id="resultTariff">—</strong></article>
+        </div>
+      </section>
+
+      <section class="twds-results-section"><header><div><span class="ted-section-label">PROCESS / ALTERNATIVE SUMMARY</span><h2>Cost contribution by application</h2></div></header><div id="sourceSummaryResult" class="ted-app-summary-result"><p>No application summaries included.</p></div></section>
+
+      <section class="twds-results-section"><header><div><span class="ted-section-label">DETAILED RESULTS</span><h2>Cost build-up and assumptions</h2></div></header>
+        <div class="ted-results-columns"><div><h3>Capital cost hierarchy</h3><div id="hierarchyRows" class="ted-hierarchy"></div></div><div><h3>Source quality</h3><div id="sourceQuality"></div></div></div>
+      </section>
+
+      <section class="twds-results-section"><header><div><span class="ted-section-label">WARNINGS & CONSTRAINTS</span><h2>Items requiring review</h2></div></header><div id="warningList" class="ted-warning-list"><p>No calculation warnings.</p></div><div id="nextSteps" class="ted-next"></div></section>
+
+      <section class="twds-results-section"><header><div><span class="ted-section-label">ENERGY / ECONOMICS</span><h2>Lifecycle and finance</h2></div></header>
+        <div class="twds-kpi-grid">
+          <article class="twds-kpi"><span>Annualized CAPEX</span><strong id="resultAnnualizedCapex">—</strong></article>
+          <article class="twds-kpi"><span>Annualized Cost</span><strong id="resultAnnualizedCost">—</strong></article>
+          <article class="twds-kpi"><span>Current DSCR</span><strong id="resultDscr">—</strong></article>
+          <article class="twds-kpi"><span>Annual Production</span><strong id="resultAnnualProduct">—</strong><small>m³/y</small></article>
+        </div>
+        <div class="ted-results-columns ted-panel-gap"><div><h3>Operating cost contribution</h3><div id="opexBreakdownRows" class="ted-hierarchy"></div></div><div><h3>Finance assumptions</h3><div id="financeSummaryRows" class="ted-hierarchy"></div></div></div>
+      </section>
+    </div>
+  </section>
+</div>
+
+<dialog id="projectLibraryDialog" class="ted-dialog" aria-labelledby="projectLibraryTitle">
+  <div class="ted-dialog-head"><div><span class="ted-section-label">PROJECT LIBRARY</span><h2 id="projectLibraryTitle">Total Water Economics projects</h2></div><button type="button" class="twds-button twds-button--quiet" data-dialog-close>Close</button></div>
+  <div id="projectLibraryMessage" class="ted-dialog-message"></div><div id="projectLibraryRows" class="ted-library-list"></div>
+</dialog>
+
+<script id="tedStarterPayload" type="application/json">{
+  "project":{"project_name":"New Water Infrastructure Project","estimate_id":"E01","location":"","currency":"USD","capacity_m3d":100000,"delivery_method":"Progressive Design-Build","base_date":"","estimate_date":""},
+  "source_summaries":[],
+  "cost_items":[],
+  "allowances":{"construction_indirect_pct":12,"engineering_procurement_pct":10,"owner_cost_pct":5,"contingency_pct":20,"escalation_pct":0,"financing_pct":0,"working_capital_pct":0},
+  "definition":{"design_basis":0.5,"process_description":0.5,"process_flow_diagrams":0.5,"mass_balance":0.5,"equipment_list":0.5,"equipment_sizing":0.5,"major_equipment_pricing":0.25,"site_definition":0.25,"civil_definition":0.25,"piping_definition":0.25,"electrical_definition":0.25,"instrumentation_controls":0.25,"execution_plan":0.25,"procurement_strategy":0.5,"schedule_maturity":0.25,"quantity_takeoffs":0,"risk_register":0.25,"escalation_basis":0.25,"contingency_methodology":0.5},
+  "operating":{"capacity_m3d":100000,"availability":0.95,"fixed_opex_y":0,"variable_opex_m3":0,"energy_kwh_m3":0,"electricity_price_kwh":0.09,"other_opex_y":0,"project_life_years":25,"discount_rate":0.06},
+  "finance":{"debt_fraction":0.7,"interest_rate":0.06,"debt_tenor_years":20,"target_dscr":1.3,"tariff_m3":1.35},
+  "reconciliation":{"prior_estimate_id":"","prior_total_project_cost":null,"change_summary":""}
+}</script>
+{% endblock %}
+
+{% block app_scripts %}<script src="{{ url_for('static', filename='economics.js') }}"></script>{% endblock %}

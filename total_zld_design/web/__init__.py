@@ -1,23 +1,26 @@
-"""Flask integration for the Total Water Design Suite."""
-
+"""Flask integration for Total ZLD Design within the Total Water Design Suite."""
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 
-def create_zld_blueprint(project_backend: Any = None, access_guard: Callable | None = None):
-    """Create the `/zld` Blueprint.
+def create_zld_blueprint(
+    project_backend: Any = None,
+    access_guard: Callable | None = None,
+    application_context: Mapping[str, Any] | None = None,
+):
+    """Create the `/zld` Blueprint using the Suite application-shell contract.
 
-    `access_guard` should be supplied by the Suite and enforce authenticated `zld`
-    product entitlement / admin-preview rules. `project_backend` should implement a
-    `save_snapshot(snapshot, request_payload)` method and use the Suite PostgreSQL
-    ProjectFamily/ProjectRevision models. This package deliberately does not create a
-    parallel auth or project database.
+    ``access_guard`` is supplied by the Suite and enforces authenticated ZLD
+    entitlement/admin-preview rules. ``project_backend`` may provide a direct
+    snapshot adapter, although hosted mode normally uses the Suite-wide project
+    API from the browser. ``application_context`` carries catalog-controlled
+    product identity into the shared Suite shell.
     """
     try:
-        from flask import Blueprint, jsonify, render_template, request
-    except ImportError as exc:  # pragma: no cover - exercised only on web hosts
-        raise RuntimeError("Flask is required for Suite web integration. Install the package's [web] extra.") from exc
+        from flask import Blueprint, current_app, jsonify, render_template, request
+    except ImportError as exc:  # pragma: no cover - web-host dependency
+        raise RuntimeError("Flask is required for Suite web integration.") from exc
 
     from ..service import defaults_payload, handle_calculation_payload, handle_snapshot_payload
 
@@ -30,6 +33,19 @@ def create_zld_blueprint(project_backend: Any = None, access_guard: Callable | N
         static_url_path="/static",
     )
 
+    shell_defaults = {
+        "app_id": "zld",
+        "app_name": "Total ZLD Design",
+        "app_version": "0.2.0",
+        "app_accent": "#6B4FD3",
+        "app_icon_asset": "branding/suite/total_zld_design_icon_512.png",
+        "project_name": "Total ZLD Design Project",
+        "project_id": "Unsaved",
+        "project_revision": "",
+    }
+    if application_context:
+        shell_defaults.update(dict(application_context))
+
     def protect(fn):
         return access_guard(fn) if access_guard is not None else fn
 
@@ -37,7 +53,9 @@ def create_zld_blueprint(project_backend: Any = None, access_guard: Callable | N
     @bp.get("/")
     @protect
     def index():
-        return render_template("zld_index.html")
+        context = dict(shell_defaults)
+        context["auth_enabled"] = bool(current_app.config.get("AUTH_ENABLED", False))
+        return render_template("zld_contract.html", **context)
 
     @bp.get("/api/health")
     def health():

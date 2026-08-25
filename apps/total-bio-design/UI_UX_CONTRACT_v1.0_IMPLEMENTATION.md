@@ -20,10 +20,16 @@ The following files were recovered byte-for-byte from the running Total Bio Desi
 
 The coupled process-network numerical settings remain exactly `maxIterations:400`, `maxOuterIterations:35`, `tolerance:1e-5`, `outerTolerance:1e-4`, `relaxation:0.8`.
 
+## Canonical identity and typography
+
+The Suite catalog is authoritative for Bio identity. The application uses the same canonical Bio artwork as the Suite landing page: `static/branding/suite/total_bio_design_icon_512.png`. A byte-identical local copy is packaged with the Bio frontend so the standalone Go runtime and hosted Suite presentation use the same icon.
+
+The canonical Suite application font stack is `Inter, "Segoe UI", Arial, sans-serif`. Both the Bio legacy stylesheet and Suite-contract layer are aligned to this stack; engineering symbols intentionally retain their monospace treatment.
+
 ## Contract mapping
 
 - Total Water Design Suite master identity and Suite return control.
-- Total Bio Design application identity, BIO icon and catalog accent `#0E7A55`.
+- Total Bio Design application identity, canonical BIO icon and catalog accent `#0E7A55`.
 - “Part of the Total Water Design Suite” endorsement.
 - Suite → Application → Project → Workspace → Inputs / Results hierarchy.
 - Standard project wording: New Project, Project Library, Save, Save As, Revision, Duplicate, Handoff and Report. Unsupported hosted Save As / Duplicate operations are visibly unavailable rather than being simulated incorrectly.

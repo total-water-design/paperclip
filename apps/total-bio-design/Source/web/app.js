@@ -447,6 +447,7 @@
   let activeUnitId=null;
   let activeSludgeUnit=null;
   let lastNetworkResult=null;
+  let mbrEquipmentConfig={};
   function hydrateWaterUnit(raw){
     const unit=raw&&typeof raw==='object'?raw:{};const d=unitDef(unit.type);
     unit.id=unit.id||newId('u',++unitSeq);unit.name=unit.name||d.name;unit.tag=unit.tag||d.tag;unit.tab=d.tab;unit.stage=Number(unit.stage)||1;
@@ -805,7 +806,8 @@
           treatmentTrain,
           recycles,
           sludgeStrategy,
-          sludgeLines
+          sludgeLines,
+          mbrEquipmentConfig:{...mbrEquipmentConfig}
         })
       );
     }catch(_){
@@ -1606,7 +1608,8 @@
       treatmentTrain,
       recycles,
       sludgeStrategy,
-      sludgeLines
+      sludgeLines,
+      mbrEquipmentConfig:{...mbrEquipmentConfig}
     };
   }
 
@@ -1964,12 +1967,20 @@
   }
   function loadPayload(p){
     if(!p||!p.inputs)throw new Error('This is not a Total Bio Design project file.');
-    projectName=(p.project&&p.project.project_name)||p.name||'Imported Biological Design';engine.importInputs(p.inputs);market={...marketDefaults(),...(p.market||{})};bypassedMandatory=p.bypassedMandatory&&typeof p.bypassedMandatory==='object'?{...p.bypassedMandatory}:{};treatmentTrain=Array.isArray(p.treatmentTrain)&&p.treatmentTrain.length?p.treatmentTrain.map(hydrateWaterUnit):defaultTrain();recycles=Array.isArray(p.recycles)?p.recycles.map(r=>({...r})):defaultRecycles();sludgeStrategy=p.sludgeStrategy==='parallel'?'parallel':'common';sludgeLines=Array.isArray(p.sludgeLines)&&p.sludgeLines.length?p.sludgeLines.map(line=>({...line,sources:(line.sources||[]).map(x=>({...x})),units:(line.units||[]).map(hydrateSludgeUnit)})):defaultSludgeLines();sanitizeNetwork();syncMarketToEngine();syncTrainToWorkbook();lastNetworkResult=null;document.getElementById('projectName').textContent=projectName;persistAutosave();render();toast(p.version===APP_VERSION?'Project loaded':`Project migrated to the v${APP_VERSION} report and input-review format`);
+    projectName=(p.project&&p.project.project_name)||p.name||'Imported Biological Design';engine.importInputs(p.inputs);market={...marketDefaults(),...(p.market||{})};bypassedMandatory=p.bypassedMandatory&&typeof p.bypassedMandatory==='object'?{...p.bypassedMandatory}:{};treatmentTrain=Array.isArray(p.treatmentTrain)&&p.treatmentTrain.length?p.treatmentTrain.map(hydrateWaterUnit):defaultTrain();recycles=Array.isArray(p.recycles)?p.recycles.map(r=>({...r})):defaultRecycles();sludgeStrategy=p.sludgeStrategy==='parallel'?'parallel':'common';sludgeLines=Array.isArray(p.sludgeLines)&&p.sludgeLines.length?p.sludgeLines.map(line=>({...line,sources:(line.sources||[]).map(x=>({...x})),units:(line.units||[]).map(hydrateSludgeUnit)})):defaultSludgeLines();mbrEquipmentConfig=p.mbrEquipmentConfig&&typeof p.mbrEquipmentConfig==='object'?{...p.mbrEquipmentConfig}:{};sanitizeNetwork();syncMarketToEngine();syncTrainToWorkbook();lastNetworkResult=null;document.getElementById('projectName').textContent=projectName;persistAutosave();render();toast(p.version===APP_VERSION?'Project loaded':`Project migrated to the v${APP_VERSION} report and input-review format`);
   }
   window.TotalBioDesignUI=Object.freeze({
     recalculate(){engine.errors=[];lastNetworkResult=calculateNetwork();updateCalcState();render();return lastNetworkResult;},
     getLastNetwork(){return lastNetworkResult;},
-    getProjectSnapshot(){return projectSnapshot();}
+    getProjectSnapshot(){return projectSnapshot();},
+    getActiveUnit(){
+      const u=treatmentTrain.find(x=>x.id===activeUnitId);
+      if(!u)return null;
+      const d=unitDef(u.type);
+      return {id:u.id,type:u.type,name:u.name||d.name,tag:u.tag||d.tag,tab:u.tab||d.tab};
+    },
+    getMbrEquipmentConfig(){return {...mbrEquipmentConfig};},
+    setMbrEquipmentConfig(next){mbrEquipmentConfig=next&&typeof next==='object'?{...next}:{};persistAutosave();return {...mbrEquipmentConfig};}
   });
   document.querySelector('.project-pill').style.cursor='pointer';
   document.querySelector('.project-pill').title='Click to rename project';
@@ -2002,7 +2013,7 @@
     openBtn.onclick=()=>document.getElementById('fileOpen').click();
   }
   document.getElementById('fileOpen').onchange=async e=>{const f=e.target.files[0];if(!f)return;try{loadPayload(JSON.parse(await f.text()));}catch(err){alert(err.message);}e.target.value='';};
-  document.getElementById('newBtn').onclick=()=>{if(confirm('Start a new design and restore workbook defaults?')){engine.reset();market=marketDefaults();bypassedMandatory={};treatmentTrain=defaultTrain();recycles=defaultRecycles();sludgeStrategy='common';sludgeLines=defaultSludgeLines();lastNetworkResult=null;syncMarketToEngine();syncTrainToWorkbook();projectName='Untitled Biological Design';serverProjectRecord=null;updateHostedProjectIdentity();try{if(!SUITE_HOSTED)localStorage.removeItem('tbd-autosave');}catch(_){ }current='MarketIntake';renderNav();render();toast('New project created');}};
+  document.getElementById('newBtn').onclick=()=>{if(confirm('Start a new design and restore workbook defaults?')){engine.reset();market=marketDefaults();bypassedMandatory={};treatmentTrain=defaultTrain();recycles=defaultRecycles();sludgeStrategy='common';sludgeLines=defaultSludgeLines();mbrEquipmentConfig={};lastNetworkResult=null;syncMarketToEngine();syncTrainToWorkbook();projectName='Untitled Biological Design';serverProjectRecord=null;updateHostedProjectIdentity();try{if(!SUITE_HOSTED)localStorage.removeItem('tbd-autosave');}catch(_){ }current='MarketIntake';renderNav();render();toast('New project created');}};
   const revisionBtn=document.getElementById('revisionBtn');
   if(revisionBtn){
     revisionBtn.onclick=async()=>{
@@ -2047,7 +2058,7 @@
   document.getElementById('modalClose').onclick=()=>document.getElementById('modal').classList.add('hidden');
   document.getElementById('modal').onclick=e=>{if(e.target.id==='modal')e.currentTarget.classList.add('hidden');};
 
-  try{const saved=SUITE_HOSTED?null:JSON.parse(localStorage.getItem('tbd-autosave')||'null');if(saved?.inputs){projectName=saved.name||projectName;engine.importInputs(saved.inputs);market={...marketDefaults(),...(saved.market||{})};bypassedMandatory=saved.bypassedMandatory&&typeof saved.bypassedMandatory==='object'?{...saved.bypassedMandatory}:{};treatmentTrain=Array.isArray(saved.treatmentTrain)&&saved.treatmentTrain.length?saved.treatmentTrain.map(hydrateWaterUnit):defaultTrain();recycles=Array.isArray(saved.recycles)?saved.recycles.map(r=>({...r})):defaultRecycles();sludgeStrategy=saved.sludgeStrategy==='parallel'?'parallel':'common';sludgeLines=Array.isArray(saved.sludgeLines)&&saved.sludgeLines.length?saved.sludgeLines.map(line=>({...line,sources:(line.sources||[]).map(x=>({...x})),units:(line.units||[]).map(hydrateSludgeUnit)})):defaultSludgeLines();sanitizeNetwork();syncMarketToEngine();syncTrainToWorkbook();lastNetworkResult=null;document.getElementById('projectName').textContent=projectName;}}catch(_){ }
+  try{const saved=SUITE_HOSTED?null:JSON.parse(localStorage.getItem('tbd-autosave')||'null');if(saved?.inputs){projectName=saved.name||projectName;engine.importInputs(saved.inputs);market={...marketDefaults(),...(saved.market||{})};bypassedMandatory=saved.bypassedMandatory&&typeof saved.bypassedMandatory==='object'?{...saved.bypassedMandatory}:{};treatmentTrain=Array.isArray(saved.treatmentTrain)&&saved.treatmentTrain.length?saved.treatmentTrain.map(hydrateWaterUnit):defaultTrain();recycles=Array.isArray(saved.recycles)?saved.recycles.map(r=>({...r})):defaultRecycles();sludgeStrategy=saved.sludgeStrategy==='parallel'?'parallel':'common';sludgeLines=Array.isArray(saved.sludgeLines)&&saved.sludgeLines.length?saved.sludgeLines.map(line=>({...line,sources:(line.sources||[]).map(x=>({...x})),units:(line.units||[]).map(hydrateSludgeUnit)})):defaultSludgeLines();mbrEquipmentConfig=saved.mbrEquipmentConfig&&typeof saved.mbrEquipmentConfig==='object'?{...saved.mbrEquipmentConfig}:{};sanitizeNetwork();syncMarketToEngine();syncTrainToWorkbook();lastNetworkResult=null;document.getElementById('projectName').textContent=projectName;}}catch(_){ }
   if(SUITE_HOSTED){
     try{
       await initSuiteSession();

@@ -153,23 +153,30 @@
   async function run(mode){
     try{const inputs=mode==='thermal'?thermalPayload():foPayload(),j=await postJSON(apiBase+'/calculate',{mode:mode==='thermal'?'thermal_legacy':'fo_regression',inputs});render(j.result);showPage('results');toast('Calculation complete — spreadsheet-free engine.');}catch(e){toast('Calculation error: '+e.message);}
   }
-  function currentInputs(){return !last?null:last.mode==='thermal_legacy'?thermalPayload():foPayload();}
+  function externalCalculation(){return window.ZLDTrain?.getActiveCalculation?.()||null;}
+  function currentInputs(){const external=!last?externalCalculation():null;if(external)return external.inputs||null;return !last?null:last.mode==='thermal_legacy'?thermalPayload():foPayload();}
   async function makeProjectSnapshot(){
-    if(!last)throw new Error('Run a calculation before saving.');
+    const external=!last?externalCalculation():null;
+    const calculation=last||external;
+    if(!calculation)throw new Error('Run a calculation before saving.');
     const projectName=$('projectName')?.value?.trim()||activeProject?.name||'Total ZLD Design Project';
-    const j=await postJSON(apiBase+'/project/snapshot',{mode:last.mode,inputs:currentInputs(),project:{project_name:projectName,case_name:$('caseName')?.value||'Base Case'}});return j.snapshot;
+    const project={project_name:projectName,case_name:$('caseName')?.value||'Base Case'};
+    if(window.ZLDTrain?.getState)project.process_train=window.ZLDTrain.getState();
+    const activeUnit=window.ZLDTrain?.getActiveUnit?.();
+    if(activeUnit?.instance_id)project.active_unit_instance_id=activeUnit.instance_id;
+    const j=await postJSON(apiBase+'/project/snapshot',{mode:calculation.mode,inputs:currentInputs(),project});return j.snapshot;
   }
   function setActiveProject(project){activeProject=project||null;$('projectLabel').textContent=activeProject?.visible_id||'Unsaved';$('projectNameMini').textContent=$('projectName')?.value||activeProject?.name||'Total ZLD Design Project';$('createRevision').disabled=!activeProject;}
   async function save(){try{const snapshot=await makeProjectSnapshot();let j;if(activeProject){j=await putJSON('/api/projects/'+activeProject.id,{snapshot});toast('Project saved — '+j.project.visible_id);}else{j=await postJSON('/api/projects',{product_id:'zld',snapshot});toast('Project created — '+j.project.visible_id);}setActiveProject(j.project);}catch(e){toast('Save error: '+e.message);}}
   async function createRevision(){if(!activeProject){toast('Save the project before creating a revision.');return;}try{const snapshot=await makeProjectSnapshot(),j=await postJSON('/api/projects/'+activeProject.id+'/copy',{snapshot,name:$('projectName')?.value||activeProject.name});setActiveProject(j.project);toast('Revision created — '+j.project.visible_id);}catch(e){toast('Revision error: '+e.message);}}
   function escapeHtml(value){return String(value??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[ch]));}
   async function loadProject(id){
-    try{const j=await getJSON('/api/projects/'+id),snapshot=j.snapshot||{},key=String(snapshot.active_case||1),data=(snapshot.cases||{})[key]||{},mode=snapshot.active_mode||'thermal_legacy';setVal('projectName',snapshot.project?.project_name||j.project.name||'Total ZLD Design Project');setVal('caseName',snapshot.project?.case_name||'Base Case');if(mode==='fo_regression')loadFO(data.inputs||defaults.fo);else loadThermal(data.inputs||defaults.thermal);if(data.results)render(data.results);else{last=null;$('results').classList.add('hidden');$('emptyState').classList.remove('hidden');}setActiveProject(j.project);$('projectLibraryDialog').close();showPage(data.results?'results':'project-basis');toast('Opened '+j.project.visible_id);}catch(e){toast('Open project error: '+e.message);}
+    try{const j=await getJSON('/api/projects/'+id),snapshot=j.snapshot||{},key=String(snapshot.active_case||1),data=(snapshot.cases||{})[key]||{},mode=snapshot.active_mode||'thermal_legacy';setVal('projectName',snapshot.project?.project_name||j.project.name||'Total ZLD Design Project');setVal('caseName',snapshot.project?.case_name||'Base Case');if(window.ZLDTrain?.setState){if(Array.isArray(snapshot.project?.process_train))window.ZLDTrain.setState(snapshot.project.process_train);else window.ZLDTrain.reset?.();if(snapshot.project?.active_unit_instance_id)window.ZLDTrain.selectUnit?.(snapshot.project.active_unit_instance_id,{open:false});}if(mode==='fo_regression')loadFO(data.inputs||defaults.fo);else if(mode==='thermal_legacy')loadThermal(data.inputs||defaults.thermal);else if(mode==='falling_film_evaporator')window.ZLDTrain?.loadCalculation?.(data.results||null,data.inputs||null,snapshot.project?.active_unit_instance_id||null);if(data.results&&mode!=='falling_film_evaporator')render(data.results);else if(mode==='falling_film_evaporator'){last=null;$('results').classList.add('hidden');$('emptyState').classList.remove('hidden');}else{last=null;$('results').classList.add('hidden');$('emptyState').classList.remove('hidden');}setActiveProject(j.project);$('projectLibraryDialog').close();showPage(data.results?(mode==='falling_film_evaporator'?'thermal':'results'):'project-basis');toast('Opened '+j.project.visible_id);}catch(e){toast('Open project error: '+e.message);}
   }
   async function openProjectLibrary(){
     try{const j=await getJSON('/api/projects'),projects=(j.projects||[]).filter(p=>p.product_id==='zld'),rowsEl=$('projectLibraryRows');if(!projects.length)rowsEl.innerHTML='<div class="project-library-empty">No Total ZLD Design projects have been saved yet.</div>';else{rowsEl.innerHTML=projects.map(p=>`<button class="project-library-item" data-project-id="${Number(p.id)}"><span><strong>${escapeHtml(p.visible_id)}</strong><small>${escapeHtml(p.name)}</small></span><span>Rev ${Number(p.revision)}<small>${escapeHtml(p.updated_at||'')}</small></span></button>`).join('');rowsEl.querySelectorAll('.project-library-item').forEach(b=>b.onclick=()=>loadProject(Number(b.dataset.projectId)));}$('projectLibraryDialog').showModal();}catch(e){toast('Project Library error: '+e.message);}
   }
-  function newProject(){last=null;setActiveProject(null);setVal('projectName','Total ZLD Design Project');setVal('caseName','Base Case');$('results').classList.add('hidden');$('emptyState').classList.remove('hidden');loadThermal(defaults.thermal);loadFO(defaults.fo);renderEnergy(null);renderEquipment(null);$('modeLabel').textContent='Not calculated';showPage('project-basis');toast('New unsaved Total ZLD Design project.');}
+  function newProject(){last=null;window.ZLDTrain?.reset?.();setActiveProject(null);setVal('projectName','Total ZLD Design Project');setVal('caseName','Base Case');$('results').classList.add('hidden');$('emptyState').classList.remove('hidden');loadThermal(defaults.thermal);loadFO(defaults.fo);renderEnergy(null);renderEquipment(null);$('modeLabel').textContent='Not calculated';showPage('project-basis');toast('New unsaved Total ZLD Design project.');}
 
   function bindEvents(){
     $$('.nav-item').forEach(b=>b.onclick=()=>showPage(b.dataset.page));
