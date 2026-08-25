@@ -54,6 +54,10 @@ from suite_metrics_hardening import apply_suite_metrics_hardening  # noqa: E402
 from suite_metrics_audit import apply_suite_metrics_audit_corrections  # noqa: E402
 from suite_reports import init_suite_reports  # noqa: E402
 
+# Validated Total Water Academy application registrations.
+from academy import init_total_water_academy  # noqa: E402
+from academy_placement import init_academy_placement  # noqa: E402
+
 # Dedicated RO process configurations. Conventional RO remains authoritative;
 # CCRO and Batch RO are additive configurations within Total RO Design.
 register_ccro_runtime(app, CALCS)
@@ -100,6 +104,11 @@ init_suite_feedback_hardening(app)
 init_suite_communications(app)
 init_suite_reports(app)
 init_suite_commercial(app)
+
+# Academy is additive to the current Alpha composition. Its content/placement
+# blueprints are registered only after Suite Core services are initialized.
+init_total_water_academy(app)
+init_academy_placement(app)
 
 app.config["SUITE_FEEDBACK_ENABLED"] = True
 app.config["SUITE_MFA_REQUIRED"] = True
