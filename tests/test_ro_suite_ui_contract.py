@@ -59,3 +59,39 @@ def test_registration_declares_no_structural_or_engineering_changes():
     assert state['structural_dom_changes'] is False
     assert state['engineering_changes'] is False
     assert state['mobile_compat_css'] == '/static/ro_mobile_compat.css'
+
+
+
+def test_augmented_ro_response_is_complete_idempotent_and_has_correct_content_length():
+    app = Flask(__name__)
+
+    @app.get('/ro')
+    def ro():
+        return '<html><head></head><body><main id="calculatorApp"></main><script src="/static/app.js"></script></body></html>'
+
+    @app.after_request
+    def _feedback_bridge(response):
+        if 'text/html' in response.headers.get('Content-Type', ''):
+            text = response.get_data(as_text=True)
+            if 'data-test-feedback-bridge' not in text:
+                text = text.replace(
+                    '</body>',
+                    '<script data-test-feedback-bridge="1"></script></body>',
+                    1,
+                )
+                response.set_data(text)
+                response.headers['Content-Length'] = str(len(response.get_data()))
+        return response
+
+    register_ro_suite_ui_contract(app)
+    with app.test_client() as client:
+        response = client.get('/ro')
+    body = response.get_data()
+    text = body.decode('utf-8')
+    assert response.status_code == 200
+    assert text.endswith('</html>')
+    assert text.count('data-twds-ro-contract="native"') == 1
+    assert text.count('/static/ro_suite_contract.js') == 1
+    assert text.count('data-test-feedback-bridge') == 1
+    assert int(response.headers['Content-Length']) == len(body)
+    assert _augment_html(text) == text

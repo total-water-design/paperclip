@@ -2,6 +2,7 @@
 
 {% block app_styles %}
 {{ super() }}
+<link rel="stylesheet" href="{{ url_for('static', filename='economics_polish.css') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='economics_finance.css') }}">
 {% endblock %}
 
