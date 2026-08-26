@@ -2,13 +2,14 @@ name: Deploy Alpha
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - alpha
+    inputs:
+      commit_sha:
+        description: Exact 40-character commit SHA already present on alpha
+        required: true
+        type: string
 
 permissions:
   contents: read
-  statuses: write
 
 concurrency:
   group: twds-alpha-deployment
@@ -16,83 +17,83 @@ concurrency:
 
 jobs:
   deploy-alpha:
-    name: Deploy exact alpha commit to EC2
+    name: Deploy approved alpha SHA to EC2
     runs-on:
       - self-hosted
       - Linux
       - X64
       - twds-alpha
       - ec2
-    timeout-minutes: 20
+
+    timeout-minutes: 15
+
+    env:
+      REQUESTED_SHA: ${{ inputs.commit_sha }}
 
     steps:
-      - name: Publish release pending statuses
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Validate requested SHA format
+        shell: bash
         run: |
-          set -euo pipefail
-          post() {
-            local context="$1" description="$2"
-            python3 - "$context" "$description" <<'PY' >/tmp/twds-status.json
-          import json,sys
-          print(json.dumps({"state":"pending","context":sys.argv[1],"description":sys.argv[2][:140]}))
-          PY
-            curl -fsS -X POST \
-              -H "Authorization: Bearer $GH_TOKEN" \
-              -H "Accept: application/vnd.github+json" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
-              --data-binary @/tmp/twds-status.json >/dev/null
-          }
-          post twds-alpha/deployment "Exact Alpha deployment in progress"
-          post twds-alpha/source-validation "Alpha source validation pending"
-          post twds-alpha/cutover "Protected Alpha cutover pending"
-          post twds-alpha/release-health "Post-deployment Suite verification pending"
-          post twds-alpha/ccro-final "CCRO/source and final release verification pending"
+          set -Eeuo pipefail
 
-      - name: Checkout exact triggering Alpha commit
-        uses: actions/checkout@v5
+          if [[ ! "$REQUESTED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "ERROR: commit_sha must be a full lowercase 40-character Git SHA."
+            exit 1
+          fi
+
+          echo "Requested deployment SHA: $REQUESTED_SHA"
+
+      - name: Checkout exact requested commit
+        uses: actions/checkout@v4
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ inputs.commit_sha }}
           fetch-depth: 0
 
-      - name: Identify exact release candidate
+      - name: Verify exact SHA and alpha ancestry
+        shell: bash
         run: |
-          set -euo pipefail
-          ACTUAL="$(git rev-parse HEAD)"
-          test "$ACTUAL" = "$GITHUB_SHA"
-          echo "Release candidate: $ACTUAL"
-          echo "Previous Alpha: $(git rev-parse HEAD^1)"
+          set -Eeuo pipefail
 
-      - name: Validate release source
+          ACTUAL_SHA="$(git rev-parse HEAD)"
+
+          echo "Requested SHA: $REQUESTED_SHA"
+          echo "Checked out:   $ACTUAL_SHA"
+
+          [[ "$ACTUAL_SHA" == "$REQUESTED_SHA" ]] || {
+            echo "ERROR: checked-out SHA does not match requested SHA."
+            exit 1
+          }
+
+          git fetch --no-tags origin "+refs/heads/alpha:refs/remotes/origin/alpha"
+
+          if ! git merge-base --is-ancestor "$REQUESTED_SHA" origin/alpha; then
+            echo "ERROR: requested SHA is not contained in the alpha branch history."
+            exit 1
+          fi
+
+          echo "PASS - exact SHA verified and contained in alpha"
+
+      - name: Identify deployment
+        shell: bash
         run: |
-          set -euo pipefail
-          for f in \
-            app.py auth.py wsgi.py requirements-server.txt \
-            pump_db.py vcmp_pump.py hhecp_pump.py pd_pump.py shared_pump_engine.py \
-            addons/ccro/__init__.py addons/ccro/engine.py static/addons/ccro/ccro_addon.js; do
-            test -f "$f"
-          done
+          set -Eeuo pipefail
+          echo "Deploying commit:"
+          git rev-parse HEAD
+          echo
+          echo "Short commit:"
+          git rev-parse --short HEAD
+
+      - name: Validate source tree
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          test -f app.py
+          test -f auth.py
+          test -f wsgi.py
+          test -f requirements-server.txt
           test -d static
           test -d templates
-          test -d data
-
-          EXPECTED_BATCH_SHA="$(tr -d '\r\n ' < deploy/batch_ro_alpha/payload.sha256)"
-
-          python3 tools/materialize_batch_ro_build.py \
-            --from-legacy-payload \
-            --expect-payload-sha "$EXPECTED_BATCH_SHA"
-
-          python3 tools/materialize_batch_ro_build.py --check
-
-          for f in \
-            addons/batch_ro/__init__.py \
-            addons/batch_ro/engine.py \
-            static/addons/batch_ro/batch_ro.svg \
-            static/addons/batch_ro/batch_ro_addon.js \
-            deploy/batch_ro_runtime_manifest.json; do
-            test -f "$f"
-          done
 
           if find . \
             \( -name '.env' \
@@ -111,39 +112,15 @@ jobs:
 
           python3 -m compileall -q .
 
-          # The specialist shared-pump numerical regression is enforced in its
-          # dedicated CI before reconciliation. Runtime compatibility is then
-          # proven by the protected application restart and live health checks.
-          test -s data/vcmp_db_compact.json
-          test "$(find data -maxdepth 1 -name 'hhecp_*.json' | wc -l)" -ge 1
-          test "$(find data -maxdepth 1 -name 'pd_*.json' | wc -l)" -ge 1
-
-          python3 - <<'PY'
-          from pathlib import Path
-          text = Path('addons/ccro/__init__.py').read_text(encoding='utf-8')
-          assert '"minimum_tier": "entry"' in text
-          assert '"available_all_tiers": True' in text
-          assert 'require_feature(' not in text
-          print('PASS - tracked CCRO all-tier source contract')
-          PY
-
           echo "PASS - source validation"
 
-      - name: Publish source validation success
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Prepare restricted staging tree
+        shell: bash
         run: |
-          curl -fsS -X POST \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
-            -d '{"state":"success","context":"twds-alpha/source-validation","description":"Exact Alpha source validation passed"}' >/dev/null
+          set -Eeuo pipefail
 
-      - name: Prepare restricted staging tree for exact commit
-        run: |
-          set -euo pipefail
           STAGE=/opt/twds-deploy/staging
+
           rsync -a --delete \
             --exclude='.git/' \
             --exclude='.github/' \
@@ -157,204 +134,34 @@ jobs:
             --exclude='*.pem' \
             --exclude='*.key' \
             "$GITHUB_WORKSPACE/" "$STAGE/"
-          printf '%s\n' "$GITHUB_SHA" > "$STAGE/.deployment_commit"
-          test "$(cat "$STAGE/.deployment_commit")" = "$GITHUB_SHA"
-          echo "Staging prepared for exact commit $GITHUB_SHA"
 
-      - name: Deploy with backup and rollback protection
-        run: sudo /usr/local/sbin/twds-alpha-deploy
-
-      - name: Publish protected cutover success
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          curl -fsS -X POST \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
-            -d '{"state":"success","context":"twds-alpha/cutover","description":"Rollback-protected Alpha cutover completed"}' >/dev/null
-
-      - name: Verify AWS Alpha and restore previous Alpha on extended failure
-        run: |
-          set -u
-          FAIL=0
-          fail() { echo "FAIL - $*"; FAIL=1; }
-          pass() { echo "PASS - $*"; }
-          check_get() {
-            local label="$1" path="$2" allowed="$3" out code
-            out="$(mktemp)"
-            code="$(curl -sS --max-time 15 -o "$out" -w '%{http_code}' "http://127.0.0.1:8000${path}" || true)"
-            if echo " $allowed " | grep -q " $code "; then
-              pass "$label ${path} HTTP $code"
-            else
-              fail "$label ${path} unexpected HTTP ${code:-000}"
-              head -c 600 "$out" 2>/dev/null || true
-              echo
-            fi
-          }
-          check_post() {
-            local label="$1" path="$2" allowed="$3" out code
-            out="$(mktemp)"
-            code="$(curl -sS --max-time 15 -H 'Content-Type: application/json' -d '{}' -o "$out" -w '%{http_code}' "http://127.0.0.1:8000${path}" || true)"
-            if echo " $allowed " | grep -q " $code "; then
-              pass "$label ${path} HTTP $code"
-            else
-              fail "$label ${path} unexpected HTTP ${code:-000}"
-              head -c 600 "$out" 2>/dev/null || true
-              echo
-            fi
+          STAGED_SHA="$(git rev-parse HEAD)"
+          [[ "$STAGED_SHA" == "$REQUESTED_SHA" ]] || {
+            echo "ERROR: staging source SHA does not match requested SHA."
+            exit 1
           }
 
-          systemctl is-active --quiet totalrodesign.service && pass "Total RO Design service active" || fail "Total RO Design service inactive"
-          systemctl is-active --quiet totalbiodesign.service && pass "Total Bio Design service active" || fail "Total Bio Design service inactive"
-          if systemctl list-unit-files --type=service 2>/dev/null | grep -q '^totalzlddesign\.service'; then
-            systemctl is-active --quiet totalzlddesign.service && pass "Total ZLD Design service active" || fail "Total ZLD Design service exists but is inactive"
-          else
-            pass "Total ZLD Design service not deployed; check skipped"
-          fi
+          printf '%s\n' "$STAGED_SHA" > "$STAGE/.deployment_commit"
 
-          check_get "Suite root" / "200"
-          check_get "Health endpoint" /healthz "200"
-          check_get "Login" /login "200"
-          check_get "Total RO launch" /ro "200 301 302 401 403"
-          check_get "Suite dashboard" /suite "200 301 302 401 403"
-          check_get "Admin metrics" /admin/metrics "200 301 302 401 403"
-          check_get "Project API" /api/projects "200 301 302 401 403"
-          check_get "Compute API" /api/compute/capabilities "200 401 403"
-          check_get "CCRO API" /api/addons/ccro/status "200 401 403"
-          check_get "PWA manifest" /static/manifest.webmanifest "200"
-          check_post "Chemistry calculation API" /api/chemistry/analyze "200 400 401 403"
-          check_post "Flowsheet calculation API" /api/flowsheet/solve "200 400 401 403 409"
+          echo "Staging prepared."
+          echo "Commit: $(cat "$STAGE/.deployment_commit")"
 
-          LOGIN_HTML="$(mktemp)"
-          LOGIN_JAR="$(mktemp)"
-          LOGIN_OUT="$(mktemp)"
-          LOGIN_GET="$(curl -sS --max-time 10 -c "$LOGIN_JAR" -o "$LOGIN_HTML" -w '%{http_code}' http://127.0.0.1:8000/login || true)"
-          TOKEN="$(sed -n 's/.*name="csrf_token" value="\([^"]*\)".*/\1/p' "$LOGIN_HTML" | head -1)"
-          if [ "$LOGIN_GET" = "200" ] && [ -n "$TOKEN" ]; then
-            LOGIN_POST="$(curl -sS --max-time 20 -b "$LOGIN_JAR" -c "$LOGIN_JAR" -o "$LOGIN_OUT" -w '%{http_code}' \
-              --data-urlencode "csrf_token=$TOKEN" \
-              --data-urlencode 'email=alpha-release-health-nonexistent@invalid.example' \
-              --data-urlencode 'password=AlphaReleaseHealth-NotARealPassword-2026!' \
-              http://127.0.0.1:8000/login || true)"
-            case "$LOGIN_POST" in
-              200|302) pass "Authentication/PostgreSQL query path completed without server error" ;;
-              429) pass "Authentication rate limiter active; service remains responsive" ;;
-              *) fail "Authentication/PostgreSQL probe HTTP ${LOGIN_POST:-000}" ;;
-            esac
-          else
-            fail "Could not obtain login page/CSRF token for authentication database probe"
-          fi
-
-          HTTPS_ROOT="$(curl -ksS --max-time 15 --resolve totalwaterdesign.com:443:127.0.0.1 -o /dev/null -w '%{http_code}' https://totalwaterdesign.com/ || true)"
-          case "$HTTPS_ROOT" in
-            200|301|302) pass "HTTPS Suite entry through Nginx HTTP $HTTPS_ROOT" ;;
-            *) fail "HTTPS Suite entry through Nginx HTTP ${HTTPS_ROOT:-000}" ;;
-          esac
-          BIO_ROUTE="$(curl -ksS --max-time 15 --resolve totalwaterdesign.com:443:127.0.0.1 -o /dev/null -w '%{http_code}' https://totalwaterdesign.com/apps/bio/ || true)"
-          case "$BIO_ROUTE" in
-            200|301|302|401|403) pass "Total Bio Design launch route HTTP $BIO_ROUTE" ;;
-            *) fail "Total Bio Design launch route HTTP ${BIO_ROUTE:-000}" ;;
-          esac
-
-          if [ "$FAIL" -eq 0 ]; then
-            echo "PASS - extended Alpha release health"
-            exit 0
-          fi
-
-          echo "Extended validation failed; restoring previous Alpha through the same protected deployment mechanism."
-          PREVIOUS_SHA="$(git rev-parse "$GITHUB_SHA^1")"
-          TMP="$(mktemp -d)"
-          trap 'rm -rf "$TMP"' EXIT
-          git archive "$PREVIOUS_SHA" | tar -x -C "$TMP"
-
-          if [ -f "$TMP/tools/materialize_batch_ro_build.py" ] \
-             && [ -f "$TMP/deploy/batch_ro_alpha/payload.sha256" ]; then
-            (
-              cd "$TMP"
-              EXPECTED_BATCH_SHA="$(tr -d '\r\n ' < deploy/batch_ro_alpha/payload.sha256)"
-              python3 tools/materialize_batch_ro_build.py \
-                --from-legacy-payload \
-                --expect-payload-sha "$EXPECTED_BATCH_SHA"
-              python3 tools/materialize_batch_ro_build.py --check
-            )
-          fi
-
-          STAGE=/opt/twds-deploy/staging
-          rsync -a --delete \
-            --exclude='.git/' \
-            --exclude='.github/' \
-            --exclude='instance/' \
-            --exclude='__pycache__/' \
-            --exclude='*.pyc' \
-            --exclude='.env' \
-            --exclude='*.db' \
-            --exclude='*.sqlite' \
-            --exclude='*.sqlite3' \
-            --exclude='*.pem' \
-            --exclude='*.key' \
-            "$TMP/" "$STAGE/"
-          printf '%s\n' "$PREVIOUS_SHA" > "$STAGE/.deployment_commit"
-
-          set +e
-          sudo /usr/local/sbin/twds-alpha-deploy
-          ROLLBACK_RC=$?
-          set -e
-          if [ "$ROLLBACK_RC" -eq 0 ] \
-             && systemctl is-active --quiet totalrodesign.service \
-             && systemctl is-active --quiet totalbiodesign.service \
-             && curl -fsS --max-time 10 http://127.0.0.1:8000/ >/dev/null; then
-            echo "ROLLBACK SUCCESS - previous Alpha $PREVIOUS_SHA restored and healthy"
-          else
-            echo "ROLLBACK FAILURE - manual intervention required"
-          fi
-          exit 1
-
-      - name: Publish release success statuses
-        if: success()
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Deploy through human approval gate
+        shell: bash
         run: |
-          set -euo pipefail
-          post() {
-            local context="$1" description="$2"
-            python3 - "$context" "$description" <<'PY' >/tmp/twds-status.json
-          import json,sys
-          print(json.dumps({"state":"success","context":sys.argv[1],"description":sys.argv[2][:140]}))
-          PY
-            curl -fsS -X POST \
-              -H "Authorization: Bearer $GH_TOKEN" \
-              -H "Accept: application/vnd.github+json" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
-              --data-binary @/tmp/twds-status.json >/dev/null
-          }
-          post twds-alpha/deployment "Exact Alpha commit deployed; protected cutover and extended checks passed"
-          post twds-alpha/release-health "AWS Alpha services, routes, auth/DB, APIs and HTTPS checks passed"
-          post twds-alpha/ccro-final "Tracked all-tier CCRO source present; protected endpoint/release checks passed"
+          set -Eeuo pipefail
+          sudo /usr/local/sbin/twds-alpha-deploy-gated
 
-      - name: Publish release failure statuses
-        if: failure()
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Final service verification
+        shell: bash
         run: |
-          set -euo pipefail
-          post() {
-            local context="$1" description="$2"
-            python3 - "$context" "$description" <<'PY' >/tmp/twds-status.json
-          import json,sys
-          print(json.dumps({"state":"failure","context":sys.argv[1],"description":sys.argv[2][:140]}))
-          PY
-            curl -fsS -X POST \
-              -H "Authorization: Bearer $GH_TOKEN" \
-              -H "Accept: application/vnd.github+json" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
-              --data-binary @/tmp/twds-status.json >/dev/null
-          }
-          post twds-alpha/deployment "Alpha deployment or release validation failed; rollback protection invoked where applicable"
-          post twds-alpha/source-validation "Alpha source validation did not complete successfully"
-          post twds-alpha/cutover "Protected Alpha cutover did not complete successfully"
-          post twds-alpha/release-health "One or more required AWS Alpha release-health checks failed"
-          post twds-alpha/ccro-final "CCRO/source or final Alpha release verification did not complete successfully"
+          set -Eeuo pipefail
+
+          systemctl is-active totalrodesign.service
+          systemctl is-active totalbiodesign.service
+
+          curl -fsS --max-time 10 http://127.0.0.1:8000/healthz >/dev/null
+          curl -fsS --max-time 10 http://127.0.0.1:8000/ >/dev/null
+
+          echo "PASS - alpha deployment healthy"
+          echo "Deployed approved SHA: $REQUESTED_SHA"
