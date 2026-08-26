@@ -33,3 +33,5 @@ The compared quantities are manufacturer permeate flow and stabilized salt rejec
 ## Remaining gate
 
 The manifest is structurally complete but intentionally has `status=PENDING_HUMAN_APPROVAL`, `immutable=false`, and `registry.approval_status=NOT_APPROVED`. Board approval must precede immutable approval metadata and any same-candidate-SHA TOT-67 rerun.
+
+Approval uses the separate TOT-73_CONVENTIONAL_RO_APPROVAL.json record. It binds the unchanged complete-manifest SHA-256 to approved_by, approved_at, the approval interaction ID, and the candidate commit SHA, so no digest is stored inside the file it hashes. The verifier also hashes both referenced source PDFs and fails closed if either is absent or modified. Focused automated tests cover the pending draft, missing/modified sources, altered vectors or tolerances, and a valid detached approval.

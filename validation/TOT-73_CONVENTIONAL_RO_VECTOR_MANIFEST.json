@@ -6,10 +6,8 @@
   "immutable": false,
   "approval": {
     "required_before_certification_rerun": true,
-    "approved_by": null,
-    "approved_at": null,
-    "approval_record": null,
-    "manifest_sha256": null
+    "mechanism": "detached approval record: validation/TOT-73_CONVENTIONAL_RO_APPROVAL.json",
+    "manifest_mutation_after_approval": false
   },
   "preregistration_controls": {
     "expected_values_may_use_twds_outputs": false,
@@ -242,5 +240,5 @@
     "non_convergence_rule": "REJECTED / NOT VALIDATABLE, never PASS",
     "approval_status": "NOT_APPROVED"
   },
-  "next_gate": "Obtain board approval, record approval metadata and immutable manifest hash, then notify/reopen TOT-67 for same-candidate-SHA rerun"
+  "next_gate": "Obtain board approval in the detached approval record, then notify/reopen TOT-67 for same-candidate-SHA rerun"
 }
