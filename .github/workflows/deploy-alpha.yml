@@ -2,6 +2,11 @@ name: Deploy Alpha
 
 on:
   workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: Exact 40-character commit SHA already present on alpha
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -12,7 +17,7 @@ concurrency:
 
 jobs:
   deploy-alpha:
-    name: Deploy alpha to EC2
+    name: Deploy approved alpha SHA to EC2
     runs-on:
       - self-hosted
       - Linux
@@ -22,15 +27,56 @@ jobs:
 
     timeout-minutes: 15
 
+    env:
+      REQUESTED_SHA: ${{ inputs.commit_sha }}
+
     steps:
-      - name: Checkout latest alpha
+      - name: Validate requested SHA format
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          if [[ ! "$REQUESTED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "ERROR: commit_sha must be a full lowercase 40-character Git SHA."
+            exit 1
+          fi
+
+          echo "Requested deployment SHA: $REQUESTED_SHA"
+
+      - name: Checkout exact requested commit
         uses: actions/checkout@v4
         with:
-          ref: alpha
-          fetch-depth: 1
+          ref: ${{ inputs.commit_sha }}
+          fetch-depth: 0
+
+      - name: Verify exact SHA and alpha ancestry
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          ACTUAL_SHA="$(git rev-parse HEAD)"
+
+          echo "Requested SHA: $REQUESTED_SHA"
+          echo "Checked out:   $ACTUAL_SHA"
+
+          [[ "$ACTUAL_SHA" == "$REQUESTED_SHA" ]] || {
+            echo "ERROR: checked-out SHA does not match requested SHA."
+            exit 1
+          }
+
+          git fetch --no-tags origin "+refs/heads/alpha:refs/remotes/origin/alpha"
+
+          if ! git merge-base --is-ancestor "$REQUESTED_SHA" origin/alpha; then
+            echo "ERROR: requested SHA is not contained in the alpha branch history."
+            exit 1
+          fi
+
+          echo "PASS - exact SHA verified and contained in alpha"
 
       - name: Identify deployment
+        shell: bash
         run: |
+          set -Eeuo pipefail
           echo "Deploying commit:"
           git rev-parse HEAD
           echo
@@ -38,8 +84,9 @@ jobs:
           git rev-parse --short HEAD
 
       - name: Validate source tree
+        shell: bash
         run: |
-          set -e
+          set -Eeuo pipefail
 
           test -f app.py
           test -f auth.py
@@ -68,8 +115,9 @@ jobs:
           echo "PASS - source validation"
 
       - name: Prepare restricted staging tree
+        shell: bash
         run: |
-          set -e
+          set -Eeuo pipefail
 
           STAGE=/opt/twds-deploy/staging
 
@@ -87,20 +135,33 @@ jobs:
             --exclude='*.key' \
             "$GITHUB_WORKSPACE/" "$STAGE/"
 
-          git rev-parse HEAD > "$STAGE/.deployment_commit"
+          STAGED_SHA="$(git rev-parse HEAD)"
+          [[ "$STAGED_SHA" == "$REQUESTED_SHA" ]] || {
+            echo "ERROR: staging source SHA does not match requested SHA."
+            exit 1
+          }
+
+          printf '%s\n' "$STAGED_SHA" > "$STAGE/.deployment_commit"
 
           echo "Staging prepared."
           echo "Commit: $(cat "$STAGE/.deployment_commit")"
 
-      - name: Deploy with backup and rollback protection
+      - name: Deploy through human approval gate
+        shell: bash
         run: |
-          sudo /usr/local/sbin/twds-alpha-deploy
+          set -Eeuo pipefail
+          sudo /usr/local/sbin/twds-alpha-deploy-gated
 
       - name: Final service verification
+        shell: bash
         run: |
+          set -Eeuo pipefail
+
           systemctl is-active totalrodesign.service
           systemctl is-active totalbiodesign.service
 
+          curl -fsS --max-time 10 http://127.0.0.1:8000/healthz >/dev/null
           curl -fsS --max-time 10 http://127.0.0.1:8000/ >/dev/null
 
           echo "PASS - alpha deployment healthy"
+          echo "Deployed approved SHA: $REQUESTED_SHA"
