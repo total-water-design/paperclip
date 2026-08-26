@@ -1,0 +1,246 @@
+{
+  "schema": "tot-73-conventional-ro-vector-manifest/v1",
+  "issue": "TOT-73",
+  "scope": "conventional steady-state BWRO/SWRO only",
+  "status": "PENDING_HUMAN_APPROVAL",
+  "immutable": false,
+  "approval": {
+    "required_before_certification_rerun": true,
+    "approved_by": null,
+    "approved_at": null,
+    "approval_record": null,
+    "manifest_sha256": null
+  },
+  "preregistration_controls": {
+    "expected_values_may_use_twds_outputs": false,
+    "tolerances_may_use_observed_twds_outputs": false,
+    "manufacturer_production_variation_is_solver_tolerance": false,
+    "batch_ro_tolerance_scope_reused": false,
+    "missing_or_unapproved_field_semantics": "NOT VALIDATABLE",
+    "certification_rerun_gate": "human approval of this manifest and registry at an unchanged candidate SHA",
+    "skeleton_sha256": "b74eeb74ce476b42c64257238f05a39d0d45f7d8bced30de8dafaec72b541c26"
+  },
+  "acceptance_layers": {
+    "A_published_product_envelope": {
+      "purpose": "Check against manufacturer nominal/typical/minimum published specifications.",
+      "production_variation_is_not_solver_tolerance": true,
+      "status": "COMPLETE_PENDING_HUMAN_APPROVAL"
+    },
+    "B_numerical_regression": {
+      "purpose": "Check independently frozen expected values and approved numerical tolerances.",
+      "status": "COMPLETE_PENDING_HUMAN_APPROVAL"
+    }
+  },
+  "cases": [
+    {
+      "case_id": "BWRO-BW30-PRO-400-standard-25C",
+      "technology": "BWRO",
+      "reference_manufacturer": "DuPont FilmTec",
+      "reference_document": "validation/sources/RO-FilmTec-BW30-PRO-400-PDS-45-D03742-en.pdf",
+      "exact_product": "BW30 PRO-400",
+      "wet_dry_variant": "standard element; sheet does not designate a wet/dry suffix",
+      "product_data_sheet_form": "45-D03742-en",
+      "product_data_sheet_revision": "Rev. 4, November 2024",
+      "source_document_sha256": "1021bce0a5a8e84020d2e030a145667ec77ebe19039e3130a26f6bb486a81ba2",
+      "inputs": {
+        "feed_composition": "2,000 ppm NaCl in water",
+        "analytical_basis": "Manufacturer NaCl standard-test solution; ppm represented as mg/L",
+        "feed_tds_mg_l": 2000,
+        "nacl_mg_l": 2000,
+        "boron_mg_l": "not stated; not a compared input",
+        "feed_temperature_c": 25,
+        "feed_ph": 8,
+        "applied_feed_pressure_psi": 225,
+        "applied_feed_pressure_bar": 15.5,
+        "permeate_backpressure_bar": 0,
+        "recovery_percent": 15,
+        "element_count": 1,
+        "element_arrangement": "single-element manufacturer test-point basis",
+        "feed_flow_m3_h": 11.666666666666666,
+        "hydraulic_boundaries": "Published 42 m3/day permeate at 15% recovery; feed flow independently derived as (42/24)/0.15 = 11.6666666667 m3/h; no separately published feed-flow boundary",
+        "fouling_or_flow_factor": 1,
+        "salt_passage_factor": 1,
+        "temperature_correction": "No correction at published 25 C reference condition; factor 1.0",
+        "concentration_polarization": "No separate adjustment; sheet gives no CP model or coefficient",
+        "pressure_drop_bar": 0,
+        "pressure_drop_basis": "No test-point pressure drop is stated; no inferred correction",
+        "stabilization_assumptions": "Published stabilized rejection; sheet states no duration",
+        "unit_constants": {
+          "published_flow_m3_day": 42,
+          "flow_conversion_hours_per_day": 24,
+          "published_pressure_psi": 225,
+          "published_pressure_bar": 15.5,
+          "ppm_to_mg_l": 1
+        }
+      },
+      "expected_outputs": {
+        "published_nominal_permeate_flow_gpd": 11000,
+        "published_nominal_permeate_flow_m3_day": 42,
+        "permeate_flow_m3_h": 1.75,
+        "published_stabilized_salt_rejection_percent": 99.6,
+        "derived_salt_passage_percent": 0.4,
+        "derived_permeate_tds_mg_l": 8,
+        "recovery_percent": 15,
+        "derivation": "42/24 = 1.75 m3/h; 100 - 99.6 = 0.4% passage; 2000 * 0.004 = 8 mg/L",
+        "precision_and_rounding": "Manufacturer values retained at published precision; compare at full precision"
+      },
+      "specification_class": "manufacturer nominal test point plus published production/minimum envelope",
+      "tolerance": {
+        "rule_ids": [
+          "BW30_PRO_400_PERMEATE_FLOW",
+          "BW30_PRO_400_SALT_REJECTION"
+        ],
+        "absolute": "per quantity_rules",
+        "relative": "per quantity_rules",
+        "combined_rule": "absolute OR relative",
+        "status": "NOT_APPROVED"
+      },
+      "handling": {
+        "non_converged": "REJECTED; no numeric comparison",
+        "rejected_input": "REJECTED",
+        "pass": "PASS only when approved layer rule is satisfied",
+        "fail": "FAIL when an approved rule is violated",
+        "not_validatable": "NOT VALIDATABLE when any required source/input/expected/tolerance/approval field is absent"
+      },
+      "reference_url": "https://www.dupont.com/content/dam/water/amer/us/en/water/public/documents/en/RO-FilmTec-BW30-PRO-400-PDS-45-D03742-en.pdf",
+      "published_product_envelope": {
+        "permeate_flow_m3_day_nominal": 42,
+        "permeate_flow_m3_day_minimum_from_production_variation": 35.7,
+        "permeate_flow_m3_day_upper_bound": "not stated",
+        "production_variation_statement": "Individual-element flow is no more than 15% below the shown value",
+        "stabilized_salt_rejection_percent": 99.6,
+        "minimum_salt_rejection_percent": 99.4
+      }
+    },
+    {
+      "case_id": "SWRO-SW30HRLE-400-standard-25C",
+      "technology": "SWRO",
+      "reference_manufacturer": "DuPont FilmTec",
+      "reference_document": "validation/sources/RO-FilmTec-SW30HRLE-400-PDS-45-D00967-en.pdf",
+      "exact_product": "SW30HRLE-400",
+      "wet_dry_variant": "standard element; current sheet has no wet/dry product-name suffix",
+      "product_data_sheet_form": "45-D00967-en",
+      "product_data_sheet_revision": "Rev. 8, January 2026",
+      "source_document_sha256": "a9cbf1641204b79629a27475d6046ab64f6f81bb58227623add05cc30f10ab9c",
+      "inputs": {
+        "feed_composition": "32,000 ppm NaCl plus 5 ppm boron in water",
+        "analytical_basis": "Manufacturer NaCl/boron standard-test solution; ppm represented as mg/L",
+        "feed_tds_mg_l": 32000,
+        "nacl_mg_l": 32000,
+        "boron_mg_l": 5,
+        "feed_temperature_c": 25,
+        "feed_ph": 8,
+        "applied_feed_pressure_psi": 800,
+        "applied_feed_pressure_bar": 55,
+        "permeate_backpressure_bar": 0,
+        "recovery_percent": 8,
+        "element_count": 1,
+        "element_arrangement": "single-element manufacturer test-point basis",
+        "feed_flow_m3_h": 14.791666666666668,
+        "hydraulic_boundaries": "Published 28.4 m3/day permeate at 8% recovery; feed flow independently derived as (28.4/24)/0.08 = 14.7916666667 m3/h; no separately published feed-flow boundary",
+        "fouling_or_flow_factor": 1,
+        "salt_passage_factor": 1,
+        "temperature_correction": "No correction at published 25 C reference condition; factor 1.0",
+        "concentration_polarization": "No separate adjustment; sheet gives no CP model or coefficient",
+        "pressure_drop_bar": 0,
+        "pressure_drop_basis": "No test-point pressure drop is stated; no inferred correction",
+        "stabilization_assumptions": "Published stabilized rejection; sheet states generally 24-48 hours continuous use, dependent on conditions",
+        "unit_constants": {
+          "published_flow_m3_day": 28.4,
+          "flow_conversion_hours_per_day": 24,
+          "published_pressure_psi": 800,
+          "published_pressure_bar": 55,
+          "ppm_to_mg_l": 1
+        }
+      },
+      "expected_outputs": {
+        "published_nominal_permeate_flow_gpd": 7500,
+        "published_nominal_permeate_flow_m3_day": 28.4,
+        "permeate_flow_m3_h": 1.1833333333333333,
+        "published_stabilized_boron_rejection_percent": 92,
+        "published_stabilized_salt_rejection_percent": 99.8,
+        "derived_salt_passage_percent": 0.2,
+        "derived_permeate_tds_mg_l": 64,
+        "recovery_percent": 8,
+        "derivation": "28.4/24 = 1.18333333333 m3/h; 100 - 99.8 = 0.2% passage; 32000 * 0.002 = 64 mg/L",
+        "precision_and_rounding": "Manufacturer values retained at published precision; compare at full precision"
+      },
+      "specification_class": "manufacturer nominal test point plus published production/minimum envelope",
+      "tolerance": {
+        "rule_ids": [
+          "SW30HRLE_400_PERMEATE_FLOW",
+          "SW30HRLE_400_SALT_REJECTION"
+        ],
+        "absolute": "per quantity_rules",
+        "relative": "per quantity_rules",
+        "combined_rule": "absolute OR relative",
+        "status": "NOT_APPROVED"
+      },
+      "handling": {
+        "non_converged": "REJECTED; no numeric comparison",
+        "rejected_input": "REJECTED",
+        "pass": "PASS only when approved layer rule is satisfied",
+        "fail": "FAIL when an approved rule is violated",
+        "not_validatable": "NOT VALIDATABLE when any required source/input/expected/tolerance/approval field is absent"
+      },
+      "reference_url": "https://www.dupont.com/content/dam/water/amer/us/en/water/public/documents/en/RO-FilmTec-SW30HRLE-400-PDS-45-D00967-en.pdf",
+      "published_product_envelope": {
+        "permeate_flow_m3_day_nominal": 28.4,
+        "permeate_flow_m3_day_minimum_from_production_variation": 24.14,
+        "permeate_flow_m3_day_upper_bound": "not stated",
+        "production_variation_statement": "Individual-element flow is no more than 15% below the shown value",
+        "stabilized_boron_rejection_percent": 92,
+        "stabilized_salt_rejection_percent": 99.8,
+        "minimum_salt_rejection_percent": 99.65
+      }
+    }
+  ],
+  "registry": {
+    "version": "unapproved-v1",
+    "scope": "conventional BWRO/SWRO only",
+    "quantity_rules": [
+      {
+        "rule_id": "BW30_PRO_400_PERMEATE_FLOW",
+        "case_id": "BWRO-BW30-PRO-400-standard-25C",
+        "quantity": "permeate_flow_m3_day",
+        "expected": 42,
+        "absolute_tolerance": 0.5,
+        "relative_tolerance_percent": 1.1904761904761905,
+        "justification": "42 m3/day is printed to the nearest whole m3/day; half the displayed unit is 0.5 m3/day"
+      },
+      {
+        "rule_id": "BW30_PRO_400_SALT_REJECTION",
+        "case_id": "BWRO-BW30-PRO-400-standard-25C",
+        "quantity": "salt_rejection_percent",
+        "expected": 99.6,
+        "absolute_tolerance": 0.05,
+        "relative_tolerance_percent": 0.05020080321285141,
+        "justification": "99.6% is printed to one decimal place; half the displayed unit is 0.05 percentage point"
+      },
+      {
+        "rule_id": "SW30HRLE_400_PERMEATE_FLOW",
+        "case_id": "SWRO-SW30HRLE-400-standard-25C",
+        "quantity": "permeate_flow_m3_day",
+        "expected": 28.4,
+        "absolute_tolerance": 0.05,
+        "relative_tolerance_percent": 0.17605633802816903,
+        "justification": "28.4 m3/day is printed to one decimal place; half the displayed unit is 0.05 m3/day"
+      },
+      {
+        "rule_id": "SW30HRLE_400_SALT_REJECTION",
+        "case_id": "SWRO-SW30HRLE-400-standard-25C",
+        "quantity": "salt_rejection_percent",
+        "expected": 99.8,
+        "absolute_tolerance": 0.05,
+        "relative_tolerance_percent": 0.0501002004008016,
+        "justification": "99.8% is printed to one decimal place; half the displayed unit is 0.05 percentage point"
+      }
+    ],
+    "combined_tolerance_rule": "For each Layer B quantity, PASS if absolute error <= absolute tolerance OR relative error <= relative tolerance (max(abs, rel) envelope); every quantity must pass",
+    "typical_vs_minimum": "Keep manufacturer envelope acceptance separate from numerical regression; do not convert either into solver tolerance",
+    "rounding_rule": "Compare at full precision before display rounding; tolerances are half the manufacturer sheet displayed least-significant unit",
+    "non_convergence_rule": "REJECTED / NOT VALIDATABLE, never PASS",
+    "approval_status": "NOT_APPROVED"
+  },
+  "next_gate": "Obtain board approval, record approval metadata and immutable manifest hash, then notify/reopen TOT-67 for same-candidate-SHA rerun"
+}
