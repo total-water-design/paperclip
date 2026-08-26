@@ -2,6 +2,8 @@
 """Fail-closed verifier for the TOT-73 conventional RO manifest."""
 from __future__ import annotations
 import argparse, hashlib, json
+import re
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +17,21 @@ def sha256(path: Path) -> str:
         for block in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+def commit_exists(repository_root: Path, candidate_commit_sha: Any) -> bool:
+    """Require approval evidence to name an actual commit in this repository."""
+    if not isinstance(candidate_commit_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", candidate_commit_sha):
+        return False
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repository_root), "cat-file", "-e", candidate_commit_sha + "^{commit}"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    except OSError:
+        return False
+    return result.returncode == 0
 
 def verify(manifest_path: Path, approval_path: Path) -> tuple[str, list[str]]:
     errors: list[str] = []
@@ -66,6 +83,8 @@ def verify(manifest_path: Path, approval_path: Path) -> tuple[str, list[str]]:
     if approval.get("manifest_sha256") != sha256(manifest_path): return "FAIL", ["detached approval manifest_sha256 does not match manifest"]
     required = ("approved_by", "approved_at", "approval_record", "candidate_commit_sha")
     if any(approval.get(field) in (None, "") for field in required): return "PENDING", ["detached approval metadata is incomplete"]
+    if not commit_exists(repository_root, approval.get("candidate_commit_sha")):
+        return "FAIL", ["detached approval candidate_commit_sha does not resolve to a commit in repository"]
     return "PASS", []
 
 def main() -> int:

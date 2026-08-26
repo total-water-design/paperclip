@@ -1,6 +1,7 @@
 import hashlib
 import json
 import shutil
+import subprocess
 import tempfile
 import unittest
 import sys
@@ -19,12 +20,20 @@ class Tot73VerifierTests(unittest.TestCase):
         shutil.copytree(HERE, self.repo / "validation", ignore=shutil.ignore_patterns("__pycache__", "test_*.py"))
         self.manifest = self.repo / "validation" / MANIFEST
         self.approval = self.repo / "validation" / APPROVAL
+        subprocess.run(["git", "-C", str(self.repo), "init", "-q"], check=True)
+        subprocess.run(["git", "-C", str(self.repo), "config", "user.email", "test@example.invalid"], check=True)
+        subprocess.run(["git", "-C", str(self.repo), "config", "user.name", "TOT-73 tests"], check=True)
+        subprocess.run(["git", "-C", str(self.repo), "add", "validation"], check=True)
+        subprocess.run(["git", "-C", str(self.repo), "commit", "-qm", "test fixture"], check=True)
+        self.candidate_commit_sha = subprocess.check_output(
+            ["git", "-C", str(self.repo), "rev-parse", "HEAD"], text=True
+        ).strip()
     def tearDown(self):
         self.temp.cleanup()
     def approved(self):
         record = json.loads(self.approval.read_text())
         record.update(approved_by="test-board", approved_at="2026-08-26T00:00:00Z",
-                      approval_record="test-interaction", candidate_commit_sha="a" * 40,
+                      approval_record="test-interaction", candidate_commit_sha=self.candidate_commit_sha,
                       manifest_sha256=hashlib.sha256(self.manifest.read_bytes()).hexdigest())
         self.approval.write_text(json.dumps(record))
     def test_current_draft_is_pending_human_approval(self):
@@ -59,6 +68,12 @@ class Tot73VerifierTests(unittest.TestCase):
     def test_correct_detached_approval_passes(self):
         self.approved()
         self.assertEqual(("PASS", []), verify(self.manifest, self.approval))
+        record = json.loads(self.approval.read_text())
+        record["candidate_commit_sha"] = "a" * 40
+        self.approval.write_text(json.dumps(record))
+        status, details = verify(self.manifest, self.approval)
+        self.assertEqual("FAIL", status)
+        self.assertIn("does not resolve", details[0])
 
 if __name__ == "__main__":
     unittest.main()
