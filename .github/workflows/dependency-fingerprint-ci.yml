@@ -90,7 +90,7 @@ jobs:
         run: |
           set -euo pipefail
           git fetch origin alpha
-          git merge-base --is-ancestor "$GITHUB_SHA" origin/alpha
+          git merge-base --is-ancestor origin/alpha "$GITHUB_SHA"
           BEFORE="$(systemctl show totalrodesign.service -p ActiveEnterTimestampMonotonic -p NRestarts -p MainPID --value | tr '\n' '|')"
           test "$(systemctl show totalrodesign.service -p ProtectSystem --value)" = strict
           RW="$(systemctl show totalrodesign.service -p ReadWritePaths --value)"
