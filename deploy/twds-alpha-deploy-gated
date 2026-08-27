@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+APPROVAL=/var/lib/twds-release-gate/approved_sha
+STAGE_MARKER=/opt/twds-deploy/staging/.deployment_commit
+LIVE_MARKER=/opt/totalrodesign/app/.deployment_commit
+DEPLOYER=/usr/local/sbin/twds-alpha-deploy
+
+fail() {
+    echo "BLOCKED: $*" >&2
+    exit 1
+}
+
+[[ $EUID -eq 0 ]] || fail "must run as root"
+
+[[ -s "$APPROVAL" ]] ||
+    fail "no human-approved Alpha SHA exists"
+
+[[ -f "$STAGE_MARKER" ]] ||
+    fail "staging deployment marker is missing"
+
+APPROVED="$(tr -d '\r\n ' < "$APPROVAL")"
+STAGED="$(tr -d '\r\n ' < "$STAGE_MARKER")"
+
+[[ "$APPROVED" =~ ^[0-9a-f]{40}$ ]] ||
+    fail "approved SHA is invalid"
+
+[[ "$STAGED" =~ ^[0-9a-f]{40}$ ]] ||
+    fail "staged SHA is invalid"
+
+[[ "$APPROVED" == "$STAGED" ]] || {
+    echo "BLOCKED: staged SHA does not match human approval"
+    echo "Approved: $APPROVED"
+    echo "Staged:   $STAGED"
+    exit 2
+}
+
+echo "=========================================="
+echo "TWDS ALPHA DEPLOYMENT GATE PASSED"
+echo "Approved SHA: $APPROVED"
+echo "=========================================="
+
+# Consume approval before attempting deployment.
+# Any retry therefore requires a fresh human approval.
+: > "$APPROVAL"
+
+logger -t twds-release-gate \
+  "Starting approved Alpha deployment: $APPROVED"
+
+"$DEPLOYER"
+
+[[ -f "$LIVE_MARKER" ]] ||
+    fail "deployment completed but live SHA marker is missing"
+
+LIVE="$(tr -d '\r\n ' < "$LIVE_MARKER")"
+
+[[ "$LIVE" == "$APPROVED" ]] || {
+    echo "ERROR: deployed SHA does not match approved SHA" >&2
+    echo "Approved: $APPROVED" >&2
+    echo "Live:     $LIVE" >&2
+    exit 3
+}
+
+logger -t twds-release-gate \
+  "Approved Alpha deployment completed successfully: $LIVE"
+
+echo
+echo "DEPLOYMENT GATE VERIFIED"
+echo "Live SHA: $LIVE"
