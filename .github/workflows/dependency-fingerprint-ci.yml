@@ -11,6 +11,7 @@ on:
       - 'deploy/DEPENDENCY_FINGERPRINT.md'
       - 'tests/test_requirements_fingerprint.py'
       - 'tests/test_dependency_deployer_contract.py'
+      - 'tests/test_alpha_sudoers_contract.sh'
       - '.github/workflows/dependency-fingerprint-ci.yml'
   workflow_dispatch:
 
@@ -34,11 +35,13 @@ jobs:
             tests/test_dependency_deployer_contract.py
           bash -n deploy/twds-alpha-deploy
           bash -n deploy/install_dependency_closure_hardening.sh
+          bash -n tests/test_alpha_sudoers_contract.sh
       - name: Run recursive closure and deployer contract tests
         run: |
           python -m unittest \
             tests.test_requirements_fingerprint \
             tests.test_dependency_deployer_contract -v
+          bash tests/test_alpha_sudoers_contract.sh
       - name: Fingerprint actual current server dependency closure
         run: |
           python deploy/requirements_fingerprint.py requirements-server.txt --repo-root . --json | tee /tmp/current-closure.json
@@ -87,15 +90,33 @@ jobs:
         run: |
           set -euo pipefail
           git fetch origin alpha
-          test "$(git rev-parse origin/alpha)" = 'e12ba5cb33cd2db829639a4bb117a2aa4541fddd'
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/alpha
           BEFORE="$(systemctl show totalrodesign.service -p ActiveEnterTimestampMonotonic -p NRestarts -p MainPID --value | tr '\n' '|')"
           test "$(systemctl show totalrodesign.service -p ProtectSystem --value)" = strict
           RW="$(systemctl show totalrodesign.service -p ReadWritePaths --value)"
           printf '%s\n' "$RW" | tr ' ' '\n' | grep -Fx '/opt/totalrodesign/app/instance' >/dev/null
-          sudo -n -l | grep -F 'NOPASSWD: /usr/local/sbin/twds-alpha-deploy' >/dev/null
-          sudo -n -l | grep -v 'NOPASSWD: /usr/local/sbin/twds-alpha-deploy' | grep -q 'NOPASSWD:' && {
-            echo 'ERROR: unexpected additional passwordless sudo rule'; exit 1;
-          } || true
+          SUDOERS_OUTPUT="$(sudo -n -l 2>&1)"
+          printf '%s\n' "$SUDOERS_OUTPUT"
+          GATED_SUDOERS_PATTERN='NOPASSWD:[[:space:]]*/usr/local/sbin/twds-alpha-deploy-gated([[:space:]]|$)'
+          UNGATED_SUDOERS_PATTERN='NOPASSWD:[[:space:]]*/usr/local/sbin/twds-alpha-deploy([[:space:]]|$)'
+          if ! grep -Eq "$GATED_SUDOERS_PATTERN" <<<"$SUDOERS_OUTPUT"; then
+            if grep -Eq "$UNGATED_SUDOERS_PATTERN" <<<"$SUDOERS_OUTPUT"; then
+              echo 'ERROR: ungated deployer bypass path is permitted: /usr/local/sbin/twds-alpha-deploy'
+            else
+              echo 'ERROR: gated deployer is not permitted'
+            fi
+            exit 1
+          fi
+          if grep -Eq "$UNGATED_SUDOERS_PATTERN" <<<"$SUDOERS_OUTPUT"; then
+            echo 'ERROR: ungated deployer bypass path is permitted: /usr/local/sbin/twds-alpha-deploy'
+            exit 1
+          fi
+          REMAINING_NOPASSWD="$(printf '%s\n' "$SUDOERS_OUTPUT" | sed -E "s#$GATED_SUDOERS_PATTERN##g" | grep -E 'NOPASSWD:' || true)"
+          if [[ -n "$REMAINING_NOPASSWD" ]]; then
+            echo 'ERROR: unexpected additional passwordless sudo rule'
+            printf '%s\n' "$REMAINING_NOPASSWD"
+            exit 1
+          fi
           python3 -m py_compile deploy/requirements_fingerprint.py tests/test_requirements_fingerprint.py tests/test_dependency_deployer_contract.py
           python3 -m unittest tests.test_requirements_fingerprint tests.test_dependency_deployer_contract -v
           bash -n deploy/twds-alpha-deploy
