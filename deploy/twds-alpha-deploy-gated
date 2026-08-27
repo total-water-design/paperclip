@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+APPROVAL=/var/lib/twds-release-gate/approved_sha
+LOCK=/var/lib/twds-release-gate/deploy.lock
+STAGE_MARKER=/opt/twds-deploy/staging/.deployment_commit
+LIVE_MARKER=/opt/totalrodesign/app/.deployment_commit
+DEPLOYER=/usr/local/sbin/twds-alpha-deploy
+
+fail() {
+    echo "BLOCKED: $*" >&2
+    exit 1
+}
+
+[[ $EUID -eq 0 ]] || fail "must run as root"
+
+# Hold a non-blocking lock through approval validation, deployment, live-marker
+# verification, and approval consumption. This prevents two invocations from
+# using the same approval while preserving it for a retry after any failure.
+exec 9>"$LOCK" || fail "cannot open deployment gate lock"
+flock -n 9 || fail "another Alpha deployment gate invocation is active"
+
+[[ -s "$APPROVAL" ]] ||
+    fail "no human-approved Alpha SHA exists"
+
+[[ -f "$STAGE_MARKER" ]] ||
+    fail "staging deployment marker is missing"
+
+APPROVED="$(tr -d '\r\n ' < "$APPROVAL")"
+STAGED="$(tr -d '\r\n ' < "$STAGE_MARKER")"
+
+[[ "$APPROVED" =~ ^[0-9a-f]{40}$ ]] ||
+    fail "approved SHA is invalid"
+
+[[ "$STAGED" =~ ^[0-9a-f]{40}$ ]] ||
+    fail "staged SHA is invalid"
+
+[[ "$APPROVED" == "$STAGED" ]] || {
+    echo "BLOCKED: staged SHA does not match human approval"
+    echo "Approved: $APPROVED"
+    echo "Staged:   $STAGED"
+    exit 2
+}
+
+echo "=========================================="
+echo "TWDS ALPHA DEPLOYMENT GATE PASSED"
+echo "Approved SHA: $APPROVED"
+echo "=========================================="
+
+logger -t twds-release-gate \
+  "Starting approved Alpha deployment: $APPROVED"
+
+"$DEPLOYER"
+
+[[ -f "$LIVE_MARKER" ]] ||
+    fail "deployment completed but live SHA marker is missing"
+
+LIVE="$(tr -d '\r\n ' < "$LIVE_MARKER")"
+
+[[ "$LIVE" == "$APPROVED" ]] || {
+    echo "ERROR: deployed SHA does not match approved SHA" >&2
+    echo "Approved: $APPROVED" >&2
+    echo "Live:     $LIVE" >&2
+    exit 3
+}
+
+# Consume only the approval used by this successful invocation. Refuse to
+# erase a replacement approval written while deployment was in progress.
+CURRENT_APPROVAL="$(tr -d '\r\n ' < "$APPROVAL")"
+[[ "$CURRENT_APPROVAL" == "$APPROVED" ]] ||
+    fail "approval changed during deployment; refusing to consume it"
+: > "$APPROVAL"
+
+logger -t twds-release-gate \
+  "Approved Alpha deployment completed successfully: $LIVE"
+
+echo
+echo "DEPLOYMENT GATE VERIFIED"
+echo "Live SHA: $LIVE"
