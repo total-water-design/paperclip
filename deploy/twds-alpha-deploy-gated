@@ -2,6 +2,7 @@
 set -Eeuo pipefail
 
 APPROVAL=/var/lib/twds-release-gate/approved_sha
+LOCK=/var/lib/twds-release-gate/deploy.lock
 STAGE_MARKER=/opt/twds-deploy/staging/.deployment_commit
 LIVE_MARKER=/opt/totalrodesign/app/.deployment_commit
 DEPLOYER=/usr/local/sbin/twds-alpha-deploy
@@ -12,6 +13,12 @@ fail() {
 }
 
 [[ $EUID -eq 0 ]] || fail "must run as root"
+
+# Hold a non-blocking lock through approval validation, deployment, live-marker
+# verification, and approval consumption. This prevents two invocations from
+# using the same approval while preserving it for a retry after any failure.
+exec 9>"$LOCK" || fail "cannot open deployment gate lock"
+flock -n 9 || fail "another Alpha deployment gate invocation is active"
 
 [[ -s "$APPROVAL" ]] ||
     fail "no human-approved Alpha SHA exists"
@@ -40,10 +47,6 @@ echo "TWDS ALPHA DEPLOYMENT GATE PASSED"
 echo "Approved SHA: $APPROVED"
 echo "=========================================="
 
-# Consume approval before attempting deployment.
-# Any retry therefore requires a fresh human approval.
-: > "$APPROVAL"
-
 logger -t twds-release-gate \
   "Starting approved Alpha deployment: $APPROVED"
 
@@ -60,6 +63,13 @@ LIVE="$(tr -d '\r\n ' < "$LIVE_MARKER")"
     echo "Live:     $LIVE" >&2
     exit 3
 }
+
+# Consume only the approval used by this successful invocation. Refuse to
+# erase a replacement approval written while deployment was in progress.
+CURRENT_APPROVAL="$(tr -d '\r\n ' < "$APPROVAL")"
+[[ "$CURRENT_APPROVAL" == "$APPROVED" ]] ||
+    fail "approval changed during deployment; refusing to consume it"
+: > "$APPROVAL"
 
 logger -t twds-release-gate \
   "Approved Alpha deployment completed successfully: $LIVE"
