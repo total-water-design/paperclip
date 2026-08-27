@@ -110,6 +110,9 @@ jobs:
               exit 1
           fi
 
+          python3 tools/materialize_batch_ro_build.py --from-legacy-payload
+          python3 tools/materialize_batch_ro_build.py --check
+
           python3 -m compileall -q .
 
           echo "PASS - source validation"
