@@ -85,11 +85,13 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
       - name: Confirm validation does not mutate production runtime
         shell: bash
         run: |
           set -euo pipefail
-          git fetch origin alpha
+          git fetch origin +refs/heads/alpha:refs/remotes/origin/alpha
           git merge-base --is-ancestor origin/alpha "$GITHUB_SHA"
           BEFORE="$(systemctl show totalrodesign.service -p ActiveEnterTimestampMonotonic -p NRestarts -p MainPID --value | tr '\n' '|')"
           test "$(systemctl show totalrodesign.service -p ProtectSystem --value)" = strict
