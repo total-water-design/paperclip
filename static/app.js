@@ -106,7 +106,6 @@ function setAdminTierPreview(tier){
 }
 
 
-// v18.2 suite shell. Only explicit Light and Dark appearance modes are supported.
 const WORKSPACE_META={
   water:['WATER','Water Quality','Define the common source-water, temperature and membrane-condition basis used by every technology and operating case.'],
   chemistry:['WATER','Chemistry Results','Review electroneutrality, pH-dependent speciation, scaling indices and mineral saturation for the active case.'],
@@ -125,13 +124,6 @@ const WORKSPACE_META={
   summary:['ANALYSIS','Case Summary','Review selected case and operating-condition information.'],
   economic:['ANALYSIS','Economics','Compare CAPEX, annual energy, lifecycle cost and LCOW for the selected technology cases.']
 };
-function applyTheme(theme){
-  const allowed=['dark','light'];theme=allowed.includes(theme)?theme:'dark';
-  document.documentElement.dataset.theme=theme;localStorage.setItem('totalrodesign-theme',theme);
-  const sel=$('#themeSelect');if(sel&&sel.value!==theme)sel.value=theme;
-  const icon=$('#themeIcon');if(icon)icon.src=theme==='light'?'/static/icons_v18/sun.svg':'/static/icons_v18/moon.svg';
-}
-function initTheme(){const saved=localStorage.getItem('totalrodesign-theme')||localStorage.getItem('calcospower-theme');applyTheme(saved==='light'?'light':'dark')}
 function updateSolutionNavState(){
   document.querySelectorAll('.solution-tab[data-mode]').forEach(btn=>{const k=btn.dataset.mode;const configured=processModeConfigured(k,modeStates?.[k])||Boolean(caseResults?.[k]);let dot=btn.querySelector('.solution-dot');if(configured&&!dot){dot=document.createElement('i');dot.className='solution-dot';btn.appendChild(dot)}else if(!configured&&dot)dot.remove();});
   const conventional=$('#conventionalSolutionBtn');if(conventional){const configured=processModeConfigured('multistage',modeStates?.multistage)||Boolean(caseResults?.multistage);let dot=conventional.querySelector('.solution-dot');if(configured&&!dot){dot=document.createElement('i');dot.className='solution-dot';conventional.appendChild(dot)}else if(!configured&&dot)dot.remove();}
@@ -4153,11 +4145,10 @@ $('#cancelCalculationBtn')?.addEventListener('click',cancelActiveCalculation);
 $('#compareQuickBtn')?.addEventListener('click',()=>changeMode('comparison'));
 $('#addSolutionBtn')?.addEventListener('click',()=>{const order=['px','interstage_px','biturbo','single','interstage','dweer','pelton'];const next=order.find(k=>!processModeConfigured(k,modeStates?.[k]))||'px';changeMode(next)});
 $('#conventionalSolutionBtn')?.addEventListener('click',()=>changeMode('multistage'));
-$('#themeSelect')?.addEventListener('change',e=>applyTheme(e.target.value));
 $('#engineeringReportOptionsForm')?.addEventListener('change',()=>{const ready=reportReadiness(currentReportOptions()),note=$('#reportReadinessNote'),button=$('#generateEngineeringReportBtn');if(note){note.className=`report-readiness-note ${ready.ready?'ready':'blocked'}`;note.textContent=ready.ready?'The current solved case is ready. The report will be rendered from an immutable report snapshot.':ready.problems[0]}if(button)button.disabled=!ready.ready;});
 $('#engineeringReportOptionsForm')?.addEventListener('submit',submitEngineeringReport);
 document.querySelectorAll('[data-close-suite-modal]').forEach(button=>button.addEventListener('click',()=>{const dialog=button.closest('dialog');if(dialog?.open)dialog.close();else dialog?.removeAttribute('open')}));
-initTheme();bindContextualHelp();renderProjectMeta();toggleProjectMeta(false);
+bindContextualHelp();renderProjectMeta();toggleProjectMeta(false);
 async function openDeepLinkedProject(){
   const params=new URLSearchParams(
     window.location.search
