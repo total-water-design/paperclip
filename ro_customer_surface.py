@@ -19,7 +19,7 @@ from pathlib import Path
 from flask import jsonify, request
 from flask_login import current_user
 
-RO_STATIC_PATHS = {"/static/app.js", "/static/addons/ccro/ccro_addon.js", "/static/report.js"}
+RO_STATIC_PATHS = {"/static/app.js", "/static/addons/ccro/ccro_addon.js", "/static/report.js", "/static/addons/ccro/ccro_report.js"}
 
 SENSITIVE_RESULT_KEYS = {
     "solver_diagnostics", "solver_method", "solver_fallback_used",

@@ -172,8 +172,116 @@
       <section class="report-section"><div class="chart-title-row"><h3>CCRO SEQUENCE</h3><span>Cyclic single-stage projection · PF + closed circuit</span></div><div class="plant-summary-three"><article><span>Complete sequence</span><strong>${fmt(r.ccro_complete_sequence_duration_min,2)} min</strong><small>${fmt(r.ccro_pf_sequence_duration_min,2)} min PF + ${fmt(r.ccro_cc_sequence_duration_min,2)} min CC</small></article><article><span>System / batch volume</span><strong>${fmt(r.ccro_system_volume_m3,3)} m³ loop</strong><small>${fmt(r.ccro_permeate_volume_per_batch_m3,3)} m³ permeate · ${fmt(r.ccro_brine_flush_volume_m3,3)} m³ brine displacement</small></article><article><span>Final loop concentration</span><strong>${fmt(r.ccro_final_loop_feed_tds_mg_l,0)} mg/L</strong><small>Final membrane concentrate ${fmt(r.ccro_final_membrane_concentrate_tds_mg_l,0)} mg/L</small></article></div><div class="table-wrap"><table class="fedco-table"><thead><tr><th>CC cycle</th><th>Duration<br><span>min</span></th><th>Loop feed TDS<br><span>mg/L</span></th><th>Feed π<br><span>bar</span></th><th>Feed P<br><span>bar</span></th><th>Min NDP<br><span>bar</span></th><th>Perm. TDS<br><span>mg/L</span></th><th>Sequence recovery</th><th>Flux<br><span>LMH</span></th><th>CP</th><th>Max mineral saturation</th><th>HPP<br><span>kW</span></th><th>Recirc<br><span>kW</span></th></tr></thead><tbody>${rows}</tbody></table></div></section><section class="report-section"><h3>CCRO ENERGY & PUMP DUTIES</h3><div class="plant-summary-three"><article><span>RO sequence SEC</span><strong>${fmt(r.ro_sec,3)} kWh/m³</strong><small>HPP + high-pressure recirculation</small></article><article><span>Peak HPP / recirculation</span><strong>${fmt(r.ccro_hpp_peak_kw,1)} / ${fmt(r.ccro_recirculation_peak_kw,1)} kW</strong><small>PF HPP ${fmt(r.ccro_pf_hpp_kw,1)} kW</small></article><article><span>Pretreatment SEC</span><strong>${fmt(r.pretreatment_sec,3)} kWh/m³</strong><small>Total ${fmt(r.total_sec,3)} kWh/m³</small></article></div>${warns?`<div class="dynamic-note"><strong>CCRO engineering review</strong><ul>${warns}</ul></div>`:''}</section>`;
     }
 
+
+    const CCRO_SIGNATURE_KEYS=[
+      'membrane_1','membrane_design_mode_1','membrane_recipe_1','vessels_1','elements_per_vessel_1','permeate_pressure_1',
+      'ccro_target_average_recovery','ccro_closed_circuit_permeate_flow','ccro_concentrate_recycle_per_vessel','ccro_pf_feed_ratio','ccro_pf_recovery',
+      'ccro_system_volume_m3','ccro_loop_extra_dp','ccro_system_pressure_limit','suction_pressure','pump_eff','motor_eff','vfd_eff','pump_no_vfd',
+      'ccro_circulation_pump_eff','ccro_circulation_motor_eff','ccro_circulation_vfd_eff','ccro_circulation_no_vfd',
+      'pretreatment_discharge_pressure','pretreatment_recovery','pretreatment_pump_eff','pretreatment_motor_eff','pretreatment_vfd_eff','pretreatment_no_vfd',
+      'fouling_factor','salt_passage_factor'
+    ];
+    function ccroCalculationSignature(state={}){
+      const o={};CCRO_SIGNATURE_KEYS.forEach(k=>o[k]=state?.[k]??null);
+      o.flow_unit=currentUnits.flow;o.pressure_unit=currentUnits.pressure;o.flux_unit=currentUnits.flux;
+      o.source_water_type=waterProfile.source_water_type||null;o.water_tds=Number(waterProfile.analysis_tds||waterProfile.feed_tds||0);o.water_ph=Number(waterProfile.feed_ph||0);o.water_temp=Number(waterProfile.temperature_c||0);o.water_fouling_factor=Number(waterProfile.fouling_factor??state.fouling_factor??0);o.water_salt_passage_factor=Number(waterProfile.salt_passage_factor??state.salt_passage_factor??0);
+      if(typeof summarySpecies!=='undefined')for(const [key] of summarySpecies)o[`water_${key}`]=Number(waterProfile?.[`ion_${key}`]||0);
+      return JSON.stringify(o);
+    }
+    function calculationSignatureForMode(reportMode,state={}){return reportMode==='ccro'?ccroCalculationSignature(state):basePlantSignature(state);}
+
+    function ccroGraphProfiles(result){
+      const profiles=Array.isArray(result?.ccro_cycle_graph_profiles)?result.ccro_cycle_graph_profiles.filter(x=>Array.isArray(x?.element_profile)&&x.element_profile.length):[];
+      if(profiles.length)return {profiles,legacy:false};
+      const finalElements=Array.isArray(result?.stage1_element_profile)?result.stage1_element_profile:[];
+      if(!finalElements.length)return {profiles:[],legacy:true};
+      const cycles=Array.isArray(result?.ccro_cycle_profile)?result.ccro_cycle_profile:[],last=cycles[cycles.length-1]||{};
+      return {profiles:[{cycle:Number(last.cycle||Math.ceil(Number(result?.ccro_cc_cycles||1))),cycle_fraction:Number(last.cycle_fraction??result?.ccro_final_cycle_fraction??1),sequence_equivalent_recovery:Number(last.sequence_equivalent_recovery??result?.recovery??0),feed_pressure_bar:Number(last.feed_pressure_bar??result?.ccro_final_cycle_pressure_bar??0),reject_pressure_bar:Number(result?.reject_pressure_1??0),element_profile:deepClone(finalElements)}],legacy:true};
+    }
+    function ccroSelectedGraphProfile(result,c=activeCaseData()){
+      const info=ccroGraphProfiles(result),profiles=info.profiles;if(!profiles.length)return {...info,selected:null};
+      const requested=Number(c?.ccroSelectedGraphCycle),selected=profiles.find(p=>Number(p.cycle)===requested)||profiles[profiles.length-1];
+      if(c&&Number(c.ccroSelectedGraphCycle)!==Number(selected.cycle)){c.ccroSelectedGraphCycle=Number(selected.cycle);syncActiveCaseStore();}
+      return {...info,selected};
+    }
+    function ccroCycleLabel(profile,profiles=[]){const final=profiles.length&&profile===profiles[profiles.length-1],fraction=Number(profile?.cycle_fraction??1);return `Cycle ${Number(profile?.cycle||1)}${final?' · Final':''}${fraction<.999?` · ${fmt(100*fraction,1)}% cycle`:''}`;}
+    function ccroProfileAsResult(result,profile){return {...result,stage_count:1,stage1_element_profile:deepClone(profile?.element_profile||[])};}
+    function relabelCcroChart(html,label){return String(html||'').replaceAll('STAGE 1',label.toUpperCase()).replaceAll('Stage 1',label).replaceAll('Stage 1, element',`${label}, element`);}
+    function ccroHydraulicProfileChart(profile,result){
+      const pts=Array.isArray(profile?.element_profile)?profile.element_profile:[];if(!pts.length)return '';
+      const factor=result?.pressure_unit==='psi'?14.5037738:1,series=pts.map((e,i)=>({x:i+1,p:Number(e.feed_pressure_bar)*factor,pi:Number(e.membrane_surface_osmotic_bar)*factor,ndp:Number(e.ndp_bar)*factor}));
+      const values=series.flatMap(x=>[x.p,x.pi,x.ndp]).filter(Number.isFinite);if(!values.length)return '';
+      const W=820,H=270,L=56,R=22,T=24,B=44,min=Math.min(0,...values),max=Math.max(...values),span=Math.max(max-min,1),x=i=>L+i*(W-L-R)/Math.max(1,series.length-1),y=v=>T+(max-v)*(H-T-B)/span;
+      const path=k=>series.filter(v=>Number.isFinite(v[k])).map((v,i)=>`${i?'L':'M'} ${x(i).toFixed(1)} ${y(v[k]).toFixed(1)}`).join(' '),ticks=series.map((_,i)=>`<text x="${x(i)}" y="${H-B+19}" text-anchor="middle" class="flux-axis-text">${i+1}</text>`).join('');
+      return `<section class="report-section flux-chart-section"><div class="chart-title-row"><h3>HYDRAULIC / OSMOTIC PROFILE</h3><span>Feed pressure · membrane-surface π · NDP</span></div><div class="cp-legend"><span>Feed pressure</span><span>Surface osmotic pressure</span><span>NDP</span></div><div class="flux-chart-wrap"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="CCRO selected-cycle hydraulic, osmotic and NDP profile"><line x1="${L}" y1="${H-B}" x2="${W-R}" y2="${H-B}" class="flux-axis"/><line x1="${L}" y1="${T}" x2="${L}" y2="${H-B}" class="flux-axis"/><path d="${path('p')}" class="flux-line"/><path d="${path('pi')}" class="cp-line cp-line-mono"/><path d="${path('ndp')}" class="cp-line cp-line-di"/>${ticks}<text x="${(L+W-R)/2}" y="${H-7}" text-anchor="middle" class="flux-axis-title">Membrane position</text><text x="15" y="${(T+H-B)/2}" transform="rotate(-90 15 ${(T+H-B)/2})" text-anchor="middle" class="flux-axis-title">Pressure (${escapeHtml(result?.pressure_unit||'bar')})</text></svg></div></section>`;
+    }
+    function ccroCycleElementTable(profile){const rows=(profile?.element_profile||[]).map((e,i)=>`<tr><td>${i+1}</td><td>${escapeHtml(e.membrane_model||e.membrane_id||'—')}</td><td>${fmt(e.flux_lmh,2)}</td><td>${fmt(e.polarization_factor_monovalent??e.polarization_factor,2)}</td><td>${fmt(e.polarization_factor_divalent??e.polarization_factor,2)}</td><td>${fmt(e.feed_pressure_bar,2)}</td><td>${fmt(e.reject_pressure_bar,2)}</td><td>${fmt(e.membrane_surface_osmotic_bar,2)}</td><td>${fmt(e.ndp_bar,2)}</td><td>${fmt(e.feed_tds_ppm,0)}</td><td>${fmt(e.reject_tds_ppm,0)}</td><td>${fmt(e.permeate_tds_ppm,1)}</td></tr>`).join('');return `<div class="table-wrap"><table class="fedco-table"><thead><tr><th>Element</th><th>Membrane</th><th>Flux<br>LMH</th><th>CP mono</th><th>CP div.</th><th>Feed P<br>bar</th><th>Reject P<br>bar</th><th>Surface π<br>bar</th><th>NDP<br>bar</th><th>Feed TDS</th><th>Reject TDS</th><th>Perm. TDS</th></tr></thead><tbody>${rows}</tbody></table></div>`;}
+    function ccroCycleGraphSection(result){
+      const c=activeCaseData(),info=ccroSelectedGraphProfile(result,c),p=info.selected;if(!p)return `<section id="ccroCycleGraphSection" class="report-section"><h3>CCRO CYCLE GRAPHS</h3><p class="dynamic-note">No cycle-specific element graph profile is available for this result.</p></section>`;
+      const label=ccroCycleLabel(p,info.profiles),options=info.profiles.map(x=>`<option value="${Number(x.cycle)}" ${Number(x.cycle)===Number(p.cycle)?'selected':''}>Cycle ${Number(x.cycle)}${x===info.profiles[info.profiles.length-1]?' · Final':''} · ${fmt(100*Number(x.sequence_equivalent_recovery||0),1)}% sequence recovery</option>`).join(''),temp=ccroProfileAsResult(result,p);
+      const charts=relabelCcroChart(fluxProfileChart(temp),label)+relabelCcroChart(polarizationProfileChart(temp),label)+ccroHydraulicProfileChart(p,result),compat=info.legacy?'<p class="dynamic-note"><strong>Compatibility note:</strong> This legacy CCRO result predates per-cycle graph storage; only its final-cycle element profile is available.</p>':'';
+      return `<section id="ccroCycleGraphSection" class="report-section ccro-cycle-graphs"><div class="chart-title-row"><h3>CCRO ELEMENT-POSITION GRAPHS</h3><span>${escapeHtml(label)}</span></div><label class="field"><span>Displayed CCRO cycle</span><select id="ccroCycleGraphSelect">${options}</select></label><p class="micro-note">Sequence-equivalent recovery ${fmt(100*Number(p.sequence_equivalent_recovery||0),2)}% · cycle fraction ${fmt(100*Number(p.cycle_fraction??1),1)}%. Changing this selector redraws stored cycle data only; it does not recalculate.</p>${compat}${ccroCycleElementTable(p)}${charts}</section>`;
+    }
+    function bindCcroCycleSelector(result){const select=document.getElementById('ccroCycleGraphSelect');if(!select)return;select.addEventListener('change',()=>{const c=activeCaseData();if(c){c.ccroSelectedGraphCycle=Number(select.value);syncActiveCaseStore();}const old=document.getElementById('ccroCycleGraphSection');if(old){old.outerHTML=ccroCycleGraphSection(result);bindCcroCycleSelector(result);}});}
+
+    function activeReportContext(){
+      persistActiveCase();const c=activeCaseData();let reportMode=(mode==='ccro'||mode==='multistage')?mode:(c?.lastReportableMode||'multistage');
+      if(mode==='ccro')reportMode='ccro';
+      const result=c?.caseResults?.[reportMode]||caseResults?.[reportMode]||null,state=c?.modeStates?.[reportMode]||modeStates?.[reportMode]||{};
+      const selected=reportMode==='ccro'?ccroSelectedGraphProfile(result,c):{selected:null,profiles:[],legacy:false};
+      const n=reportMode==='ccro'?1:(result?resultStageCount(result):Math.max(1,Math.min(4,Number(state.stage_count||1))));
+      return {caseData:c,mode:reportMode,result,state,calculationSignature:calculationSignatureForMode(reportMode,state),stageCount:n,tail:result?.[`stage${n}_tail_element_chemistry`]||null,envelope:c?.hydraulicEnvelope||null,selectedCcroCycle:selected.selected,selectedGraphProfile:selected.selected,cycleProfiles:selected.profiles,legacyCycleProfile:selected.legacy};
+    }
+    window.TotalROCCRO.activeReportContext=activeReportContext;
+    window.TotalROCCRO.calculationSignatureForMode=calculationSignatureForMode;
+
+    const hostCalc=calc;
+    calc=async function(){const calculatingMode=mode,out=await hostCalc();const c=activeCaseData();if(calculatingMode==='ccro'&&caseResults?.ccro){const state=modeStates.ccro||{};state._last_calculated_signature=calculationSignatureForMode('ccro',state);modeStates.ccro=state;if(c){c.lastReportableMode='ccro';c.ccroSelectedGraphCycle=ccroGraphProfiles(caseResults.ccro).profiles.at(-1)?.cycle??null;}syncActiveCaseStore();}else if(calculatingMode==='multistage'&&caseResults?.multistage){if(c)c.lastReportableMode='multistage';syncActiveCaseStore();}return out;};
+
+    const hostReportReadiness=reportReadiness;
+    reportReadiness=function(options={}){
+      const ctx=activeReportContext();if(ctx.mode!=='ccro')return hostReportReadiness(options);
+      const problems=[];if(document.body.classList.contains('calculating'))problems.push('A calculation is still running. Wait for it to finish.');
+      if(!ctx.result)problems.push('Calculate the active CCRO design before generating its report.');
+      const stale=Boolean(ctx.result)&&ctx.state._last_calculated_signature!==ctx.calculationSignature;if(stale)problems.push('CCRO design inputs changed after the last calculation. Recalculate the active CCRO case.');
+      if(options.include_detailed_chemistry&&!lastChemistryResult)problems.push('Calculate the requested detailed water chemistry before including Appendix A.');
+      if(options.include_tail_chemistry&&!ctx.tail)problems.push('Tail-element chemistry is not complete for this CCRO case. Recalculate with Full water chemistry before including Appendix B.');
+      if(options.include_hydraulic_envelope&&!ctx.envelope?.rows?.length)problems.push('The Hydraulic Envelope has not been calculated for this case.');
+      return {ready:problems.length===0,problems,stale,result:ctx.result,state:ctx.state,caseData:ctx.caseData,stageCount:ctx.stageCount,tail:ctx.tail,envelope:ctx.envelope,reportMode:'ccro',context:ctx};
+    };
+
+    const hostEnsureReportScalingChemistry=ensureReportScalingChemistry;
+    ensureReportScalingChemistry=async function(contextOrResult){
+      const ctx=contextOrResult?.mode?contextOrResult:activeReportContext();if(ctx.mode!=='ccro')return hostEnsureReportScalingChemistry(contextOrResult?.result||contextOrResult);
+      const result=ctx.result;if(!result)return null;const stream='concentrate',identity=ctx.state?._last_calculated_signature||`${result.ccro_final_cycle_pressure_bar||''}:${result.ccro_final_loop_feed_tds_mg_l||''}`,key=`report:${activeCase}:ccro:${identity}:${stream}`;
+      if(embeddedChemistryCache[key])return deepClone(embeddedChemistryCache[key]);
+      const comp=result.ccro_final_loop_composition_mg_l||result.stage1_concentrate_composition_mg_l;if(!comp)return null;
+      const ph=Number(result.ccro_final_loop_ph??result.stage1_concentrate_ph??waterProfile.feed_ph),alk=Number(result.ccro_final_loop_alkalinity_mg_l_as_hco3??result.stage1_concentrate_alkalinity_mg_l_as_hco3??waterProfile.ion_bicarbonate??0),payload={...profileChemPayload(waterProfile,comp,ph,alk),reported_tds:compositionTds(comp),source_ph:ph};
+      const resp=await totalroFetch('/api/chemistry/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});const j=await resp.json();if(!resp.ok)throw new Error(j.error||'Final-loop scaling chemistry calculation failed');embeddedChemistryCache[key]=j;return deepClone(j);
+    };
+
+    const hostBuildEngineeringReportSnapshot=buildEngineeringReportSnapshot;
+    buildEngineeringReportSnapshot=function(options={},scalingChemistry=null){
+      const ctx=activeReportContext();if(ctx.mode!=='ccro')return hostBuildEngineeringReportSnapshot(options,scalingChemistry);
+      const ready=reportReadiness(options);if(!ready.ready)throw new Error(ready.problems.join(' '));const result=deepClone(ctx.result),state=deepClone(ctx.state),selected=deepClone(ctx.selectedGraphProfile),c=ctx.caseData;
+      return {schema:'TotalRODesign.ReportSnapshot.v1',state:'Ready',stale:false,generated_at:new Date().toISOString(),app_name:'Total RO Design',app_version:'0.2',suite_name:'Total Water Design Suite',suite_version:'0.25',case_id:activeCase,case_name:c?.waterProfile?.envelope_label||`Case ${activeCase}`,active_mode:'ccro',calculation_mode:'ccro',stage_count:1,unit_system:deepClone(currentUnits),project:deepClone(projectMeta),water_profile:deepClone(c?.waterProfile||waterProfile),design_input:state,result,options:{report_type:'standard',...deepClone(options)},report_selection:{ccro_cycle:Number(selected?.cycle||0)},selected_graph_profile:selected,scaling_chemistry:scalingChemistry?deepClone(scalingChemistry):null,chemistry_detail:options.include_detailed_chemistry?deepClone(lastChemistryResult):null,tail_chemistry:options.include_tail_chemistry?deepClone(ctx.tail):null,hydraulic_envelope:options.include_hydraulic_envelope?deepClone(ctx.envelope):null,warning_messages:deepClone(result.ccro_warnings||[]),report_integrity:{last_calculated_signature:state._last_calculated_signature,active_signature:ctx.calculationSignature}};
+    };
+
+    const hostSubmitEngineeringReport=submitEngineeringReport;
+    submitEngineeringReport=async function(event){
+      const ctx=activeReportContext();if(ctx.mode!=='ccro')return hostSubmitEngineeringReport(event);
+      event?.preventDefault();const options=currentReportOptions(),ready=reportReadiness(options),note=$('#reportReadinessNote'),button=$('#generateEngineeringReportBtn');if(!ready.ready){if(note){note.className='report-readiness-note blocked';note.textContent=ready.problems.join(' ')}if(button)button.disabled=true;return;}
+      const popup=window.open('about:blank','_blank');if(popup)popup.document.write('<title>Preparing CCRO report…</title><p style="font:16px Segoe UI;padding:30px">Preparing the immutable CCRO engineering-report snapshot…</p>');
+      try{if(button){button.disabled=true;button.textContent='Preparing report…'}const scaling=await ensureReportScalingChemistry(ctx);const snapshot=buildEngineeringReportSnapshot(options,scaling);const response=await requestJson('/api/report/snapshot',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({snapshot})},'CCRO engineering report could not be prepared');if(popup&&!popup.closed)popup.location=response.print_url;else window.location.assign(response.preview_url);const d=$('#engineeringReportDialog');if(d?.open)d.close();}
+      catch(e){try{popup?.close()}catch(_){}if(note){note.className='report-readiness-note blocked';note.textContent=e.message||String(e)}showCalcError(e,'CCRO engineering report');}
+      finally{if(button){button.disabled=false;button.textContent='Generate PDF';}}
+    };
+
+    const hostBindProcessResultTabs=bindProcessResultTabs;
+    bindProcessResultTabs=function(r){hostBindProcessResultTabs(r);if(mode==='ccro')bindCcroCycleSelector(r);};
+
     const hostPerformance=processPerformanceBody;
-    processPerformanceBody=function(r){if(mode==='ccro')return solveStatus(r)+showMembraneHeader(r)+ccroPerformanceReport(r)+stageReport(r)+fluxProfileChart(r)+polarizationProfileChart(r)+osmoticProfileChart(r)+membraneChecks(r);return hostPerformance(r);};
+    processPerformanceBody=function(r){if(mode==='ccro')return solveStatus(r)+showMembraneHeader(r)+ccroPerformanceReport(r)+ccroCycleGraphSection(r)+membraneChecks(r);return hostPerformance(r);};
 
     const hostOpenProject=openImportedProject;
     openImportedProject=function(p,serverRecord=null){

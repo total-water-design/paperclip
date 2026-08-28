@@ -57,6 +57,52 @@ def validate_report_snapshot(snapshot: dict[str, Any]) -> list[str]:
         if calculated and active and calculated != active:
             errors.append("The selected case is stale because its active inputs no longer match the calculated result.")
 
+    report_mode = str(snapshot.get("active_mode") or snapshot.get("calculation_mode") or "multistage").strip().lower()
+    if report_mode == "ccro":
+        if not bool(result.get("ccro")) and str(result.get("process_type") or "").upper() != "CCRO":
+            errors.append("CCRO report snapshot does not contain a solved CCRO result.")
+        if not isinstance(snapshot.get("design_input"), dict):
+            errors.append("CCRO report snapshot is missing its design input state.")
+        selection = snapshot.get("report_selection")
+        selected = snapshot.get("selected_graph_profile")
+        if not isinstance(selection, dict) or as_number(selection.get("ccro_cycle")) is None:
+            errors.append("CCRO report snapshot is missing the selected graph cycle.")
+        if not isinstance(selected, dict):
+            errors.append("CCRO report snapshot is missing the selected-cycle graph profile.")
+        else:
+            cycle = as_number(selected.get("cycle"))
+            chosen = as_number((selection or {}).get("ccro_cycle"))
+            if cycle is None or (chosen is not None and abs(cycle - chosen) > 1e-9):
+                errors.append("CCRO selected-cycle graph profile does not match the report selection.")
+            fraction = as_number(selected.get("cycle_fraction"))
+            recovery = as_number(selected.get("sequence_equivalent_recovery"))
+            if fraction is None or not (0 < fraction <= 1.0):
+                errors.append("CCRO selected cycle has an invalid cycle fraction.")
+            if recovery is None or not (0 <= recovery < 1.0):
+                errors.append("CCRO selected cycle has an invalid sequence recovery.")
+            profile = selected.get("element_profile")
+            if not isinstance(profile, list) or not profile:
+                errors.append("CCRO selected cycle is missing its membrane element graph profile.")
+            elif any(not isinstance(item, dict) for item in profile):
+                errors.append("CCRO selected-cycle membrane profile is invalid.")
+
+        unit_system = snapshot.get("unit_system")
+        if not isinstance(unit_system, dict):
+            errors.append("The report snapshot is missing its active unit system.")
+        else:
+            for key in ("flow", "pressure", "flux"):
+                if not str(unit_system.get(key) or "").strip():
+                    errors.append(f"The report snapshot is missing its {key} unit.")
+        options = snapshot.get("options")
+        if isinstance(options, dict):
+            if options.get("include_detailed_chemistry") and not isinstance(snapshot.get("chemistry_detail"), dict):
+                errors.append("Detailed chemistry was requested but is not ready.")
+            if options.get("include_tail_chemistry") and not isinstance(snapshot.get("tail_chemistry"), dict):
+                errors.append("Tail-element chemistry was requested but is not ready.")
+            if options.get("include_hydraulic_envelope") and not isinstance(snapshot.get("hydraulic_envelope"), dict):
+                errors.append("Hydraulic Envelope was requested but has not been calculated.")
+        return errors
+
     try:
         stages = int(snapshot.get("stage_count") or result.get("stage_count") or 0)
     except (TypeError, ValueError):
