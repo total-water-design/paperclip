@@ -123,9 +123,19 @@ def _ccro_solve_stage_pressure(data, q_feed_m3h, q_perm_target_m3h, feed_tds_ppm
         nonlocal evaluations
         evaluations += 1
         src = data if detailed else fast
-        return _stage_from_data(src, 1, qf, float(p_bar), float(feed_tds_ppm),
-                                feed_composition=feed_composition,
-                                feed_carbonate_state=feed_carbonate_state)
+        try:
+            return _stage_from_data(src, 1, qf, float(p_bar), float(feed_tds_ppm),
+                                    feed_composition=feed_composition,
+                                    feed_carbonate_state=feed_carbonate_state)
+        except ValueError as exc:
+            # At high salinity, low-pressure trial points can be outside the
+            # membrane fixed-point's physical convergence envelope.  Such a
+            # trial is not a CCRO integration failure; it is an invalid point
+            # for pressure bracketing.  Preserve all other validation and
+            # physical-limit errors for the caller.
+            if "did not converge" in str(exc).lower():
+                return None
+            raise
 
     # A previous CC-cycle pressure is an excellent lower seed because loop
     # salinity normally rises monotonically.  Keep a small downward allowance
@@ -137,6 +147,14 @@ def _ccro_solve_stage_pressure(data, q_feed_m3h, q_perm_target_m3h, feed_tds_ppm
     hi = min(pmax * 0.999, max(lo + 3.0, (float(previous_pressure_bar) + 5.0) if previous_pressure_bar is not None else lo + 12.0))
 
     slo = evaluate(lo, False)
+    while slo is None and lo < pmax * 0.998:
+        lo = min(pmax * 0.999, max(lo + 5.0, lo * 1.10))
+        slo = evaluate(lo, False)
+    if slo is None:
+        raise ValueError(
+            "CCRO could not find a convergent membrane pressure trial within the selected pressure limit. "
+            "Increase membrane area / pressure vessels, reduce CC permeate flow, or select a membrane train with an appropriate pressure rating."
+        )
     flo = float(slo["permeate_flow"]) - qt
     if flo >= 0:
         # Very low-flux setpoint.  A membrane cannot be operated below the
@@ -146,6 +164,14 @@ def _ccro_solve_stage_pressure(data, q_feed_m3h, q_perm_target_m3h, feed_tds_ppm
         return lo, final, evaluations
 
     shi = evaluate(hi, False)
+    while shi is None and hi < pmax * 0.998:
+        hi = min(pmax * 0.999, max(hi + 5.0, hi * 1.10))
+        shi = evaluate(hi, False)
+    if shi is None:
+        raise ValueError(
+            "CCRO could not find a convergent upper membrane pressure trial within the selected pressure limit. "
+            "Increase membrane area / pressure vessels, reduce CC permeate flow, or select a membrane train with an appropriate pressure rating."
+        )
     fhi = float(shi["permeate_flow"]) - qt
     while fhi < 0 and hi < pmax * 0.998:
         hi = min(pmax * 0.999, max(hi + 5.0, hi * 1.10))
@@ -170,6 +196,12 @@ def _ccro_solve_stage_pressure(data, q_feed_m3h, q_perm_target_m3h, feed_tds_ppm
     for _ in range(36):
         p = 0.5 * (lo + hi)
         sm = evaluate(p, False)
+        if sm is None:
+            # The convergence envelope can begin above the nominal lower
+            # pressure bound. Treat this as a one-sided invalid trial and keep
+            # the convergent upper bracket intact.
+            lo = p
+            continue
         fm = float(sm["permeate_flow"]) - qt
         if abs(fm) <= target_tol or (hi - lo) <= 2e-5 * max(1.0, p):
             break
@@ -290,6 +322,60 @@ def _ccro_scaling_snapshot(stage, temperature_c):
         "thermodynamically_supersaturated": bool(sat >= 100.0),
     }
 
+
+
+def _ccro_graph_number(mapping, *keys):
+    for key in keys:
+        value = mapping.get(key)
+        if value in (None, ""):
+            continue
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(number):
+            return number
+    return None
+
+
+def _ccro_compact_graph_profile(stage, cycle, cycle_fraction, sequence_recovery, feed_pressure_bar):
+    """Retain only the element data required by interactive/report graphs.
+
+    The detailed membrane projection is already required for every CCRO cycle.
+    This function copies a compact graph surface from that solved state; it does
+    not rerun the membrane or chemistry solver and intentionally excludes ionic
+    compositions, carbonate states, convergence histories and other bulky data.
+    """
+    elements = []
+    for index, element in enumerate(stage.get("element_results") or [], start=1):
+        membrane_id = element.get("membrane_id") or element.get("membrane") or element.get("membrane_model")
+        membrane_model = element.get("membrane_model") or (str(membrane_id).split("|")[1] if membrane_id and "|" in str(membrane_id) else membrane_id)
+        elements.append({
+            "element": int(element.get("element") or index),
+            "flux_lmh": _ccro_graph_number(element, "flux_lmh", "element_flux_lmh"),
+            "polarization_factor": _ccro_graph_number(element, "polarization_factor", "cp_factor"),
+            "polarization_factor_monovalent": _ccro_graph_number(element, "polarization_factor_monovalent", "polarization_factor", "cp_factor"),
+            "polarization_factor_divalent": _ccro_graph_number(element, "polarization_factor_divalent", "polarization_factor", "cp_factor"),
+            "feed_pressure_bar": _ccro_graph_number(element, "feed_pressure_bar", "pressure_in_bar", "feed_pressure"),
+            "reject_pressure_bar": _ccro_graph_number(element, "reject_pressure_bar", "concentrate_pressure_bar", "pressure_out_bar", "reject_pressure"),
+            "membrane_surface_osmotic_bar": _ccro_graph_number(element, "membrane_surface_osmotic_bar", "surface_osmotic_bar", "membrane_osmotic_bar"),
+            "feed_osmotic_bar": _ccro_graph_number(element, "feed_osmotic_bar", "bulk_feed_osmotic_bar", "osmotic_pressure_bar"),
+            "ndp_bar": _ccro_graph_number(element, "ndp_bar", "net_driving_pressure_bar"),
+            "dp_bar": _ccro_graph_number(element, "dp_bar", "pressure_drop_bar", "element_dp_bar"),
+            "feed_tds_ppm": _ccro_graph_number(element, "feed_tds_ppm", "feed_tds_mg_l"),
+            "reject_tds_ppm": _ccro_graph_number(element, "reject_tds_ppm", "concentrate_tds_ppm", "concentrate_tds_mg_l"),
+            "permeate_tds_ppm": _ccro_graph_number(element, "permeate_tds_ppm", "permeate_tds_mg_l"),
+            "membrane_id": membrane_id,
+            "membrane_model": membrane_model,
+        })
+    return {
+        "cycle": int(cycle),
+        "cycle_fraction": float(cycle_fraction),
+        "sequence_equivalent_recovery": float(sequence_recovery),
+        "feed_pressure_bar": float(feed_pressure_bar),
+        "reject_pressure_bar": float(stage.get("concentrate_pressure_bar", stage.get("reject_pressure_bar", 0.0)) or 0.0),
+        "element_profile": elements,
+    }
 
 def _ccro_composite_permeate(data, streams):
     valid = [x for x in streams if float(x.get("volume_m3", 0.0) or 0.0) > 0]
@@ -429,6 +515,7 @@ def _ccro_base(data):
     loop_state = fresh_state
     previous_pressure = p_pf
     cycle_profile = []
+    cycle_graph_profiles = []
     cc_hpp_kwh = 0.0
     cc_recirc_kwh = 0.0
     cc_elapsed_h = 0.0
@@ -558,6 +645,10 @@ def _ccro_base(data):
                 first_scaling_onset_cycle = idx
                 first_scaling_onset_recovery = equivalent_recovery
                 first_scaling_onset_mineral = cycle_limiting_mineral
+
+        cycle_graph_profiles.append(_ccro_compact_graph_profile(
+            stage, idx, fraction, equivalent_recovery, p_cc
+        ))
 
         cycle_profile.append({
             "cycle": idx,
@@ -727,6 +818,7 @@ def _ccro_base(data):
         "ccro_final_membrane_concentrate_tds_mg_l": float(last_stage.get("concentrate_tds_ppm", 0.0) or 0.0),
         "ccro_composite_permeate_tds_mg_l": composite_tds,
         "ccro_cycle_profile": cycle_profile,
+        "ccro_cycle_graph_profiles": cycle_graph_profiles,
         "ccro_pressure_solve_evaluations": pressure_evals,
         "ccro_hpp_peak_kw": peak_hpp_kw,
         "ccro_recirculation_peak_kw": peak_recirc_kw,
@@ -813,4 +905,3 @@ def ccro(data):
     data["membrane_coupling"] = "on"
     prepared = _prepare_calculation_data(data)
     return _attach_acid_dosing(_ccro_base(prepared), prepared)
-

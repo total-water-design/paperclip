@@ -52,6 +52,22 @@ def test_ccro_addon_mass_balance_pressure_and_energy():
     assert abs(result['total_sec'] - (result['ro_sec'] + result['pretreatment_sec'])) < 1e-12
 
 
+def test_ccro_seawater_converges_with_authoritative_membrane_residual_correction():
+    data = ccro_case(recovery=60, system_volume=4.0)
+    data.update({
+        'feed_tds': 35000,
+        'analysis_tds': 35000,
+        'source_water_type': 'seawater',
+        'ccro_closed_circuit_permeate_flow': 50,
+    })
+    result = ccro(data)
+    assert result['ccro'] is True
+    assert result['ccro_initial_feed_tds_mg_l'] == 35000
+    assert result['ccro_final_cycle_pressure_bar'] >= result['ccro_first_cycle_pressure_bar']
+    assert len(result['ccro_cycle_profile']) >= 2
+    assert len(result['ccro_cycle_graph_profiles']) == len(result['ccro_cycle_profile'])
+
+
 def test_ccro_addon_full_chemistry_scaling_state():
     result = ccro(ccro_case(full=True, recovery=75, system_volume=4.0))
     assert result['composite_permeate_composition_mg_l']

@@ -17,5 +17,6 @@
   <script id="reportSnapshot" type="application/json">{{ snapshot_json|safe }}</script>
   <script>window.TOTALRO_AUTOPRINT={{ 'true' if autoprint else 'false' }};</script>
   <script src="{{ url_for('static', filename='report.js') }}"></script>
+  <script src="{{ url_for('static', filename='addons/ccro/ccro_report.js') }}"></script>
 </body>
 </html>
