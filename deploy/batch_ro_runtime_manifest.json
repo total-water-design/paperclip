@@ -1,0 +1,15 @@
+{
+  "batch_ro_version": "stable-alpha-direct-runtime",
+  "files": {
+    "addons/batch_ro/__init__.py": "743544f2f318e2e86084cdd27206350923a94fdec0b3b8874884849108cad925",
+    "addons/batch_ro/engine.py": "c2953087bdadc1ac2b6996a68a6ece1962baf9ac74e018630265fcf7f4e872b8",
+    "static/addons/batch_ro/batch_ro.svg": "d791fd6cb1ae8091449aafd563dccaf4a1c74d82ea5f3f212dbb51ef92e839f9",
+    "static/addons/batch_ro/batch_ro_addon.js": "d3bd3a4b2c9241c8ebf6b36376cc50be3acf8422060909bc17150f3c507d7875"
+  },
+  "provenance": {
+    "pressure_bracketing_fix": "low-pressure membrane fixed-point nonconvergence is treated as an invalid pressure-search trial while the governed membrane/system pressure ceiling remains authoritative",
+    "source": "direct-tracked-release-artifact"
+  },
+  "schema": "twds.batch-ro-runtime-manifest",
+  "version": 1
+}
