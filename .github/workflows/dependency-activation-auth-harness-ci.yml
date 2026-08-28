@@ -67,7 +67,7 @@ jobs:
         run: |
           set -euo pipefail
           git fetch origin alpha
-          test "$(git rev-parse origin/alpha)" = 'afba11b6a933b6de12366082a24653ec5813f31e'
+          test "$(git rev-parse origin/alpha)" = "${{ github.event.pull_request.base.sha }}"
           BEFORE="$(systemctl show totalrodesign.service -p MainPID -p NRestarts -p ActiveEnterTimestampMonotonic --value | tr '\n' '|')"
           test "$(systemctl show totalrodesign.service -p ProtectSystem --value)" = strict
           TMPVENV="${RUNNER_TEMP}/auth-harness-fix-${GITHUB_RUN_ID}"
