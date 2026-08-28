@@ -27,8 +27,6 @@ jobs:
           python -m pip install -r requirements-server.txt pytest
       - name: Prepare immutable Batch RO release artifact in CI workspace
         run: |
-          EXPECTED_BATCH_SHA="$(tr -d '\r\n ' < deploy/batch_ro_alpha/payload.sha256)"
-          python tools/materialize_batch_ro_build.py --from-legacy-payload --expect-payload-sha "$EXPECTED_BATCH_SHA"
           python tools/materialize_batch_ro_build.py --check
       - name: Compile templates
         run: python deploy/verify_templates.py
@@ -77,8 +75,6 @@ jobs:
           python3 -m venv "$TMPVENV"
           "$TMPVENV/bin/python" -m pip install --upgrade pip >/dev/null
           "$TMPVENV/bin/python" -m pip install -r requirements-server.txt pytest >/dev/null
-          EXPECTED_BATCH_SHA="$(tr -d '\r\n ' < deploy/batch_ro_alpha/payload.sha256)"
-          "$TMPVENV/bin/python" tools/materialize_batch_ro_build.py --from-legacy-payload --expect-payload-sha "$EXPECTED_BATCH_SHA"
           "$TMPVENV/bin/python" tools/materialize_batch_ro_build.py --check
           "$TMPVENV/bin/python" deploy/verify_templates.py
           "$TMPVENV/bin/python" deploy/verify_auth_install.py
