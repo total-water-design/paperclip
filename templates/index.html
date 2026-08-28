@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="en" data-theme="light">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="color-scheme" content="dark light">
-<meta name="theme-color" content="#071A2B">
+<meta name="color-scheme" content="light">
+<meta name="theme-color" content="#f5f8fc">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -77,7 +77,6 @@
           <label>Pressure <select id="pressureUnit"><option>bar</option><option>psi</option></select></label>
           <label>Flux <select id="fluxUnit"><option value="LMH">LMH</option><option value="GFD">GFD</option></select></label>
         </div>
-        <label class="theme-control" title="Appearance"><img id="themeIcon" src="{{ url_for('static', filename='icons_v18/moon.svg') }}" alt=""><select id="themeSelect"><option value="light">Light Mode</option><option value="dark" selected>Dark Mode</option></select></label>
         <button type="button" id="computeQuickBtn" class="topbar-btn icon-only" title="Compute diagnostics"><img src="{{ url_for('static', filename='icons_v18/settings.svg') }}" alt=""></button>
         {% if auth_enabled and current_user.is_authenticated %}
         <details class="account-menu">
