@@ -283,13 +283,17 @@ def user_can_access_product(user: User, product_id: str) -> bool:
     if not user or not product or user.status != "active":
         return False
 
-    # Administrators are engineering/product testers. Bio is a deployed
-    # in-development specialist application and remains launchable to admins
-    # without pretending that it is a generally released customer product.
-    if getattr(user, "is_admin", False) and product.product_id == "bio":
+    # Administrator-preview metadata is the catalog's single readiness gate.
+    # It permits active administrators to test the application without
+    # presenting it as generally released.
+    if getattr(user, "is_admin", False) and product.admin_preview_enabled:
         return True
 
-    if product.status != "available":
+    # An active, current entitlement may launch a generally available product
+    # or a product explicitly approved for controlled Alpha testing. Products
+    # without either catalog gate remain unavailable even if a stale or
+    # mistakenly assigned entitlement row exists.
+    if product.status != "available" and not product.admin_preview_enabled:
         return False
 
     entitlement = product_entitlement_for(user, product.product_id)
@@ -304,9 +308,9 @@ def serialized_product_entitlements(user: User) -> list[dict]:
         accessible = bool(
             user.status == "active"
             and (
-                (getattr(user, "is_admin", False) and product.product_id == "bio")
+                (getattr(user, "is_admin", False) and product.admin_preview_enabled)
                 or (
-                    product.status == "available"
+                    (product.status == "available" or product.admin_preview_enabled)
                     and row
                     and row.enabled
                     and row.is_current()

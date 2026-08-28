@@ -9,27 +9,31 @@ from suite_catalog import PRODUCTS, PRODUCT_BY_ID, status_label
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def _dashboard_products() -> list[dict]:
+def _dashboard_products(*, entitled: set[str] | None = None) -> list[dict]:
+    entitled = entitled or {"ro"}
     products = []
     for product in PRODUCTS:
         item = product.as_dict()
-        is_ro = product.product_id == "ro"
+        accessible = (
+            product.product_id in entitled
+            and (product.status == "available" or product.admin_preview_enabled)
+        )
         item.update(
-            accessible=is_ro,
+            accessible=accessible,
             entitlement={
-                "enabled": is_ro,
+                "enabled": accessible,
                 "tier": "entry",
-                "status": "active" if is_ro else "inactive",
+                "status": "active" if accessible else "inactive",
                 "starts_at": None,
                 "expires_at": None,
-                "current": is_ro,
+                "current": accessible,
             },
         )
         products.append(item)
     return products
 
 
-def _render_dashboard(*, admin: bool) -> str:
+def _render_dashboard(*, admin: bool, entitled: set[str] | None = None) -> str:
     env = Environment(loader=FileSystemLoader(str(ROOT / "templates")), autoescape=True)
 
     def fake_url_for(endpoint: str, **values) -> str:
@@ -47,7 +51,7 @@ def _render_dashboard(*, admin: bool) -> str:
         role="admin" if admin else "user",
     )
     return env.get_template("suite_dashboard.html").render(
-        products=_dashboard_products(),
+        products=_dashboard_products(entitled=entitled),
         current_user=user,
         status_label=status_label,
     )
@@ -128,3 +132,23 @@ def test_non_admin_does_not_receive_administrator_preview_controls():
     ro = _card(html, PRODUCT_BY_ID["ro"].name)
     assert "Open application" in ro
     assert 'href="/ro"' in ro
+
+
+def test_authorized_non_admin_can_launch_each_testable_preview():
+    html = _render_dashboard(admin=False, entitled={"ro", "bio", "zld", "academy"})
+    for product_id in ("bio", "zld", "academy"):
+        product = PRODUCT_BY_ID[product_id]
+        card = _card(html, product.name)
+        assert "Authorized access" in card
+        assert "Open application" in card
+        assert f'href="{product.route}"' in card
+
+
+def test_entitlement_does_not_launch_apps_without_readiness_gate():
+    unavailable = {"pretreatment", "post_treatment", "balance", "economics", "system_integration"}
+    html = _render_dashboard(admin=False, entitled={"ro", *unavailable})
+    for product_id in unavailable:
+        product = PRODUCT_BY_ID[product_id]
+        card = _card(html, product.name)
+        assert "no active launch control" in card
+        assert "Open application" not in card
