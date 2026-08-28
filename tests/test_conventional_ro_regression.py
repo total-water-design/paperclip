@@ -113,6 +113,38 @@ def test_single_stage_seawater_recovery_solve():
     assert abs(result["recovery"] - 0.40) < 5e-3
 
 
+def test_membrane_elements_converge_on_true_residuals():
+    stage = calculations.membrane_stage(
+        100.0, 65.0, MEMBRANE, 12, 7, 35000.0
+    )
+
+    for element in stage["element_results"]:
+        flow_tolerance = max(
+            calculations.ELEMENT_FLOW_ABS_TOL_M3H,
+            calculations.ELEMENT_FLOW_REL_TOL * max(1.0, element["feed_flow_m3h"]),
+        )
+        tds_tolerance = (
+            calculations.ELEMENT_TDS_REL_TOL
+            * max(1.0, element["feed_tds_ppm"])
+        )
+        assert abs(element["convergence_flow_residual_m3h"]) < flow_tolerance
+        assert abs(element["convergence_tds_residual_mg_l"]) < tds_tolerance
+
+
+def test_damped_element_does_not_treat_relaxation_as_convergence_proof():
+    stage = calculations.membrane_stage(
+        1.0, 60.0, MEMBRANE, 1, 1, 60000.0
+    )
+    element = stage["element_results"][0]
+
+    assert element["convergence_relaxation_history"] == [0.45, 0.225, 0.12]
+    assert element["convergence_iterations"] > 90
+    assert abs(element["convergence_flow_residual_m3h"]) < calculations.ELEMENT_FLOW_ABS_TOL_M3H
+    assert abs(element["convergence_tds_residual_mg_l"]) < (
+        calculations.ELEMENT_TDS_REL_TOL * element["feed_tds_ppm"]
+    )
+
+
 def test_two_stage_conventional_ro():
     result = calculations.multistage(base_case(tds=3000, stages=2))
     assert_physical(result, expected_stages=2)

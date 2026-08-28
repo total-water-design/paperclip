@@ -637,6 +637,7 @@ def membrane_stage(q_feed_m3h, p_feed_bar, membrane_id, vessels, elements_per_ve
             cp_comp = permeate_composition(comp_in, r_test_local, rb_test_local) if full else None
         last_qp = None
         element_relax = 0.45
+        element_relax_history = [element_relax]
         previous_raw_residual = None
         previous_q_residual = None
         for iteration in range(240):
@@ -696,12 +697,15 @@ def membrane_stage(q_feed_m3h, p_feed_bar, membrane_id, vessels, elements_per_ve
                 oscillating = (previous_q_residual is not None and q_residual * previous_q_residual < 0.0
                                and abs(q_residual) > 0.75 * abs(previous_q_residual))
                 if growing or oscillating:
-                    element_relax = max(0.12, element_relax * 0.5)
+                    reduced_relax = max(0.12, element_relax * 0.5)
+                    if reduced_relax != element_relax:
+                        element_relax = reduced_relax
+                        element_relax_history.append(element_relax)
             qp_next = qp + element_relax * q_residual
             cp_next = cp + element_relax * c_residual
             if full:
                 cp_comp = {k: cp_comp[k] + element_relax*(cp_new_comp[k]-cp_comp[k]) for k in SPECIES}
-            if last_qp is not None and abs(qp_next-qp) < max(ELEMENT_FLOW_ABS_TOL_M3H, ELEMENT_FLOW_REL_TOL*max(1.0,qin)) and abs(cp_next-cp) < ELEMENT_TDS_REL_TOL*max(1.0,cin):
+            if last_qp is not None and abs(q_residual) < max(ELEMENT_FLOW_ABS_TOL_M3H, ELEMENT_FLOW_REL_TOL*max(1.0,qin)) and abs(c_residual) < ELEMENT_TDS_REL_TOL*max(1.0,cin):
                 qp, cp = qp_next, cp_next
                 break
             previous_raw_residual = raw_residual
@@ -780,6 +784,11 @@ def membrane_stage(q_feed_m3h, p_feed_bar, membrane_id, vessels, elements_per_ve
             "membrane_surface_osmotic_bar": osm_m["osmotic_bar"],
             "membrane_id": recipe[elem-1], "membrane_manufacturer": m.get("manufacturer",""),
             "membrane_model": m.get("model",""), "membrane_area_m2": area_each,
+            "convergence_iterations": iteration + 1,
+            "convergence_flow_residual_m3h": q_residual,
+            "convergence_tds_residual_mg_l": c_residual,
+            "convergence_relaxation_factor": element_relax,
+            "convergence_relaxation_history": element_relax_history,
         }
         if is_nf:
             nf_now=nf_dynamic_rejections(flux,tr["nf_b_mm"],tr["nf_b_dd"],tr.get("nf_b_mix"),tr.get("nf_b_neutral"))
@@ -4975,4 +4984,3 @@ def pelton(data):
 
 
 CALCS = {"single": single_stage, "multistage": multistage, "interstage": interstage, "biturbo": biturbo, "px": pressure_exchanger, "interstage_px": interstage_pressure_exchanger, "dweer": dweer, "pelton": pelton}
-
