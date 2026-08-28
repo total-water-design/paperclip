@@ -1,0 +1,15 @@
+{
+  "batch_ro_version": "legacy-release",
+  "files": {
+    "addons/batch_ro/__init__.py": "743544f2f318e2e86084cdd27206350923a94fdec0b3b8874884849108cad925",
+    "addons/batch_ro/engine.py": "ee32e01ae8229d0411bb893ad93d40276148fee37c399658c32772b50830294d",
+    "static/addons/batch_ro/batch_ro.svg": "d791fd6cb1ae8091449aafd563dccaf4a1c74d82ea5f3f212dbb51ef92e839f9",
+    "static/addons/batch_ro/batch_ro_addon.js": "d3bd3a4b2c9241c8ebf6b36376cc50be3acf8422060909bc17150f3c507d7875"
+  },
+  "provenance": {
+    "build_transform": "lexical host-probe compatibility moved before WSGI startup",
+    "legacy_payload_sha256": "04fd024a5a8894fc623c065477fa7ebca31e7a4d9454fa03ace03b850d9e0afa"
+  },
+  "schema": "twds.batch-ro-runtime-manifest",
+  "version": 1
+}
