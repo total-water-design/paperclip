@@ -907,7 +907,7 @@ def calculate(mode):
         _require_feature('erd')
     if mode == 'multistage' and str(payload.get('design_mode','manual') or 'manual').lower() == 'auto':
         _require_feature('auto_design')
-    if mode == 'multistage' and str(payload.get('pump_curve_basis','auto') or 'auto').lower() in {'vcmp','vcmp_auto','database'}:
+    if mode == 'multistage' and str(payload.get('pump_curve_basis','auto') or 'auto').lower() in {'shared_auto','auto_shared','vcmp','vcmp_auto','database','hhecp','pd'}:
         _require_feature('vcmp_pump_selection')
     truthy = lambda v: v is True or str(v).lower() in {'1','true','yes','on','coupled'}
     basis = str(payload.get('solve_basis','pressure') or 'pressure').lower()
