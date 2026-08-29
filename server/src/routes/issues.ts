@@ -9275,10 +9275,18 @@ export function issueRoutes(
     const descriptor = updateFields.unblockDescriptor ?? null;
     if (descriptor && typeof descriptor === "object") {
       const owner = descriptor.owner;
-      if (req.actor.type === "agent" && (owner === "board" || "userId" in owner)) {
-        throw forbidden("Agents may only name themselves as an unblock owner");
+      // A human gate is a work item, not an unblock-owner hint.  In particular,
+      // routing the parent directly to the Board loses the decision's durable
+      // child issue and can create a parent/child circular blocker.  Callers
+      // must create the Board-assigned child first and place its id in
+      // blockedByIssueIds before moving the parent to blocked.
+      if (owner === "board" || "userId" in owner) {
+        res.status(422).json({
+          error: "Human or Board action must be represented by a Board-assigned child issue in blockedByIssueIds",
+        });
+        return;
       }
-      if (owner !== "board" && "agentId" in owner) {
+      if ("agentId" in owner) {
         const target = await db.select({ id: agents.id }).from(agents).where(and(
           eq(agents.id, owner.agentId),
           eq(agents.companyId, existing.companyId),
@@ -9287,14 +9295,6 @@ export function issueRoutes(
         if (req.actor.type === "agent" && req.actor.agentId !== owner.agentId) {
           throw forbidden("Agents may only name themselves as an unblock owner");
         }
-      } else if (owner !== "board" && "userId" in owner) {
-        const member = await db.select({ id: companyMemberships.id }).from(companyMemberships).where(and(
-          eq(companyMemberships.companyId, existing.companyId),
-          eq(companyMemberships.principalType, "user"),
-          eq(companyMemberships.principalId, owner.userId),
-          eq(companyMemberships.status, "active"),
-        )).limit(1).then((rows) => rows[0] ?? null);
-        if (!member) throw unprocessable("Unblock owner user must be an active company member");
       }
     }
     const enteringBlocked = existing.status !== "blocked" && updateFields.status === "blocked";
