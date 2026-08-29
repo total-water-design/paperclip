@@ -30,6 +30,7 @@ import {
   heartbeatRuns,
   issueComments,
   issueDocuments,
+  issueExecutionDecisions,
   issuePlanDecompositions,
   issueRecoveryActions,
   issueRelations,
@@ -5347,6 +5348,80 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       interactionContinuationPolicy: "wake_assignee_on_accept",
       interactionResolvedAt: resolvedAt.toISOString(),
     });
+  });
+
+  it("projects an accepted human-only confirmation into its pending approval stage exactly once", async () => {
+    const companyId = randomUUID();
+    const issueId = randomUUID();
+    const interactionId = randomUUID();
+    const stageId = randomUUID();
+    const participantId = randomUUID();
+    const reviewerId = "local-board";
+    const issuePrefix = `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`;
+
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix,
+      defaultResponsibleUserId: reviewerId,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(issues).values({
+      id: issueId,
+      companyId,
+      title: "Human confirmation projection",
+      status: "in_review",
+      priority: "medium",
+      assigneeUserId: reviewerId,
+      responsibleUserId: reviewerId,
+      issueNumber: 1,
+      identifier: `${issuePrefix}-1`,
+      executionPolicy: {
+        mode: "normal",
+        commentRequired: true,
+        stages: [{ id: stageId, type: "approval", participants: [{ id: participantId, type: "user", userId: reviewerId, agentId: null }], approvalsNeeded: 1 }],
+      },
+      executionState: {
+        status: "pending",
+        currentStageId: stageId,
+        currentStageIndex: 0,
+        currentStageType: "approval",
+        currentParticipant: { type: "user", userId: reviewerId, agentId: null },
+        returnAssignee: null,
+        reviewRequest: null,
+        completedStageIds: [],
+        lastDecisionId: null,
+        lastDecisionOutcome: null,
+        monitor: null,
+      },
+    });
+    await db.insert(issueThreadInteractions).values({
+      id: interactionId,
+      companyId,
+      issueId,
+      kind: "request_confirmation",
+      status: "accepted",
+      continuationPolicy: "wake_assignee",
+      effectiveResolverPolicy: "human_only",
+      resolvedByUserId: reviewerId,
+      resolvedAt: new Date(),
+      summary: "Approve the exact contract",
+      payload: { version: 1, prompt: "Approve?" },
+      result: { version: 1, outcome: "accepted" },
+    });
+
+    const heartbeat = heartbeatService(db);
+    expect((await heartbeat.reconcileStrandedAssignedIssues()).acceptedHumanConfirmationsProjected).toBe(1);
+
+    const projected = await db.select().from(issues).where(eq(issues.id, issueId)).then((rows) => rows[0] ?? null);
+    expect(projected?.status).toBe("done");
+    expect(projected?.executionState).toMatchObject({ status: "completed", lastDecisionOutcome: "approved" });
+    const decisions = await db.select().from(issueExecutionDecisions).where(eq(issueExecutionDecisions.issueId, issueId));
+    expect(decisions).toHaveLength(1);
+    expect(decisions[0]).toMatchObject({ stageId, outcome: "approved", actorUserId: reviewerId });
+
+    expect((await heartbeat.reconcileStrandedAssignedIssues()).acceptedHumanConfirmationsProjected).toBe(0);
+    expect(await db.select().from(issueExecutionDecisions).where(eq(issueExecutionDecisions.issueId, issueId))).toHaveLength(1);
   });
 
   it("escalates accepted interaction continuation recovery after three review-park cancellations", async () => {
