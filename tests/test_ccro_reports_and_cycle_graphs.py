@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 from addons.ccro.engine import ccro
+from ro_comparison import inspect_ccro_hydraulic_envelope
 from report_snapshot import validate_report_snapshot
 from tests.test_ccro_addon import ccro_case
 
@@ -98,3 +99,22 @@ def test_conventional_report_renderer_remains_present_and_ccro_dispatch_is_expli
     assert "__TOTALRO_CCRO_REPORT_SNAPSHOT__" in report
     assert "function stageTable()" in report
     assert "function render()" in report
+
+
+def test_ccro_hydraulic_envelope_rejects_interior_cycle_and_reports_first_governor():
+    result = {
+        "ccro_cycle_profile": [
+            {"cycle": 1, "duration_min": 2, "feed_pressure_bar": 40, "minimum_element_ndp_bar": 8,
+             "sequence_equivalent_recovery": .40},
+            {"cycle": 2, "duration_min": 2, "feed_pressure_bar": 45, "minimum_element_ndp_bar": 3,
+             "sequence_equivalent_recovery": .50},
+            {"cycle": 3, "duration_min": 2, "feed_pressure_bar": 49, "minimum_element_ndp_bar": 8,
+             "sequence_equivalent_recovery": .60},
+        ]
+    }
+    envelope = inspect_ccro_hydraulic_envelope(result, {"pressure_bar": 50, "minimum_ndp_bar": 5})
+    assert envelope["status"] == "infeasible"
+    assert envelope["first_governing_constraint"] == {
+        "constraint": "minimum_ndp", "critical_value": 3.0, "limit": 5.0,
+        "cycle": 2, "time_min": 4.0, "recovery": .50,
+    }
