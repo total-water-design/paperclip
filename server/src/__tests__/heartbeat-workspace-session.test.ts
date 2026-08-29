@@ -442,6 +442,24 @@ describe("assertGitSensitiveAdapterWorkspaceValid", () => {
     );
   });
 
+  it("rejects a checkout whose origin is not the intended workspace fork", async () => {
+    const cwd = await createGitCheckout({ withRemote: true });
+    const input = buildWorkspaceValidationInput();
+    try {
+      await expectWorkspaceValidationFailure(
+        buildWorkspaceValidationInput({
+          resolvedWorkspace: buildResolvedWorkspace({ cwd, repoUrl: "https://github.com/total-water-design/paperclip.git" }),
+          executionWorkspace: { ...input.executionWorkspace, baseCwd: cwd, cwd, repoUrl: "https://github.com/total-water-design/paperclip.git" },
+          persistedExecutionWorkspace: { ...input.persistedExecutionWorkspace!, cwd, repoUrl: "https://github.com/total-water-design/paperclip.git" },
+        }),
+        "git_origin_provenance_mismatch",
+        'expected origin "https://github.com/total-water-design/paperclip.git"',
+      );
+    } finally {
+      await fs.rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it("does not apply the git-sensitive workspace guard to non-local execution targets", async () => {
     const input = buildWorkspaceValidationInput();
 

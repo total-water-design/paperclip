@@ -1922,6 +1922,18 @@ function sameResolvedPath(left: string | null | undefined, right: string | null 
   return path.resolve(leftPath) === path.resolve(rightPath);
 }
 
+function normalizeGitRemoteUrl(value: string | null | undefined) {
+  const trimmed = readNonEmptyString(value);
+  if (!trimmed) return null;
+  // Credentials are not repository provenance. Normalizing them away lets a
+  // host credential helper and an agent checkout compare the same repository.
+  return trimmed
+    .replace(/^(https?|ssh):\/\/[^/@]+@/i, "$1://")
+    .replace(/\/$/, "")
+    .replace(/\.git$/i, "")
+    .toLowerCase();
+}
+
 async function hasGitPushRemote(cwd: string | null | undefined) {
   const normalized = readNonEmptyString(cwd);
   if (!normalized) return false;
@@ -2240,6 +2252,23 @@ export async function assertGitSensitiveAdapterWorkspaceValid(input: {
       "missing_git_metadata",
       `Issue ${issue.identifier ?? issue.id} expected a git workspace for ${input.adapterType}, but "${effectiveCwd}" has no .git metadata.`,
     );
+  }
+
+  const intendedRepoUrl =
+    readNonEmptyString(input.resolvedWorkspace.repoUrl)
+    ?? readNonEmptyString(input.persistedExecutionWorkspace?.repoUrl)
+    ?? readNonEmptyString(input.executionWorkspace.repoUrl);
+  if (workspaceExpectation && effectiveCwd && intendedRepoUrl) {
+    const actualOriginUrl = await execFile("git", ["remote", "get-url", "origin"], { cwd: effectiveCwd })
+      .then((result) => readNonEmptyString(result.stdout))
+      .catch(() => null);
+    if (normalizeGitRemoteUrl(actualOriginUrl) !== normalizeGitRemoteUrl(intendedRepoUrl)) {
+      fail(
+        "git_origin_provenance_mismatch",
+        `Issue ${issue.identifier ?? issue.id} expected origin "${intendedRepoUrl}" but the execution workspace resolves origin "${actualOriginUrl ?? "<missing>"}". Provision the intended fork/workspace before validation; this is a workspace provisioning failure, not a candidate failure.`,
+        { intendedRepoUrl, actualOriginUrl },
+      );
+    }
   }
 
   const expectedManagedBranchName =
