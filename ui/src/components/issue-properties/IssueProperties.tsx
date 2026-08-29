@@ -41,6 +41,7 @@ import {
   formatMonitorOffset,
   useMonitorCountdown,
 } from "../../lib/issue-monitor";
+import { executionDecisionStageForViewer } from "../../lib/issue-execution-state";
 import { extractProviderIdWithFallback } from "../../lib/model-utils";
 import { formatRetryReason } from "../../lib/runRetryState";
 import { useRetryNowMutation } from "../../hooks/useRetryNowMutation";
@@ -97,6 +98,7 @@ import { issueReviewPolicyBadge } from "../../lib/review-policy";
 import { IssueCasesPanel } from "../IssueCasesPanel";
 import { ExpandRelationListButton, RemovableIssueReferencePill } from "./relation-controls";
 import { Badge } from "@/components/ui/badge";
+import { ExecutionPolicyGate } from "../ExecutionPolicyGate";
 
 function TruncatedCopyable({ value, icon: Icon }: { value: string; icon: ComponentType<{ className?: string }> }) {
   const [copied, setCopied] = useState(false);
@@ -138,6 +140,10 @@ interface IssuePropertiesProps {
   childIssues?: Issue[];
   onAddSubIssue?: () => void;
   onUpdate: (data: Record<string, unknown>) => void;
+  onSubmitExecutionDecision?: (input: {
+    status: "done" | "in_progress";
+    comment: string;
+  }) => Promise<unknown>;
   inline?: boolean;
   /** Whether an agent run is currently in flight on this issue, so the assignee
    * picker can warn that reassigning will interrupt it. */
@@ -165,6 +171,7 @@ export function IssueProperties({
   childIssues = [],
   onAddSubIssue,
   onUpdate,
+  onSubmitExecutionDecision,
   inline,
   hasActiveRun = false,
   externalObjects,
@@ -900,6 +907,13 @@ export function IssueProperties({
     }
     return `${stageLabel} pending${participantLabel ? ` with ${participantLabel}` : ""}`;
   })();
+  const executionDecisionStage = onSubmitExecutionDecision
+    ? executionDecisionStageForViewer({
+        issueStatus: issue.status,
+        executionState: issue.executionState,
+        currentUserId: currentUserId ?? null,
+      })
+    : null;
   useEffect(() => {
     setMonitorAtInput(toDateTimeLocalValue(issue.executionPolicy?.monitor?.nextCheckAt));
     setMonitorNotesInput(issue.executionPolicy?.monitor?.notes ?? "");
@@ -2092,6 +2106,8 @@ export function IssueProperties({
             size="lg"
             blockerAttention={issue.blockerAttention}
             onChange={(status) => onUpdate({ status })}
+            disabledStatuses={executionDecisionStage ? ["done", "in_progress"] : undefined}
+            disabledStatusReason="Use the execution decision form below."
             showLabel
           />
         </PropertyRow>
@@ -2368,11 +2384,18 @@ export function IssueProperties({
         </PropertyPicker>
         {nextRunnableExecutionStage === "approval" && approverValues.length > 0 ? runExecutionButton("approval") : null}
 
-        {currentExecutionLabel && (
+        {executionDecisionStage && onSubmitExecutionDecision ? (
+          <div className="py-1.5">
+            <ExecutionPolicyGate
+              stageLabel={executionDecisionStage.stageLabel}
+              onSubmitDecision={onSubmitExecutionDecision}
+            />
+          </div>
+        ) : currentExecutionLabel ? (
           <PropertyRow label="Execution">
             <span className="text-sm truncate min-w-0" title={currentExecutionLabel}>{currentExecutionLabel}</span>
           </PropertyRow>
-        )}
+        ) : null}
 
         {showScheduledRetryRow && scheduledRetryContent ? (
           <PropertyPicker
