@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { Router, type Request, type Response } from "express";
 import multer from "multer";
+import { shouldDefaultTwdsIssueProject, TWDS_PROJECT_ID } from "../services/twds-issue-defaults.js";
 import { z } from "zod";
 import { and, asc, desc, eq, inArray, isNull, notInArray } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
@@ -8559,6 +8560,14 @@ export function issueRoutes(
       rawCreateBody.assigneeAgentId as string | null | undefined,
       { actorType: req.actor.type },
     );
+    const assignedAgent = normalizedAssigneeAgentId
+      ? await agentsSvc.getById(normalizedAssigneeAgentId)
+      : null;
+    const defaultTwdsProject = shouldDefaultTwdsIssueProject({
+      companyId,
+      requestedProjectId: rawCreateBody.projectId,
+      assignee: assignedAgent,
+    });
     await assertNoAgentDelegationCycle({
       actorType: req.actor.type,
       parentIssueId: typeof effectiveParentId === "string" ? effectiveParentId : null,
@@ -8571,6 +8580,7 @@ export function issueRoutes(
     const createBody = {
       ...rawCreateBody,
       parentId: effectiveParentId,
+      ...(defaultTwdsProject ? { projectId: TWDS_PROJECT_ID } : {}),
       ...(normalizedAssigneeAgentId !== undefined ? { assigneeAgentId: normalizedAssigneeAgentId } : {}),
       ...(runWorkspaceInheritanceSourceIssueId
         ? { inheritExecutionWorkspaceFromIssueId: runWorkspaceInheritanceSourceIssueId }
