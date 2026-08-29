@@ -1,0 +1,18 @@
+TWDS TOT-312 task-branch browser validation
+Date: 2026-08-29 UTC
+Branch: task/tot-312-whats-new-workflow
+Base: 83a2733d0a7d6c8ed8b19786b0efa0589f32c1f7 (protected Alpha branch baseline; deployed Alpha not established)
+
+Chromium / Playwright raw assertions:
+browser_errors=[]
+desktop_cards=3 desktop_dates=3 desktop_release_labels=3
+mobile_cards=3 mobile_dates=3 mobile_release_labels=3
+admin_forms=3 admin_review_controls=3
+
+Routes loaded with HTTP 200:
+GET /
+GET /admin/communications (after administrator login)
+
+Viewports:
+desktop 1440x1000
+mobile 390x844

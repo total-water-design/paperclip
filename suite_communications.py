@@ -18,6 +18,12 @@ from suite_mail import first_name, send_transactional_email
 
 communications_bp = Blueprint("suite_communications", __name__)
 
+WHATS_NEW_CARD_DEFAULTS = {
+    "recently_updated": ("Recently Updated", "Changes already deployed"),
+    "roadmap": ("What We're Working On", "Administrator-approved roadmap"),
+    "commercial_launch": ("Commercial Launch", "Current estimated timing"),
+}
+
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -91,6 +97,48 @@ class SuiteSetting(db.Model):
     updated_at = db.Column(db.DateTime(timezone=True), nullable=False, default=_utcnow, onupdate=_utcnow)
 
 
+class WhatsNewCard(db.Model):
+    """Administrator-reviewed public copy for one fixed What's New section."""
+
+    __tablename__ = "suite_whats_new_cards"
+    id = db.Column(db.Integer, primary_key=True)
+    slug = db.Column(db.String(40), nullable=False, unique=True, index=True)
+    title = db.Column(db.String(200), nullable=False, default="")
+    summary = db.Column(db.Text, nullable=False, default="")
+    status = db.Column(db.String(24), nullable=False, default="draft", index=True)
+    release_label = db.Column(db.String(80), nullable=False, default="")
+    public = db.Column(db.Boolean, nullable=False, default=False, index=True)
+    reviewed_at = db.Column(db.DateTime(timezone=True), nullable=True, index=True)
+    updated_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=_utcnow)
+    updated_at = db.Column(db.DateTime(timezone=True), nullable=False, default=_utcnow, onupdate=_utcnow)
+
+    def is_public_ready(self) -> bool:
+        return bool(
+            self.slug in WHATS_NEW_CARD_DEFAULTS
+            and self.public
+            and self.status == "approved"
+            and self.reviewed_at
+            and self.title.strip()
+            and self.summary.strip()
+            and self.release_label.strip()
+        )
+
+
+def _card_view(slug: str, row: WhatsNewCard | None) -> dict:
+    default_title, default_summary = WHATS_NEW_CARD_DEFAULTS[slug]
+    ready = bool(row and row.is_public_ready())
+    return {
+        "slug": slug,
+        "title": row.title if ready else default_title,
+        "summary": row.summary if ready else default_summary,
+        "status": row.status if ready else "not_published",
+        "release_label": row.release_label if ready else "No approved update",
+        "updated_at": row.updated_at if ready else None,
+        "public_ready": ready,
+    }
+
+
 def _preference(user_id: int, create: bool = True) -> CommunicationPreference | None:
     row = db.session.scalar(select(CommunicationPreference).where(CommunicationPreference.user_id == int(user_id)))
     if not row and create:
@@ -119,10 +167,15 @@ def whats_new_context() -> dict:
         .order_by(RoadmapItem.sort_order, RoadmapItem.id)
         .limit(8)
     ).all()
+    card_rows = db.session.scalars(
+        select(WhatsNewCard).where(WhatsNewCard.slug.in_(WHATS_NEW_CARD_DEFAULTS))
+    ).all()
+    by_slug = {row.slug: row for row in card_rows}
     return {
         "recently_updated": ready,
         "roadmap": roadmap,
         "commercial_launch_window": _setting("commercial_launch_window"),
+        "cards": {slug: _card_view(slug, by_slug.get(slug)) for slug in WHATS_NEW_CARD_DEFAULTS},
     }
 
 
@@ -139,6 +192,17 @@ def whats_new_api():
         } for row in data["recently_updated"]],
         "roadmap": [{"title": row.title, "summary": row.summary, "application": row.application} for row in data["roadmap"]],
         "commercial_launch_window": data["commercial_launch_window"],
+        "cards": {
+            slug: {
+                "title": card["title"],
+                "summary": card["summary"],
+                "status": card["status"],
+                "release_label": card["release_label"],
+                "updated_at": card["updated_at"].isoformat() if card["updated_at"] else None,
+                "public_ready": card["public_ready"],
+            }
+            for slug, card in data["cards"].items()
+        },
     })
 
 
@@ -162,12 +226,51 @@ def account_communications():
 def admin_communications():
     releases = db.session.scalars(select(ReleaseRecord).order_by(ReleaseRecord.created_at.desc())).all()
     roadmap = db.session.scalars(select(RoadmapItem).order_by(RoadmapItem.sort_order, RoadmapItem.id)).all()
+    stored_cards = db.session.scalars(select(WhatsNewCard)).all()
+    cards_by_slug = {row.slug: row for row in stored_cards}
+    cards = [{
+        "slug": slug,
+        "default_title": defaults[0],
+        "row": cards_by_slug.get(slug),
+    } for slug, defaults in WHATS_NEW_CARD_DEFAULTS.items()]
     return render_template(
         "auth/admin_communications.html",
         releases=releases,
         roadmap=roadmap,
         launch_window=_setting("commercial_launch_window"),
+        cards=cards,
     )
+
+
+@communications_bp.post("/admin/communications/whats-new/<slug>")
+@admin_required
+def save_whats_new_card(slug: str):
+    if slug not in WHATS_NEW_CARD_DEFAULTS:
+        return jsonify({"error": "Unknown What's New card."}), 404
+    title = str(request.form.get("title") or "").strip()[:200]
+    summary = str(request.form.get("summary") or "").strip()[:3000]
+    release_label = str(request.form.get("release_label") or "").strip()[:80]
+    requested_public = bool(request.form.get("public"))
+    reviewed = bool(request.form.get("reviewed"))
+    if requested_public and (not title or not summary or not release_label or not reviewed):
+        flash("Public What's New cards require a title, summary, release label, and explicit content review.", "error")
+        return redirect(url_for("suite_communications.admin_communications"))
+    row = db.session.scalar(select(WhatsNewCard).where(WhatsNewCard.slug == slug))
+    if not row:
+        row = WhatsNewCard(slug=slug)
+        db.session.add(row)
+    row.title = title
+    row.summary = summary
+    row.release_label = release_label
+    row.public = requested_public
+    row.reviewed_at = (row.reviewed_at or _utcnow()) if reviewed else None
+    row.status = "approved" if reviewed else "draft"
+    row.updated_by_user_id = current_user.id
+    audit("whats_new_card_updated", actor=current_user,
+          detail=f"slug={slug}; status={row.status}; public={row.public}")
+    db.session.commit()
+    flash(f"What's New card '{title or WHATS_NEW_CARD_DEFAULTS[slug][0]}' saved.", "success")
+    return redirect(url_for("suite_communications.admin_communications"))
 
 
 @communications_bp.post("/admin/communications/releases")
@@ -322,4 +425,7 @@ def init_suite_communications(app) -> None:
         try:
             return {"twds_whats_new": whats_new_context()}
         except Exception:
-            return {"twds_whats_new": {"recently_updated": [], "roadmap": [], "commercial_launch_window": ""}}
+            return {"twds_whats_new": {
+                "recently_updated": [], "roadmap": [], "commercial_launch_window": "",
+                "cards": {slug: _card_view(slug, None) for slug in WHATS_NEW_CARD_DEFAULTS},
+            }}
