@@ -1637,38 +1637,7 @@ describe("agent issue mutation checkout ownership", () => {
     });
   });
 
-  it.each([
-    ["board", "board"],
-    ["a company user", { userId: "board-user" }],
-  ])("rejects an agent naming %s as unblock owner", async (_label, unblockOwner) => {
-    mockIssueService.getById.mockResolvedValue(makeIssue({ status: "in_progress" }));
-
-    const res = await request(await createApp(ownerActor())).patch(`/api/issues/${issueId}`).send({
-      status: "blocked",
-      unblockDescriptor: { owner: unblockOwner, action: "Review the blocker" },
-    });
-
-    expect(res.status, JSON.stringify(res.body)).toBe(403);
-    expect(res.body.error).toBe("Agents may only name themselves as an unblock owner");
-    expect(mockIssueService.update).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    ["board", "board"],
-    ["a company user", { userId: "board-user" }],
-  ])("rejects an agent changing an already-blocked issue owner to %s", async (_label, unblockOwner) => {
-    mockIssueService.getById.mockResolvedValue(makeIssue({ status: "blocked" }));
-
-    const res = await request(await createApp(ownerActor())).patch(`/api/issues/${issueId}`).send({
-      unblockDescriptor: { owner: unblockOwner, action: "Review the blocker" },
-    });
-
-    expect(res.status, JSON.stringify(res.body)).toBe(403);
-    expect(res.body.error).toBe("Agents may only name themselves as an unblock owner");
-    expect(mockIssueService.update).not.toHaveBeenCalled();
-  });
-
-  it("allows a board actor to name the board as unblock owner", async () => {
+  it("rejects a Board actor naming the Board as unblock owner", async () => {
     mockIssueService.getById.mockResolvedValue(makeIssue({ status: "in_progress" }));
     mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) => ({
       ...makeIssue({ status: "in_progress" }),
@@ -1680,14 +1649,11 @@ describe("agent issue mutation checkout ownership", () => {
       unblockDescriptor: { owner: "board", action: "Review the blocker" },
     });
 
-    expect(res.status, JSON.stringify(res.body)).toBe(200);
-    expect(mockIssueService.update).toHaveBeenCalledWith(
-      issueId,
-      expect.objectContaining({
-        status: "blocked",
-        unblockDescriptor: { owner: "board", action: "Review the blocker" },
-      }),
+    expect(res.status, JSON.stringify(res.body)).toBe(422);
+    expect(res.body.error).toBe(
+      "Human or Board action must be represented by a Board-assigned child issue in blockedByIssueIds",
     );
+    expect(mockIssueService.update).not.toHaveBeenCalled();
   });
 
   it("rejects peer-agent status updates that would clear a recovery action they do not own", async () => {
