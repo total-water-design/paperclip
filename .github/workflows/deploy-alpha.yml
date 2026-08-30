@@ -49,7 +49,7 @@ jobs:
           ref: ${{ inputs.commit_sha }}
           fetch-depth: 0
 
-      - name: Verify exact SHA and alpha ancestry
+      - name: Verify exact SHA, clean provenance, and authorized Alpha ref
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -64,14 +64,41 @@ jobs:
             exit 1
           }
 
+          # Workflow input is deliberately an immutable object ID, never a
+          # branch/ref.  Fetch and compare the authorized remote directly so a
+          # stale local tracking ref, task branch, or moved branch tip cannot
+          # become deployment source.
           git fetch --no-tags origin "+refs/heads/alpha:refs/remotes/origin/alpha"
+          REMOTE_ALPHA_LINE="$(git ls-remote --exit-code origin refs/heads/alpha)"
+          REMOTE_ALPHA_SHA="${REMOTE_ALPHA_LINE%%$'\t'*}"
+          TRACKING_ALPHA_SHA="$(git rev-parse refs/remotes/origin/alpha)"
+
+          [[ "$REMOTE_ALPHA_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "ERROR: authorized remote alpha ref did not resolve to a full SHA."
+            exit 1
+          }
+          [[ "$TRACKING_ALPHA_SHA" == "$REMOTE_ALPHA_SHA" ]] || {
+            echo "ERROR: local authorized-alpha tracking ref differs from origin."
+            exit 1
+          }
+          [[ "$REQUESTED_SHA" == "$REMOTE_ALPHA_SHA" ]] || {
+            echo "ERROR: requested SHA is not the current authorized alpha SHA."
+            exit 1
+          }
 
           if ! git merge-base --is-ancestor "$REQUESTED_SHA" origin/alpha; then
             echo "ERROR: requested SHA is not contained in the alpha branch history."
             exit 1
           fi
 
-          echo "PASS - exact SHA verified and contained in alpha"
+          git diff --quiet
+          git diff --cached --quiet
+          [[ -z "$(git ls-files --others --exclude-standard)" ]] || {
+            echo "ERROR: checkout contains untracked source; refusing mutable deployment tree."
+            exit 1
+          }
+
+          echo "PASS - exact SHA, clean checkout, and origin alpha provenance verified"
 
       - name: Identify deployment
         shell: bash
@@ -116,26 +143,12 @@ jobs:
 
           echo "PASS - source validation"
 
-      - name: Prepare restricted staging tree
+      - name: Prepare exact-commit deployment bundle
         shell: bash
         run: |
           set -Eeuo pipefail
 
           STAGE=/opt/twds-deploy/staging
-
-          rsync -a --delete \
-            --exclude='.git/' \
-            --exclude='.github/' \
-            --exclude='instance/' \
-            --exclude='__pycache__/' \
-            --exclude='*.pyc' \
-            --exclude='.env' \
-            --exclude='*.db' \
-            --exclude='*.sqlite' \
-            --exclude='*.sqlite3' \
-            --exclude='*.pem' \
-            --exclude='*.key' \
-            "$GITHUB_WORKSPACE/" "$STAGE/"
 
           STAGED_SHA="$(git rev-parse HEAD)"
           [[ "$STAGED_SHA" == "$REQUESTED_SHA" ]] || {
@@ -143,9 +156,28 @@ jobs:
             exit 1
           }
 
-          printf '%s\n' "$STAGED_SHA" > "$STAGE/.deployment_commit"
+          rm -rf -- "$STAGE"
+          mkdir -p -- "$STAGE"
+          BUNDLE_REF=refs/twds-deploy/candidate
+          trap 'git update-ref -d "$BUNDLE_REF"' EXIT
+          git update-ref "$BUNDLE_REF" "$REQUESTED_SHA"
+          git bundle create "$STAGE/source.bundle" "$BUNDLE_REF"
+          git bundle verify "$STAGE/source.bundle"
+          git bundle list-heads "$STAGE/source.bundle" |
+            awk -v sha="$REQUESTED_SHA" '$1 == sha { found=1 } END { exit !found }'
+          git update-ref -d "$BUNDLE_REF"
+          trap - EXIT
+          printf '%s\n' "$REQUESTED_SHA" > "$STAGE/.deployment_commit"
+          {
+            printf 'repository=%s\n' "$GITHUB_REPOSITORY"
+            printf 'authorized_ref=refs/heads/alpha\n'
+            printf 'authorized_remote_sha=%s\n' "$REMOTE_ALPHA_SHA"
+            printf 'approved_sha=%s\n' "$REQUESTED_SHA"
+            printf 'checked_out_sha=%s\n' "$STAGED_SHA"
+            printf 'prepared_at_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } > "$STAGE/.deployment_provenance"
 
-          echo "Staging prepared."
+          echo "Exact-commit bundle prepared."
           echo "Commit: $(cat "$STAGE/.deployment_commit")"
 
       - name: Deploy through human approval gate

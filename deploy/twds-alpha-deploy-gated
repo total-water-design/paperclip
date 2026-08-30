@@ -1,40 +1,35 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+umask 077
 
 APPROVAL=/var/lib/twds-release-gate/approved_sha
 LOCK=/var/lib/twds-release-gate/deploy.lock
 STAGE_MARKER=/opt/twds-deploy/staging/.deployment_commit
+STAGE_BUNDLE=/opt/twds-deploy/staging/source.bundle
+STAGE_PROVENANCE=/opt/twds-deploy/staging/.deployment_provenance
 LIVE_MARKER=/opt/totalrodesign/app/.deployment_commit
+CANDIDATE_ROOT=/var/lib/twds-release-gate/candidates
+EVIDENCE_ROOT=/var/lib/twds-release-gate/deployments
 DEPLOYER=/usr/local/sbin/twds-alpha-deploy
 
-fail() {
-    echo "BLOCKED: $*" >&2
-    exit 1
-}
-
+fail() { echo "BLOCKED: $*" >&2; exit 1; }
 [[ $EUID -eq 0 ]] || fail "must run as root"
 
-# Hold a non-blocking lock through approval validation, deployment, live-marker
-# verification, and approval consumption. This prevents two invocations from
-# using the same approval while preserving it for a retry after any failure.
 exec 9>"$LOCK" || fail "cannot open deployment gate lock"
 flock -n 9 || fail "another Alpha deployment gate invocation is active"
 
-[[ -s "$APPROVAL" ]] ||
-    fail "no human-approved Alpha SHA exists"
-
-[[ -f "$STAGE_MARKER" ]] ||
-    fail "staging deployment marker is missing"
+[[ -s "$APPROVAL" ]] || fail "no human-approved Alpha SHA exists"
+[[ -f "$STAGE_MARKER" && ! -L "$STAGE_MARKER" ]] ||
+    fail "staging deployment marker must be a regular non-symlink file"
+[[ -f "$STAGE_BUNDLE" && ! -L "$STAGE_BUNDLE" ]] ||
+    fail "staging source bundle must be a regular non-symlink file"
+[[ -f "$STAGE_PROVENANCE" && ! -L "$STAGE_PROVENANCE" ]] ||
+    fail "staging provenance must be a regular non-symlink file"
 
 APPROVED="$(tr -d '\r\n ' < "$APPROVAL")"
 STAGED="$(tr -d '\r\n ' < "$STAGE_MARKER")"
-
-[[ "$APPROVED" =~ ^[0-9a-f]{40}$ ]] ||
-    fail "approved SHA is invalid"
-
-[[ "$STAGED" =~ ^[0-9a-f]{40}$ ]] ||
-    fail "staged SHA is invalid"
-
+[[ "$APPROVED" =~ ^[0-9a-f]{40}$ ]] || fail "approved SHA is invalid"
+[[ "$STAGED" =~ ^[0-9a-f]{40}$ ]] || fail "staged SHA is invalid"
 [[ "$APPROVED" == "$STAGED" ]] || {
     echo "BLOCKED: staged SHA does not match human approval"
     echo "Approved: $APPROVED"
@@ -42,21 +37,63 @@ STAGED="$(tr -d '\r\n ' < "$STAGE_MARKER")"
     exit 2
 }
 
+PROVENANCE_APPROVED="$(sed -n 's/^approved_sha=//p' "$STAGE_PROVENANCE")"
+PROVENANCE_CHECKED_OUT="$(sed -n 's/^checked_out_sha=//p' "$STAGE_PROVENANCE")"
+PROVENANCE_REMOTE="$(sed -n 's/^authorized_remote_sha=//p' "$STAGE_PROVENANCE")"
+PROVENANCE_REF="$(sed -n 's/^authorized_ref=//p' "$STAGE_PROVENANCE")"
+PROVENANCE_REPOSITORY="$(sed -n 's/^repository=//p' "$STAGE_PROVENANCE")"
+PROVENANCE_TIME="$(sed -n 's/^prepared_at_utc=//p' "$STAGE_PROVENANCE")"
+[[ "$PROVENANCE_APPROVED" == "$APPROVED" && "$PROVENANCE_CHECKED_OUT" == "$APPROVED" ]] ||
+    fail "staging provenance does not bind approved and checked-out SHA"
+[[ "$PROVENANCE_REMOTE" == "$APPROVED" && "$PROVENANCE_REF" == "refs/heads/alpha" ]] ||
+    fail "staging provenance is not anchored to the authorized alpha ref"
+[[ -n "$PROVENANCE_REPOSITORY" && "$PROVENANCE_TIME" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T ]] ||
+    fail "staging provenance is incomplete"
+
+mkdir -p "$CANDIDATE_ROOT"
+chown root:root "$CANDIDATE_ROOT"
+chmod 0700 "$CANDIDATE_ROOT"
+CANDIDATE="$(mktemp -d "$CANDIDATE_ROOT/candidate.XXXXXXXX")" ||
+    fail "cannot create root-owned candidate area"
+cleanup() { rm -rf -- "$CANDIDATE"; }
+trap cleanup EXIT
+chown root:root "$CANDIDATE"
+chmod 0700 "$CANDIDATE"
+
+# Copy only inert data from runner staging. No staging executable is run as root.
+cp --no-dereference -- "$STAGE_BUNDLE" "$CANDIDATE/source.bundle" ||
+    fail "cannot copy staging bundle"
+chown root:root "$CANDIDATE/source.bundle"
+chmod 0600 "$CANDIDATE/source.bundle"
+
+git init --bare -q "$CANDIDATE/repository.git" || fail "cannot initialize candidate repository"
+git -C "$CANDIDATE/repository.git" bundle verify "$CANDIDATE/source.bundle" >/dev/null ||
+    fail "staging source bundle verification failed"
+git -C "$CANDIDATE/repository.git" fetch -q "$CANDIDATE/source.bundle" HEAD ||
+    fail "cannot import verified staging bundle"
+git -C "$CANDIDATE/repository.git" fsck --strict --full >/dev/null ||
+    fail "candidate Git object integrity validation failed"
+git -C "$CANDIDATE/repository.git" cat-file -e "$APPROVED^{commit}" ||
+    fail "approved SHA is not a commit in verified bundle"
+
+mkdir "$CANDIDATE/source"
+git -C "$CANDIDATE/repository.git" archive --format=tar "$APPROVED" |
+    tar -x --no-same-owner --no-same-permissions -C "$CANDIDATE/source" ||
+    fail "cannot materialize approved candidate source"
+printf '%s\n' "$APPROVED" > "$CANDIDATE/source/.deployment_commit"
+chown -R root:root "$CANDIDATE/source"
+chmod -R go-w "$CANDIDATE/source"
+
 echo "=========================================="
 echo "TWDS ALPHA DEPLOYMENT GATE PASSED"
 echo "Approved SHA: $APPROVED"
 echo "=========================================="
+logger -t twds-release-gate "Starting approved Alpha deployment: $APPROVED"
 
-logger -t twds-release-gate \
-  "Starting approved Alpha deployment: $APPROVED"
+"$DEPLOYER" "$CANDIDATE/source"
 
-"$DEPLOYER"
-
-[[ -f "$LIVE_MARKER" ]] ||
-    fail "deployment completed but live SHA marker is missing"
-
+[[ -f "$LIVE_MARKER" ]] || fail "deployment completed but live SHA marker is missing"
 LIVE="$(tr -d '\r\n ' < "$LIVE_MARKER")"
-
 [[ "$LIVE" == "$APPROVED" ]] || {
     echo "ERROR: deployed SHA does not match approved SHA" >&2
     echo "Approved: $APPROVED" >&2
@@ -64,16 +101,34 @@ LIVE="$(tr -d '\r\n ' < "$LIVE_MARKER")"
     exit 3
 }
 
-# Consume only the approval used by this successful invocation. Refuse to
-# erase a replacement approval written while deployment was in progress.
+mkdir -p "$EVIDENCE_ROOT"
+chown root:root "$EVIDENCE_ROOT"
+chmod 0700 "$EVIDENCE_ROOT"
+EVIDENCE_FILE="$EVIDENCE_ROOT/$APPROVED.deployment"
+{
+    printf 'repository=%s\n' "$PROVENANCE_REPOSITORY"
+    printf 'authorized_ref=%s\n' "$PROVENANCE_REF"
+    printf 'approved_sha=%s\n' "$APPROVED"
+    printf 'deployed_at_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf 'service=totalrodesign.service version=%s state=%s\n' "$APPROVED" \
+        "$(systemctl is-active totalrodesign.service)"
+    if systemctl list-unit-files --type=service 2>/dev/null | grep -q '^totalbiodesign\.service'; then
+        printf 'service=totalbiodesign.service version=%s state=%s\n' "$APPROVED" \
+            "$(systemctl is-active totalbiodesign.service)"
+    fi
+    printf 'live_marker=%s\n' "$LIVE_MARKER"
+    printf 'live_marker_sha=%s\n' "$LIVE"
+} > "$EVIDENCE_FILE"
+chown root:root "$EVIDENCE_FILE"
+chmod 0600 "$EVIDENCE_FILE"
+
 CURRENT_APPROVAL="$(tr -d '\r\n ' < "$APPROVAL")"
 [[ "$CURRENT_APPROVAL" == "$APPROVED" ]] ||
     fail "approval changed during deployment; refusing to consume it"
 : > "$APPROVAL"
 
-logger -t twds-release-gate \
-  "Approved Alpha deployment completed successfully: $LIVE"
-
+logger -t twds-release-gate "Approved Alpha deployment completed successfully: $LIVE"
 echo
 echo "DEPLOYMENT GATE VERIFIED"
 echo "Live SHA: $LIVE"
+echo "Deployment evidence: $EVIDENCE_FILE"
