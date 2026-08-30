@@ -27,4 +27,3 @@ export function shouldDefaultTwdsIssueProject(input: {
   if (input.assignee.role !== "engineer" && input.assignee.role !== "qa") return false;
   return /\bTWDS\b/i.test(`${input.assignee.name} ${input.assignee.title ?? ""}`);
 }
-

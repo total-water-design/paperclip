@@ -6007,8 +6007,6 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     expect(await db.select().from(issueExecutionDecisions).where(eq(issueExecutionDecisions.issueId, issueId))).toHaveLength(1);
   });
 
-  it("escalates accepted interaction continuation recovery after three review-park cancellations", async () => {
-
 it("counts five historical review-park cancellations against the upgraded disposition-repair ceiling", async () => {
     const companyId = randomUUID();
     const agentId = randomUUID();
