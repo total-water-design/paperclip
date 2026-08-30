@@ -9,6 +9,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FIXTURE="$(mktemp -d)"
 cleanup() {
     local rc=$?
+    chmod 700 "$STAGE" 2>/dev/null || true
     if [[ $rc -ne 0 ]]; then
         find "$FIXTURE" -maxdepth 1 -name '*.out' -exec sh -c \
             'echo "--- $1"; cat "$1"' _ {} \;
@@ -56,7 +57,14 @@ git -C "$REPO" config user.name test
 git -C "$REPO" config user.email test@example.invalid
 mkdir -p "$REPO/deploy"
 printf 'approved bytes\n' > "$REPO/ordinary.txt"
-printf 'safe script bytes\n' > "$REPO/deploy/helper.py"
+printf '# safe script bytes\n' > "$REPO/deploy/helper.py"
+printf '# candidate app bytes\n' > "$REPO/app.py"
+printf '# candidate auth bytes\n' > "$REPO/auth.py"
+printf '# candidate wsgi bytes\n' > "$REPO/wsgi.py"
+: > "$REPO/requirements.txt"
+: > "$REPO/requirements-server.txt"
+printf 'print("candidate template verification")\n' > "$REPO/deploy/verify_templates.py"
+printf 'print("candidate auth verification")\n' > "$REPO/deploy/verify_auth_install.py"
 git -C "$REPO" add .
 git -C "$REPO" commit -qm approved
 SHA="$(git -C "$REPO" rev-parse HEAD)"
@@ -125,7 +133,7 @@ write_success_deployer() {
 set -Eeuo pipefail
 source_tree="\$1"
 cat "\$source_tree/ordinary.txt" > '$FIXTURE/deployed_ordinary'
-[[ "\$(cat "\$source_tree/deploy/helper.py")" == 'safe script bytes' ]]
+[[ "\$(cat "\$source_tree/deploy/helper.py")" == '# safe script bytes' ]]
 printf '%s\n' '$SHA' > '$LIVE'
 EOF
     chmod +x "$DEPLOYER"
@@ -230,3 +238,59 @@ touch "$FIXTURE/release_deployer"
 wait "$first_pid"
 [[ ! -s "$APPROVAL" ]]
 echo "ok - first concurrent invocation completes and consumes approval"
+
+# 11. The gate invokes the real privileged deployer with its root-owned
+# candidate.  The wrapper makes runner staging unreadable immediately before
+# exec; success therefore proves the deployer neither reads nor executes it.
+reset_fixture
+APP_ROOT="$FIXTURE/app-root"
+BACKUPS="$FIXTURE/backups"
+FP_HELPER="$FIXTURE/requirements_fingerprint.py"
+REAL_DEPLOYER="$FIXTURE/real-deployer"
+LIVE_VENV="$FIXTURE/live-venv"
+cp "$ROOT/deploy/requirements_fingerprint.py" "$FP_HELPER"
+chmod 644 "$FP_HELPER"
+mkdir -p "$APP_ROOT/app" "$LIVE_VENV/bin"
+printf 'old live bytes\n' > "$APP_ROOT/app/ordinary.txt"
+ln -s /usr/bin/python3 "$LIVE_VENV/bin/python"
+LIVE_FP="$(/usr/bin/python3 "$FP_HELPER" "$REPO/requirements-server.txt" --repo-root "$REPO")"
+printf '%s\n' "$LIVE_FP" > "$LIVE_VENV/.twds_requirements_fingerprint"
+ln -s "$LIVE_VENV" "$APP_ROOT/venv"
+cat > "$MOCKBIN/curl" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "$MOCKBIN/curl"
+sed \
+    -e "s|^CANDIDATE_ROOT=.*|CANDIDATE_ROOT=$CANDIDATES|" \
+    -e "s|^APP_ROOT=.*|APP_ROOT=$APP_ROOT|" \
+    -e "s|^BACKUP_ROOT=.*|BACKUP_ROOT=$BACKUPS|" \
+    -e "s|^FP_HELPER=.*|FP_HELPER=$FP_HELPER|" \
+    -e 's|^SERVICE_USER=.*|SERVICE_USER=paperclip|' \
+    -e 's|^if \[\[ \$EUID -ne 0 \]\]; then|if false; then|' \
+    -e 's|== root:root|== paperclip:paperclip|g' \
+    -e 's|^  \[\[ "\$owner" == root && "\$group" == root \]\] \|\| fail.*|  : # ownership test cannot run unprivileged|' \
+    -e 's|^chown |: test-chown |' \
+    -e 's|^  chown |  : test-chown |' \
+    "$ROOT/deploy/twds-alpha-deploy" > "$REAL_DEPLOYER"
+chmod +x "$REAL_DEPLOYER"
+cat > "$DEPLOYER" <<EOF
+#!/usr/bin/env bash
+set -Eeuo pipefail
+chmod 000 '$STAGE'
+'$REAL_DEPLOYER' "\$1"
+cp "\$1/.deployment_commit" '$LIVE'
+EOF
+chmod +x "$DEPLOYER"
+mkdir -p "$STAGE/deploy"
+cat > "$STAGE/deploy/verify_templates.py" <<EOF
+#!/usr/bin/env bash
+touch '$FIXTURE/staging_code_executed'
+EOF
+chmod +x "$STAGE/deploy/verify_templates.py"
+"$GATE" >"$FIXTURE/real-deployer.out" 2>&1
+chmod 700 "$STAGE"
+[[ "$(cat "$APP_ROOT/app/ordinary.txt")" == "approved bytes" ]]
+[[ ! -e "$FIXTURE/staging_code_executed" ]]
+grep -q "VALIDATING ROOT-OWNED CANDIDATE TREE" "$FIXTURE/real-deployer.out"
+echo "ok - real deployer exclusively deploys the root-owned candidate, not runner staging"
