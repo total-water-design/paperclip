@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { Router, type Request, type Response } from "express";
 import multer from "multer";
+import { shouldDefaultTwdsIssueProject, TWDS_PROJECT_ID } from "../services/twds-issue-defaults.js";
 import { z } from "zod";
 import { and, asc, desc, eq, inArray, isNull, notInArray } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
@@ -8559,6 +8560,14 @@ export function issueRoutes(
       rawCreateBody.assigneeAgentId as string | null | undefined,
       { actorType: req.actor.type },
     );
+    const assignedAgent = normalizedAssigneeAgentId
+      ? await agentsSvc.getById(normalizedAssigneeAgentId)
+      : null;
+    const defaultTwdsProject = shouldDefaultTwdsIssueProject({
+      companyId,
+      requestedProjectId: rawCreateBody.projectId,
+      assignee: assignedAgent,
+    });
     await assertNoAgentDelegationCycle({
       actorType: req.actor.type,
       parentIssueId: typeof effectiveParentId === "string" ? effectiveParentId : null,
@@ -8571,6 +8580,7 @@ export function issueRoutes(
     const createBody = {
       ...rawCreateBody,
       parentId: effectiveParentId,
+      ...(defaultTwdsProject ? { projectId: TWDS_PROJECT_ID } : {}),
       ...(normalizedAssigneeAgentId !== undefined ? { assigneeAgentId: normalizedAssigneeAgentId } : {}),
       ...(runWorkspaceInheritanceSourceIssueId
         ? { inheritExecutionWorkspaceFromIssueId: runWorkspaceInheritanceSourceIssueId }
@@ -9699,10 +9709,18 @@ export function issueRoutes(
     const descriptor = updateFields.unblockDescriptor ?? null;
     if (descriptor && typeof descriptor === "object") {
       const owner = descriptor.owner;
-      if (req.actor.type === "agent" && (owner === "board" || "userId" in owner)) {
-        throw forbidden("Agents may only name themselves as an unblock owner");
+      // A human gate is a work item, not an unblock-owner hint.  In particular,
+      // routing the parent directly to the Board loses the decision's durable
+      // child issue and can create a parent/child circular blocker.  Callers
+      // must create the Board-assigned child first and place its id in
+      // blockedByIssueIds before moving the parent to blocked.
+      if (owner === "board" || "userId" in owner) {
+        res.status(422).json({
+          error: "Human or Board action must be represented by a Board-assigned child issue in blockedByIssueIds",
+        });
+        return;
       }
-      if (owner !== "board" && "agentId" in owner) {
+      if ("agentId" in owner) {
         const target = await db.select({ id: agents.id }).from(agents).where(and(
           eq(agents.id, owner.agentId),
           eq(agents.companyId, existing.companyId),
@@ -9711,14 +9729,6 @@ export function issueRoutes(
         if (req.actor.type === "agent" && req.actor.agentId !== owner.agentId) {
           throw forbidden("Agents may only name themselves as an unblock owner");
         }
-      } else if (owner !== "board" && "userId" in owner) {
-        const member = await db.select({ id: companyMemberships.id }).from(companyMemberships).where(and(
-          eq(companyMemberships.companyId, existing.companyId),
-          eq(companyMemberships.principalType, "user"),
-          eq(companyMemberships.principalId, owner.userId),
-          eq(companyMemberships.status, "active"),
-        )).limit(1).then((rows) => rows[0] ?? null);
-        if (!member) throw unprocessable("Unblock owner user must be an active company member");
       }
     }
     const enteringBlocked = existing.status !== "blocked" && updateFields.status === "blocked";

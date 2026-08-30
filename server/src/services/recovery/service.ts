@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, gt, gte, inArray, isNull, notInArray, or, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
@@ -25,6 +26,7 @@ import {
   issueApprovals,
   issueRecoveryActions,
   issueRelations,
+  issueExecutionDecisions,
   issueThreadInteractions,
   issues,
 } from "@paperclipai/db";
@@ -43,6 +45,7 @@ import { issueRecoveryActionService } from "../issue-recovery-actions.js";
 import { issueTreeControlService } from "../issue-tree-control.js";
 import { TERMINAL_HEARTBEAT_RUN_STATUSES, issueService } from "../issues.js";
 import {
+  applyIssueExecutionPolicyTransition,
   applyIssueMonitorPolicyTransition,
   normalizeIssueExecutionPolicy,
   parseIssueExecutionState,
@@ -988,6 +991,9 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
         status: issueThreadInteractions.status,
         continuationPolicy: issueThreadInteractions.continuationPolicy,
         sourceRunId: issueThreadInteractions.sourceRunId,
+        effectiveResolverPolicy: issueThreadInteractions.effectiveResolverPolicy,
+        resolvedByUserId: issueThreadInteractions.resolvedByUserId,
+        summary: issueThreadInteractions.summary,
         resolvedAt: issueThreadInteractions.resolvedAt,
         updatedAt: issueThreadInteractions.updatedAt,
       })
@@ -1003,6 +1009,69 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
       .orderBy(desc(sql`coalesce(${issueThreadInteractions.resolvedAt}, ${issueThreadInteractions.updatedAt})`), desc(issueThreadInteractions.id))
       .limit(1)
       .then((rows) => rows[0] ?? null);
+  }
+
+  async function projectAcceptedHumanConfirmationDecision(input: {
+    issue: typeof issues.$inferSelect;
+    interaction: Awaited<ReturnType<typeof getLatestAcceptedContinuationInteraction>>;
+  }) {
+    const interaction = input.interaction;
+    if (!interaction || interaction.kind !== "request_confirmation" || interaction.effectiveResolverPolicy !== "human_only") {
+      return false;
+    }
+    const state = parseIssueExecutionState(input.issue.executionState);
+    if (
+      input.issue.status !== "in_review"
+      || state?.status !== "pending"
+      || state.currentParticipant?.type !== "user"
+      || !interaction.resolvedByUserId
+      || state.currentParticipant.userId !== interaction.resolvedByUserId
+    ) return false;
+
+    const policy = normalizeIssueExecutionPolicy(input.issue.executionPolicy);
+    if (!policy) return false;
+    const decisionId = randomUUID();
+    const transition = applyIssueExecutionPolicyTransition({
+      issue: input.issue,
+      policy,
+      requestedStatus: "done",
+      requestedAssigneePatch: {},
+      actor: { userId: interaction.resolvedByUserId },
+      commentBody: interaction.summary || `Accepted human-only confirmation ${interaction.id}`,
+    });
+    if (!transition.decision) return false;
+    const decision = transition.decision;
+    const nextState = transition.patch.executionState;
+    if (!nextState || typeof nextState !== "object") return false;
+
+    const updated = await db.transaction(async (tx) => {
+      const lockedIssue = await issueService(db).getByIdForUpdate(input.issue.id, tx);
+      if (!lockedIssue) return false;
+      const lockedState = parseIssueExecutionState(lockedIssue.executionState);
+      // The decision id is the durable idempotency marker. A concurrent
+      // reconciliation or normal review action has already consumed it.
+      if (lockedState?.lastDecisionId || lockedState?.status !== "pending") return false;
+      const issue = await issueService(db).update(input.issue.id, {
+        ...transition.patch,
+        status: typeof transition.patch.status === "string" ? transition.patch.status : "done",
+        executionState: { ...nextState, lastDecisionId: decisionId },
+      }, tx);
+      if (!issue) return false;
+      await tx.insert(issueExecutionDecisions).values({
+        id: decisionId,
+        companyId: issue.companyId,
+        issueId: issue.id,
+        stageId: decision.stageId,
+        stageType: decision.stageType,
+        actorAgentId: null,
+        actorUserId: interaction.resolvedByUserId,
+        outcome: decision.outcome,
+        body: decision.body,
+        createdByRunId: null,
+      });
+      return true;
+    });
+    return updated;
   }
 
   async function hasSuccessfulIssueRunSince(
@@ -1190,7 +1259,10 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
           eq(issueRelations.type, "blocks"),
           inArray(issues.status, ["todo", "blocked"]),
           isNull(issues.assigneeAgentId),
-          isNull(issues.assigneeUserId),
+          // A human-owned review normally has no agent recovery target, but an
+          // accepted human_only confirmation can itself be the durable stage
+          // decision and must be projected before this loop decides to skip it.
+          or(isNull(issues.assigneeUserId), eq(issues.status, "in_review")),
           sql`${issues.createdByAgentId} is not null`,
           sql`exists (
             select 1
@@ -3535,7 +3607,9 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
       .from(issues)
       .where(
         and(
-          isNull(issues.assigneeUserId),
+          // Human-owned review stages ordinarily have no agent recovery path,
+          // except an accepted human_only confirmation that must be consumed.
+          or(isNull(issues.assigneeUserId), eq(issues.status, "in_review")),
           inArray(issues.status, ["todo", "in_progress", "in_review"]),
           or(
             sql`${issues.assigneeAgentId} is not null`,
@@ -3554,6 +3628,7 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
       successfulContinuationObserved: 0,
       orphanBlockersAssigned: 0,
       successfulRunHandoffEscalated: 0,
+      acceptedHumanConfirmationsProjected: 0,
       reviewParticipantRequeued: 0,
       escalated: 0,
       waitingOnReviewResolved: 0,
@@ -3576,6 +3651,12 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
       const agentId = issue.status === "in_review" && participantAgentId
         ? participantAgentId
         : issue.assigneeAgentId;
+      const acceptedContinuationInteraction = await getLatestAcceptedContinuationInteraction(issue.companyId, issue.id);
+      if (await projectAcceptedHumanConfirmationDecision({ issue, interaction: acceptedContinuationInteraction })) {
+        result.acceptedHumanConfirmationsProjected += 1;
+        result.issueIds.push(issue.id);
+        continue;
+      }
       if (!agentId) {
         result.skipped += 1;
         continue;
@@ -3751,7 +3832,6 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
         }
       }
 
-      const acceptedContinuationInteraction = await getLatestAcceptedContinuationInteraction(issue.companyId, issue.id);
       const acceptedInteractionResolvedAt = acceptedContinuationInteraction
         ? acceptedContinuationInteraction.resolvedAt ?? acceptedContinuationInteraction.updatedAt
         : null;
