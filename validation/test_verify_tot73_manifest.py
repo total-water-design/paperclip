@@ -36,10 +36,18 @@ class Tot73VerifierTests(unittest.TestCase):
                       approval_record="test-interaction", candidate_commit_sha=self.candidate_commit_sha,
                       manifest_sha256=hashlib.sha256(self.manifest.read_bytes()).hexdigest())
         self.approval.write_text(json.dumps(record))
-    def test_current_draft_is_pending_human_approval(self):
+    def test_current_record_has_valid_human_approval(self):
+        record = json.loads(self.approval.read_text())
+        self.assertEqual("local-board", record["approved_by"])
+        self.assertEqual("2026-08-30T19:58:44.250Z", record["approved_at"])
+        self.assertEqual(
+            "paperclip-comment:b18e72d3-ec96-41b2-bb3d-d6b9f1466586",
+            record["approval_record"],
+        )
+        record["candidate_commit_sha"] = self.candidate_commit_sha
+        self.approval.write_text(json.dumps(record))
         status, details = verify(self.manifest, self.approval)
-        self.assertEqual("PENDING", status)
-        self.assertIn("incomplete", details[0])
+        self.assertEqual(("PASS", []), (status, details))
     def test_missing_or_modified_source_fails_closed(self):
         source = self.repo / "validation/sources/RO-FilmTec-BW30-PRO-400-PDS-45-D03742-en.pdf"
         source.unlink()
