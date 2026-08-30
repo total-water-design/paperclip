@@ -28,9 +28,9 @@ class DependencyDeployerContractTests(unittest.TestCase):
     def test_changed_closure_builds_isolated_candidate_before_cutover(self):
         changed = DEPLOYER.index("DEPENDENCY CLOSURE CHANGED")
         venv = DEPLOYER.index('/usr/bin/python3 -m venv "$CANDIDATE_VENV"')
-        install = DEPLOYER.index('pip install -r "$STAGE/requirements-server.txt"')
+        install = DEPLOYER.index('pip install -r "$SOURCE_TREE/requirements-server.txt"')
         pip_check = DEPLOYER.index("-m pip check")
-        runtime = DEPLOYER.index('"$STAGE/deploy/verify_auth_install.py"')
+        runtime = DEPLOYER.index('"$SOURCE_TREE/deploy/verify_auth_install.py"')
         persist = DEPLOYER.index('> "$CANDIDATE_VENV/$FP_NAME"')
         cutover = DEPLOYER.index("CUTOVER=1")
         self.assertLess(changed, venv)
@@ -39,6 +39,26 @@ class DependencyDeployerContractTests(unittest.TestCase):
         self.assertLess(pip_check, runtime)
         self.assertLess(runtime, persist)
         self.assertLess(persist, cutover)
+
+    def test_privileged_deployment_consumes_only_root_owned_candidate_source(self):
+        self.assertIn("CANDIDATE_ROOT=/var/lib/twds-release-gate/candidates", DEPLOYER)
+        self.assertIn('[[ "$RESOLVED_SOURCE_TREE" == "$CANDIDATE_ROOT"/candidate.*/source ]]', DEPLOYER)
+        self.assertIn('[[ "$(stat -c %U:%G "$RESOLVED_SOURCE_TREE")" == root:root ]]', DEPLOYER)
+
+        candidate_inputs = (
+            'fingerprint "$SOURCE_TREE"',
+            '"$SOURCE_TREE/requirements-server.txt"',
+            '"$SOURCE_TREE/deploy/verify_templates.py"',
+            '"$SOURCE_TREE/deploy/verify_auth_install.py"',
+            '"$SOURCE_TREE/" "$APP_DIR/"',
+        )
+        for candidate_input in candidate_inputs:
+            with self.subTest(candidate_input=candidate_input):
+                self.assertIn(candidate_input, DEPLOYER)
+
+        # $STAGE is runner-writable and must never become an input to the
+        # root-owned deployer, including for requirements or runtime checks.
+        self.assertNotIn("$STAGE", DEPLOYER)
 
     def test_unchanged_closure_reuses_live_venv(self):
         self.assertIn("dependency closure unchanged; validated live venv will be reused", DEPLOYER)
