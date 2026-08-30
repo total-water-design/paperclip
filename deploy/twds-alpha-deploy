@@ -6,7 +6,8 @@ umask 027
 # only this command; all privileged dependency work remains inside this audited
 # rollback-protected path.
 
-STAGE=/opt/twds-deploy/staging
+CANDIDATE_ROOT=/var/lib/twds-release-gate/candidates
+SOURCE_TREE="${1:-}"
 APP_ROOT=/opt/totalrodesign
 APP_DIR=$APP_ROOT/app
 VENV_LINK=$APP_ROOT/venv
@@ -29,6 +30,19 @@ fail() { echo "ERROR: $*" >&2; exit 1; }
 if [[ $EUID -ne 0 ]]; then
   fail "twds-alpha-deploy must run as root through the restricted sudo rule"
 fi
+
+# The release gate materializes a root-owned archive before invoking this
+# program.  The runner-owned staging directory is intentionally never a
+# deployer source: it may supply inert bundle data to the gate, but it must
+# not be validated, executed, or copied by this privileged process.
+[[ -n "$SOURCE_TREE" && -d "$SOURCE_TREE" && ! -L "$SOURCE_TREE" ]] ||
+  fail "root-owned candidate source argument is required"
+RESOLVED_SOURCE_TREE="$(readlink -f -- "$SOURCE_TREE")"
+[[ "$RESOLVED_SOURCE_TREE" == "$CANDIDATE_ROOT"/candidate.*/source ]] ||
+  fail "candidate source is outside the trusted root-owned area"
+[[ "$(stat -c %U:%G "$RESOLVED_SOURCE_TREE")" == root:root ]] ||
+  fail "candidate source must be root:root"
+SOURCE_TREE="$RESOLVED_SOURCE_TREE"
 
 trusted_root_file() {
   local path="$1" mode owner group
@@ -92,22 +106,22 @@ trusted_root_file "$FP_HELPER"
 echo "===== TWDS ALPHA DEPLOYMENT ====="
 echo "UTC deployment: $STAMP"
 
-echo "===== VALIDATING STAGING TREE ====="
+echo "===== VALIDATING ROOT-OWNED CANDIDATE TREE ====="
 for f in app.py auth.py wsgi.py requirements.txt requirements-server.txt deploy/verify_templates.py deploy/verify_auth_install.py; do
-  [[ -f "$STAGE/$f" ]] || fail "staging file missing: $f"
+  [[ -f "$SOURCE_TREE/$f" ]] || fail "candidate file missing: $f"
 done
-[[ -f "$STAGE/.deployment_commit" ]] || fail "staging deployment marker missing"
-RELEASE_SHA="$(tr -d '\r\n ' < "$STAGE/.deployment_commit")"
-[[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || fail "invalid staging deployment SHA"
-if find "$STAGE" \
+[[ -f "$SOURCE_TREE/.deployment_commit" ]] || fail "candidate deployment marker missing"
+RELEASE_SHA="$(tr -d '\r\n ' < "$SOURCE_TREE/.deployment_commit")"
+[[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || fail "invalid candidate deployment SHA"
+if find "$SOURCE_TREE" \
   \( -name '.env' -o -name '*.db' -o -name '*.sqlite' -o -name '*.sqlite3' -o -name '*.pem' -o -name '*.key' \) \
   -print | grep -q .; then
-  fail "forbidden runtime/secret file detected in staging"
+  fail "forbidden runtime/secret file detected in candidate"
 fi
-echo "PASS - staging tree validated"
+echo "PASS - root-owned candidate tree validated"
 
 echo "===== DEPENDENCY CLOSURE SAFETY GATE ====="
-CANDIDATE_FP="$(fingerprint "$STAGE")"
+CANDIDATE_FP="$(fingerprint "$SOURCE_TREE")"
 [[ "$CANDIDATE_FP" =~ ^[0-9a-f]{64}$ ]] || fail "candidate dependency fingerprint invalid"
 [[ -e "$VENV_LINK" || -L "$VENV_LINK" ]] || fail "live venv is missing"
 [[ -f "$VENV_LINK/$FP_NAME" ]] || {
@@ -128,11 +142,11 @@ else
   rm -rf "$CANDIDATE_VENV"
   /usr/bin/python3 -m venv "$CANDIDATE_VENV"
   "$CANDIDATE_VENV/bin/python" -m pip install --upgrade pip setuptools wheel
-  "$CANDIDATE_VENV/bin/python" -m pip install -r "$STAGE/requirements-server.txt"
+  "$CANDIDATE_VENV/bin/python" -m pip install -r "$SOURCE_TREE/requirements-server.txt"
   "$CANDIDATE_VENV/bin/python" -m pip check
-  "$CANDIDATE_VENV/bin/python" "$STAGE/deploy/verify_templates.py"
-  "$CANDIDATE_VENV/bin/python" "$STAGE/deploy/verify_auth_install.py"
-  "$CANDIDATE_VENV/bin/python" -m compileall -q "$STAGE"
+  "$CANDIDATE_VENV/bin/python" "$SOURCE_TREE/deploy/verify_templates.py"
+  "$CANDIDATE_VENV/bin/python" "$SOURCE_TREE/deploy/verify_auth_install.py"
+  "$CANDIDATE_VENV/bin/python" -m compileall -q "$SOURCE_TREE"
   printf '%s\n' "$CANDIDATE_FP" > "$CANDIDATE_VENV/$FP_NAME"
   chown -R root:"$SERVICE_USER" "$CANDIDATE_VENV"
   chmod -R g+rX,o-rwx "$CANDIDATE_VENV"
@@ -158,7 +172,7 @@ CUTOVER=1
 rsync -a --delete \
   --exclude='instance/' --exclude='__pycache__/' --exclude='*.pyc' \
   --exclude='.pytest_cache/' --exclude='dist/' --exclude='build/' \
-  "$STAGE/" "$APP_DIR/"
+  "$SOURCE_TREE/" "$APP_DIR/"
 mkdir -p "$APP_DIR/instance"
 chown -R root:"$SERVICE_USER" "$APP_DIR"
 chmod -R g+rX,o-rwx "$APP_DIR"
