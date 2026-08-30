@@ -1,7 +1,8 @@
 import math
 import os
 from membrane_db import get_membrane
-from pump_db import select_pump as select_vcmp_pump, curve_points as vcmp_curve_points
+from pump_db import (select_pump as select_vcmp_pump, select_pump as select_shared_pump,
+                     curve_points as vcmp_curve_points, curve_points as shared_pump_curve_points)
 from osmotic_model import osmotic_state, nacl_equivalent_ionic_strength
 from water_chemistry import (osmotic_state_from_composition, composition_from_request, total_tds_mg_l,
     normalize_composition, scale_composition, polarization_scale_composition, nf_polarization_scale_composition, mix_compositions, permeate_composition, nf_permeate_composition, nf_dynamic_rejections, concentrate_composition, SPECIES, solution_specific_gravity)
@@ -2165,19 +2166,21 @@ def _pressure_exchanger_base(data):
     hpp_vcmp = None; circ_vcmp = None
     pump_basis = str(data.get("pump_curve_basis","auto")).lower()
     pump_density = 1000.0 * solution_specific_gravity(eff_feed_tds, _float(data,"temperature_c",25.0))
-    if pump_basis in {"vcmp","vcmp_auto","database"} and hpp_flow > 1e-12 and hpp_dp > 1e-12:
+    if _pump_technologies(data) and hpp_flow > 1e-12 and hpp_dp > 1e-12:
         hsel=select_vcmp_pump(hpp_flow,hpp_dp,density_kg_m3=pump_density,motor_eff=meff,vfd_eff=veff,
             min_vfd_hz=float(data.get("vcmp_min_vfd_hz",40.0) or 40.0),max_vfd_hz=float(data.get("vcmp_max_vfd_hz",60.0) or 60.0),
             flow_margin=float(data.get("vcmp_flow_margin",0.05) or 0.0),head_margin=float(data.get("vcmp_head_margin",0.05) or 0.0),
             reduced_impeller_penalty_pp=float(data.get("vcmp_reduced_impeller_eta_penalty_pp",2.0) or 0.0),
-            low_speed_derate_pp_per_10pct=float(data.get("vcmp_low_speed_eta_derate_pp_per_10pct",0.0) or 0.0),reference_rpm_60=data.get("vcmp_reference_rpm_60") or None,top_n=5)
+            low_speed_derate_pp_per_10pct=float(data.get("vcmp_low_speed_eta_derate_pp_per_10pct",0.0) or 0.0),reference_rpm_60=data.get("vcmp_reference_rpm_60") or None,top_n=5,
+            technologies=_pump_technologies(data))
         if hsel.get("ok"): hpp_vcmp=hsel["selected"]
-    if pump_basis in {"vcmp","vcmp_auto","database"} and circ_flow > 1e-12 and circ_dp > 1e-12:
+    if _pump_technologies(data) and circ_flow > 1e-12 and circ_dp > 1e-12:
         csel=select_vcmp_pump(circ_flow,circ_dp,density_kg_m3=pump_density,motor_eff=cmeff,vfd_eff=cveff,
             min_vfd_hz=float(data.get("vcmp_min_vfd_hz",40.0) or 40.0),max_vfd_hz=float(data.get("vcmp_max_vfd_hz",60.0) or 60.0),
             flow_margin=float(data.get("vcmp_flow_margin",0.05) or 0.0),head_margin=float(data.get("vcmp_head_margin",0.05) or 0.0),
             reduced_impeller_penalty_pp=float(data.get("vcmp_reduced_impeller_eta_penalty_pp",2.0) or 0.0),
-            low_speed_derate_pp_per_10pct=float(data.get("vcmp_low_speed_eta_derate_pp_per_10pct",0.0) or 0.0),reference_rpm_60=data.get("vcmp_reference_rpm_60") or None,top_n=5)
+            low_speed_derate_pp_per_10pct=float(data.get("vcmp_low_speed_eta_derate_pp_per_10pct",0.0) or 0.0),reference_rpm_60=data.get("vcmp_reference_rpm_60") or None,top_n=5,
+            technologies=_pump_technologies(data))
         if csel.get("ok"): circ_vcmp=csel["selected"]
     hpp_kw = float(hpp_vcmp["wire_kw"]) if hpp_vcmp is not None else hpp_hyd_kw/peff/meff/veff
     circ_kw = float(circ_vcmp["wire_kw"]) if circ_vcmp is not None else (circ_hyd_kw/ceff/cmeff/cveff if circ_flow > 0 else 0.0)
@@ -2272,8 +2275,15 @@ def _pump_curve_screening(data, duty_flow_m3h, duty_dp_bar, static_dp_bar, eta_b
     """
     requested_basis = str(data.get('pump_curve_basis','auto')).lower()
     fu, pu = data.get('flow_unit','m3/h'), data.get('pressure_unit','bar')
-    if requested_basis in {'vcmp','vcmp_auto','database'}:
-        sel = select_vcmp_pump(
+    technology_routes = {
+        'shared_auto': ('vcmp', 'hhecp', 'pd'),
+        'auto_shared': ('vcmp', 'hhecp', 'pd'),
+        'vcmp': ('vcmp',), 'vcmp_auto': ('vcmp',), 'database': ('vcmp',),
+        'hhecp': ('hhecp',), 'pd': ('pd',),
+    }
+    technologies = technology_routes.get(requested_basis)
+    if technologies and duty_flow_m3h > 1e-12 and duty_dp_bar > 1e-12:
+        sel = select_shared_pump(
             duty_flow_m3h, duty_dp_bar, density_kg_m3=density_kg_m3,
             motor_eff=motor_eff, vfd_eff=vfd_eff,
             min_vfd_hz=float(data.get('vcmp_min_vfd_hz',40.0) or 40.0),
@@ -2283,13 +2293,15 @@ def _pump_curve_screening(data, duty_flow_m3h, duty_dp_bar, static_dp_bar, eta_b
             reduced_impeller_penalty_pp=float(data.get('vcmp_reduced_impeller_eta_penalty_pp',2.0) or 0.0),
             low_speed_derate_pp_per_10pct=float(data.get('vcmp_low_speed_eta_derate_pp_per_10pct',0.0) or 0.0),
             reference_rpm_60=data.get('vcmp_reference_rpm_60') or None,
-            top_n=5,
+            top_n=5, max_duty_units=int(float(data.get('pump_max_duty_units',10) or 10)),
+            available_inlet_bar=float(data.get('suction_pressure',0.0) or 0.0),
+            technologies=technologies,
         )
         if sel.get('ok'):
             op = sel['selected']
             static_dp = max(0.0, min(float(static_dp_bar), duty_dp_bar*0.98))
             ksys = max(0.0,(duty_dp_bar-static_dp)/max(duty_flow_m3h*duty_flow_m3h,1e-30))
-            raw_points = vcmp_curve_points(
+            raw_points = shared_pump_curve_points(
                 op['source_id'], op['speed_ratio'], density_kg_m3=density_kg_m3,
                 motor_eff=motor_eff, vfd_eff=vfd_eff,
                 reduced_impeller_penalty_pp=float(data.get('vcmp_reduced_impeller_eta_penalty_pp',2.0) or 0.0),
@@ -2312,38 +2324,41 @@ def _pump_curve_screening(data, duty_flow_m3h, duty_dp_bar, static_dp_bar, eta_b
             elif br: zone='right_of_bep'
             else: zone='database_curve'
             return {
-                'pump_curve_basis':'vcmp_auto', 'pump_curve_source':'vcmp_database',
+                'pump_curve_basis':requested_basis, 'pump_curve_source':'shared_pump_database',
+                'pump_selection_mode':requested_basis, 'pump_selected_technology':op['technology'],
+                'pump_selected_model':op.get('model'), 'pump_duty_units':op.get('duty_units',1),
+                'pump_installed_units':op.get('installed_units',op.get('duty_units',1)),
                 'pump_curve_is_typical':False, 'pump_curve_points':points,
                 'pump_curve_points_are_display_units':True,
                 'pump_database_records':sel.get('database_records',0),
                 'pump_database_selection_basis':sel.get('selection_basis'),
                 'pump_database_fallback':False,
-                'pump_selected_family':op['product_family'],
-                'pump_selected_stage_config':op['stage_config'],
-                'pump_selected_source_id':op['source_id'],
-                'pump_selected_reduced_impellers':op['reduced_impellers'],
-                'pump_operating_frequency_hz':op['frequency_hz'],
-                'pump_operating_speed_ratio':op['speed_ratio'],
+                'pump_selected_family':op.get('product_family'),
+                'pump_selected_stage_config':op.get('stage_config'),
+                'pump_selected_source_id':op.get('source_id'),
+                'pump_selected_reduced_impellers':op.get('reduced_impellers'),
+                'pump_operating_frequency_hz':op.get('frequency_hz'),
+                'pump_operating_speed_ratio':op.get('speed_ratio'),
                 'pump_operating_speed_rpm':op.get('speed_rpm'),
                 'pump_reference_rpm_60':op.get('reference_rpm_60'),
                 'pump_shaft_torque_nm':op.get('shaft_torque_nm'),
-                'pump_required_head_m':op['required_head_m'],
-                'pump_generated_head_m':op['actual_head_m'],
-                'pump_generated_dp':op['actual_dp_bar'],
+                'pump_required_head_m':op.get('required_head_m'),
+                'pump_generated_head_m':op.get('actual_head_m'),
+                'pump_generated_dp':op.get('actual_dp_bar'),
                 'pump_shutoff_dp':op.get('shutoff_dp_bar'),
                 'pump_shutoff_head_m':op.get('shutoff_head_m'),
                 'pump_rpm_basis':op.get('rpm_basis'),
-                'pump_head_margin_pct':op['head_margin_pct'],
-                'pump_min_speed_limited':op['min_speed_limited'],
+                'pump_head_margin_pct':op.get('head_margin_pct'),
+                'pump_min_speed_limited':op.get('min_speed_limited'),
                 'pump_duty_flow':duty_flow_m3h,'pump_duty_dp':duty_dp_bar,
                 'pump_operating_flow':duty_flow_m3h,'pump_operating_dp':duty_dp_bar,
                 'pump_operating_bep_flow_ratio':br if br else None,
-                'pump_operating_efficiency':op['pump_efficiency'],
+                'pump_operating_efficiency':op.get('pump_efficiency'),
                 'pump_operating_zone':zone,'pump_operating_status':'ok',
-                'pump_operating_wire_kw':op['wire_kw'],
-                'pump_operating_shaft_kw':op['shaft_kw'],
-                'pump_operating_hydraulic_kw':op['hydraulic_kw'],
-                'pump_operating_overall_wire_efficiency':op['overall_wire_efficiency'],
+                'pump_operating_wire_kw':op.get('wire_kw'),
+                'pump_operating_shaft_kw':op.get('shaft_kw'),
+                'pump_operating_hydraulic_kw':op.get('hydraulic_kw'),
+                'pump_operating_overall_wire_efficiency':op.get('overall_wire_efficiency'),
                 'pump_database_top_options':sel.get('options',[]),
                 'pump_vcmp_min_vfd_hz':sel.get('min_vfd_hz'),
                 'pump_vcmp_max_vfd_hz':sel.get('max_vfd_hz'),
@@ -2352,7 +2367,10 @@ def _pump_curve_screening(data, duty_flow_m3h, duty_dp_bar, static_dp_bar, eta_b
             }
         # No catalog curve covers the duty. Continue with the legacy preliminary
         # curve so the calculation still runs, but make the fallback explicit.
-        vcmp_reason = sel.get('reason') or 'No VCMP database curve covers this duty.'
+        vcmp_reason = sel.get('reason') or 'No shared pump option covers this duty.'
+        requested_basis = 'auto'
+    elif technologies:
+        vcmp_reason = 'Pump duty is too small for catalog selection; entered manual efficiency is active.'
         requested_basis = 'auto'
     else:
         vcmp_reason = None
@@ -2398,7 +2416,8 @@ def _pump_curve_screening(data, duty_flow_m3h, duty_dp_bar, static_dp_bar, eta_b
          'pump_system_static_dp':static_dp,'pump_duty_flow':duty_flow_m3h,'pump_duty_dp':duty_dp_bar,
          'pump_operating_status':status}
     if vcmp_reason:
-        out.update({'pump_database_fallback':True,'pump_database_fallback_reason':vcmp_reason})
+        out.update({'pump_database_fallback':True,'pump_database_fallback_reason':vcmp_reason,
+                    'pump_selection_status':'no_feasible_option','pump_selection_mode':str(data.get('pump_curve_basis'))})
     if qop is not None:
         x=qop/q_bep; eta=max(0.45*eta_bep,eta_bep*(1.0-1.55*(x-1.0)**2))
         if 0.80 <= x <= 1.10: zone='preferred'
@@ -2408,6 +2427,15 @@ def _pump_curve_screening(data, duty_flow_m3h, duty_dp_bar, static_dp_bar, eta_b
                     'pump_operating_efficiency':eta,'pump_operating_zone':zone,
                     'pump_operating_wire_kw':_pump_wire_power_kw(qop,dpop,eta,motor_eff,vfd_eff)})
     return out
+
+
+def _pump_technologies(data):
+    """Translate Total RO's persisted selector value to an explicit shared-engine route."""
+    return {
+        'shared_auto': ('vcmp', 'hhecp', 'pd'), 'auto_shared': ('vcmp', 'hhecp', 'pd'),
+        'vcmp': ('vcmp',), 'vcmp_auto': ('vcmp',), 'database': ('vcmp',),
+        'hhecp': ('hhecp',), 'pd': ('pd',),
+    }.get(str(data.get('pump_curve_basis', 'auto') or 'auto').lower())
 
 # ---- Shared v18.1 calculation conditioning -----------------------------------------
 
@@ -3396,7 +3424,7 @@ def _multistage_base(data):
     feed_density_kg_m3 = 1000.0 * solution_specific_gravity(float(stages[0].get("feed_tds_ppm", feed_tds) or feed_tds), _float(data,"temperature_c",25.0))
     static_dp = max(0.0, float(stages[0].get("feed_osmotic_bar",0.0)) + pp - suction)
     pump_curve = _pump_curve_screening(data, q0, hpp_dp, static_dp, peff, meff, veff, feed_density_kg_m3)
-    if pump_curve.get("pump_curve_source") == "vcmp_database" and pump_curve.get("pump_operating_status") == "ok":
+    if pump_curve.get("pump_curve_source") in {"vcmp_database", "shared_pump_database"} and pump_curve.get("pump_operating_status") == "ok":
         peff = float(pump_curve["pump_operating_efficiency"])
         hpp_kw = float(pump_curve["pump_operating_wire_kw"])
     else:
@@ -3457,7 +3485,7 @@ def _multistage_base(data):
             pump_hyd_kw = required_hyd_kw
         booster_sel = None
         pump_dp_required = (pump_hyd_kw * 36.0 / q_stage) if q_stage > 1e-12 else 0.0
-        if pump_hyd_kw > 1e-12 and str(data.get("pump_curve_basis","auto")).lower() in {"vcmp","vcmp_auto","database"}:
+        if pump_hyd_kw > 1e-12 and _pump_technologies(data):
             booster_density = 1000.0 * solution_specific_gravity(pump_side_tds, _float(data,"temperature_c",25.0))
             vsel = select_vcmp_pump(
                 q_stage, pump_dp_required, density_kg_m3=booster_density,
@@ -3468,7 +3496,8 @@ def _multistage_base(data):
                 head_margin=float(data.get("vcmp_head_margin",0.05) or 0.0),
                 reduced_impeller_penalty_pp=float(data.get("vcmp_reduced_impeller_eta_penalty_pp",2.0) or 0.0),
                 low_speed_derate_pp_per_10pct=float(data.get("vcmp_low_speed_eta_derate_pp_per_10pct",0.0) or 0.0),
-                reference_rpm_60=data.get("vcmp_reference_rpm_60") or None, top_n=5)
+                reference_rpm_60=data.get("vcmp_reference_rpm_60") or None, top_n=5,
+                technologies=_pump_technologies(data))
             if vsel.get("ok"):
                 booster_sel = vsel["selected"]
         if booster_sel is not None:
@@ -3717,19 +3746,21 @@ def _multistage_px_base(data):
     pump_basis = str(d.get("pump_curve_basis","auto")).lower()
     eff_tds_for_pump = total_tds_mg_l(effective_comp) if effective_comp else raw_tds
     pump_density = 1000.0 * solution_specific_gravity(eff_tds_for_pump, _float(d,"temperature_c",25.0))
-    if pump_basis in {"vcmp","vcmp_auto","database"} and q_hpp > 1e-12 and p1 > suction:
+    if _pump_technologies(d) and q_hpp > 1e-12 and p1 > suction:
         hsel=select_vcmp_pump(q_hpp,max(0.0,p1-suction),density_kg_m3=pump_density,motor_eff=meff,vfd_eff=veff,
             min_vfd_hz=float(d.get("vcmp_min_vfd_hz",40.0) or 40.0),max_vfd_hz=float(d.get("vcmp_max_vfd_hz",60.0) or 60.0),
             flow_margin=float(d.get("vcmp_flow_margin",0.05) or 0.0),head_margin=float(d.get("vcmp_head_margin",0.05) or 0.0),
             reduced_impeller_penalty_pp=float(d.get("vcmp_reduced_impeller_eta_penalty_pp",2.0) or 0.0),
-            low_speed_derate_pp_per_10pct=float(d.get("vcmp_low_speed_eta_derate_pp_per_10pct",0.0) or 0.0),reference_rpm_60=d.get("vcmp_reference_rpm_60") or None,top_n=5)
+            low_speed_derate_pp_per_10pct=float(d.get("vcmp_low_speed_eta_derate_pp_per_10pct",0.0) or 0.0),reference_rpm_60=d.get("vcmp_reference_rpm_60") or None,top_n=5,
+            technologies=_pump_technologies(d))
         if hsel.get("ok"): hpp_vcmp=hsel["selected"]
-    if pump_basis in {"vcmp","vcmp_auto","database"} and q_lp > 1e-12 and booster_dp > 1e-12:
+    if _pump_technologies(d) and q_lp > 1e-12 and booster_dp > 1e-12:
         bsel=select_vcmp_pump(q_lp,booster_dp,density_kg_m3=pump_density,motor_eff=cmeff,vfd_eff=cveff,
             min_vfd_hz=float(d.get("vcmp_min_vfd_hz",40.0) or 40.0),max_vfd_hz=float(d.get("vcmp_max_vfd_hz",60.0) or 60.0),
             flow_margin=float(d.get("vcmp_flow_margin",0.05) or 0.0),head_margin=float(d.get("vcmp_head_margin",0.05) or 0.0),
             reduced_impeller_penalty_pp=float(d.get("vcmp_reduced_impeller_eta_penalty_pp",2.0) or 0.0),
-            low_speed_derate_pp_per_10pct=float(d.get("vcmp_low_speed_eta_derate_pp_per_10pct",0.0) or 0.0),reference_rpm_60=d.get("vcmp_reference_rpm_60") or None,top_n=5)
+            low_speed_derate_pp_per_10pct=float(d.get("vcmp_low_speed_eta_derate_pp_per_10pct",0.0) or 0.0),reference_rpm_60=d.get("vcmp_reference_rpm_60") or None,top_n=5,
+            technologies=_pump_technologies(d))
         if bsel.get("ok"): pxb_vcmp=bsel["selected"]
     hpp_kw = float(hpp_vcmp["wire_kw"]) if hpp_vcmp is not None else _pump_wire_power_kw(q_hpp, max(0.0, p1-suction), peff, meff, veff)
     px_booster_kw = float(pxb_vcmp["wire_kw"]) if pxb_vcmp is not None else _pump_wire_power_kw(q_lp, booster_dp, ceff, cmeff, cveff)
