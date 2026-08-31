@@ -108,6 +108,34 @@ def _restore_fetch(page):
     page.evaluate("() => {totalroFetch=window.__nativeTotalroFetch;}")
 
 
+def _install_rapid_cancel_race(page):
+    page.evaluate(
+        """() => {
+          window.__rapidCancelEvents=[];
+          window.__staleShowCalls=0;
+          window.__nativeShow=show;
+          show=(...args)=>{window.__staleShowCalls+=1;return window.__nativeShow(...args);};
+          totalroFetch=(url,options={})=>{
+            if(String(url).includes('/api/calculate/multistage')){
+              return new Promise(resolve=>{
+                options.signal?.addEventListener('abort',()=>window.__rapidCancelEvents.push('abort'),{once:true});
+                window.__resolveStaleCalculation=()=>{
+                  window.__rapidCancelEvents.push('late-response');
+                  resolve(new Response(JSON.stringify({stale_marker:'must-not-render'}),{status:200,headers:{'Content-Type':'application/json'}}));
+                };
+              });
+            }
+            if(String(url).includes('/api/compute/cancel')){
+              window.__rapidCancelEvents.push(`cancel:${Boolean(activeCalculationController?.signal?.aborted)}`);
+              window.__resolveStaleCalculation();
+              return Promise.resolve(new Response('{}',{status:200,headers:{'Content-Type':'application/json'}}));
+            }
+            return window.__nativeTotalroFetch(url,options);
+          };
+        }"""
+    )
+
+
 def test_total_ro_calculate_error_cancel_restart_lifecycle():
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
@@ -212,17 +240,24 @@ def test_total_ro_calculate_error_cancel_restart_lifecycle():
         assert mp.count() == 1 and mp.is_hidden()
         assert "primary" not in (mp.get_attribute("class") or "").split()
 
-        # Plant cancellation uses the same canonical single-flight owner and permits restart.
-        _install_pending(page, "/api/calculate/multistage", "({ok:true})")
+        # Reproduce the rapid-cancel race: the transport deliberately supplies a
+        # late result only after the cancellation POST begins. The active client
+        # request must be aborted first, and the stale response must not render.
+        _install_rapid_cancel_race(page)
         _submit_twice(page)
         page.wait_for_function(
-            "() => canonicalCalculationInFlight && document.body.classList.contains('calculating') && window.__pendingRequestCount===1"
+            "() => canonicalCalculationInFlight && document.body.classList.contains('calculating') && !!window.__resolveStaleCalculation"
         )
         page.evaluate("() => changeMode('water')")
         assert page.evaluate("() => mode") == "multistage"
         page.locator("#cancelCalculationBtn").click()
         _wait_idle(page)
+        race = page.evaluate("() => ({events:window.__rapidCancelEvents,staleShowCalls:window.__staleShowCalls,marker:lastResult?.stale_marker||null})")
+        assert race["events"] == ["abort", "cancel:true", "late-response"], race
+        assert race["staleShowCalls"] == 0, race
+        assert race["marker"] is None, race
         assert page.evaluate("() => lastResult") is None
+        assert "Calculation stopped by user" in page.locator("#warnings").inner_text()
         _assert_idle_contract(page, "Calculate Plant Design")
         _restore_fetch(page)
 

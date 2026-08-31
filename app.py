@@ -80,9 +80,15 @@ def _calculation_guard(view):
     @wraps(view)
     def wrapped(*args, **kwargs):
         global _active_calculation_owner
-        if not app.config.get("AUTH_ENABLED", False):
-            return view(*args, **kwargs)
         owner = _request_owner_key()
+        if not app.config.get("AUTH_ENABLED", False):
+            with _calculation_owner_lock:
+                _active_calculation_owner = owner
+            try:
+                return view(*args, **kwargs)
+            finally:
+                with _calculation_owner_lock:
+                    _active_calculation_owner = None
         if not _calculation_gate.acquire(blocking=False):
             with _calculation_owner_lock:
                 same_owner = _active_calculation_owner == owner
@@ -584,10 +590,10 @@ def compute_status_api():
 
 @app.post('/api/compute/cancel')
 def compute_cancel_api():
+    owner = _request_owner_key()
+    with _calculation_owner_lock:
+        active_owner = _active_calculation_owner
     if app.config.get("AUTH_ENABLED", False):
-        owner = _request_owner_key()
-        with _calculation_owner_lock:
-            active_owner = _active_calculation_owner
         if active_owner and active_owner != owner and not getattr(current_user, "is_admin", False):
             return jsonify({"error": "You cannot cancel another user's calculation."}), 403
     payload = request.get_json(silent=True) or {}
@@ -596,7 +602,9 @@ def compute_cancel_api():
         run_id = None if run_id in (None, '') else int(run_id)
     except (TypeError, ValueError):
         return jsonify({'error': 'run_id must be an integer when supplied.'}), 400
-    return jsonify(request_compute_cancel(run_id, hard=True))
+    return jsonify(request_compute_cancel(
+        run_id, hard=True, owner=owner, allow_pending=active_owner == owner
+    ))
 
 @app.post('/api/compute/gpu-test')
 @_calculation_guard
@@ -604,7 +612,7 @@ def compute_gpu_test_api():
     if CPU_ONLY_MODE:
         return jsonify({'ok': False, 'disabled': True, 'compute_mode': COMPUTE_MODE, 'reason': 'Optional OpenCL validation is disabled in the hosted CPU deployment.'}), 409
     payload = request.get_json(silent=True) or {}
-    begin_compute_run('gpu-self-test', 1, 1, 'opencl-gpu')
+    begin_compute_run('gpu-self-test', 1, 1, 'opencl-gpu', owner=_request_owner_key())
     try:
         result = gpu_self_test(payload.get('points', 32768))
         update_compute_run(completed_delta=1, failed_delta=0 if result.get('ok') else 1, backend=result.get('backend', 'opencl-gpu'))
@@ -907,7 +915,7 @@ def calculate(mode):
         _require_feature('erd')
     if mode == 'multistage' and str(payload.get('design_mode','manual') or 'manual').lower() == 'auto':
         _require_feature('auto_design')
-    if mode == 'multistage' and str(payload.get('pump_curve_basis','auto') or 'auto').lower() in {'vcmp','vcmp_auto','database'}:
+    if mode == 'multistage' and str(payload.get('pump_curve_basis','auto') or 'auto').lower() in {'shared_auto','auto_shared','vcmp','vcmp_auto','database','hhecp','pd'}:
         _require_feature('vcmp_pump_selection')
     truthy = lambda v: v is True or str(v).lower() in {'1','true','yes','on','coupled'}
     basis = str(payload.get('solve_basis','pressure') or 'pressure').lower()
@@ -943,7 +951,8 @@ def calculate(mode):
             planned_backend='cpu-multiprocess' if planned_workers>1 else 'cpu-main'
         else:
             planned_jobs=1; planned_workers=1; planned_backend='cpu-main'
-        begin_compute_run(f'{mode}-single', planned_jobs, planned_workers, planned_backend)
+        begin_compute_run(f'{mode}-single', planned_jobs, planned_workers, planned_backend,
+                          owner=_request_owner_key())
         result = CALCS[mode](payload)
         # A one-job serial root solve has no inner worker batch to advance the
         # monitor, so complete that single engineering job here. Parallel trial
