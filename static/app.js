@@ -3572,8 +3572,8 @@ async function cancelActiveCalculation(){
   if(!document.body.classList.contains('calculating')||calculationCancelRequested)return;
   calculationCancelRequested=true;const b=$('#cancelCalculationBtn'),title=$('#calculationTitle'),detail=$('#calculationDetail'),eta=$('#calculationEta');
   if(b){b.disabled=true;b.textContent='Stopping…'}if(title)title.textContent='Stopping calculation…';if(detail)detail.textContent='Interrupting active solver workers and closing the current search safely.';if(eta)eta.textContent='Cancellation requested · unfinished results will not be applied.';
-  try{await totalroFetch('/api/compute/cancel',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({run_id:computeLiveStatus?.run_id??null})});}catch(_){}
   try{activeCalculationController?.abort();}catch(_){}
+  try{await totalroFetch('/api/compute/cancel',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({run_id:computeLiveStatus?.run_id??null})});}catch(_){}
 }
 function emitCalculationState(state,message=''){
   document.dispatchEvent(new CustomEvent('twds:ro-calculation-state',{detail:{state,mode,message}}));
@@ -3627,6 +3627,7 @@ async function calc(){
   let captured=capture();const previousState=modeStates[mode]||{};const workflowMeta={};Object.entries(previousState).forEach(([k,v])=>{if(k.startsWith('_')||['generated_from_base_plant','solution_enabled','generalized_biturbo','plant_solution'].includes(k))workflowMeta[k]=v;});if(mode==='multistage'){delete workflowMeta._last_calculated_signature;delete workflowMeta._erd_populated_signature;captured.design_mode='manual';}let data={...waterProfile,...captured,...workflowMeta,...activeTurboLockFields(mode)};if(mode==='multistage'&&!tierAllows('vcmp_pump_selection'))data.pump_curve_basis='auto';modeStates[mode]={...captured,...workflowMeta};data.flow_unit=$('#flowUnit').value;data.pressure_unit=$('#pressureUnit').value;if(data.max_design_flux_lmh!==undefined&&data.max_design_flux_lmh!=='')data.max_design_flux_lmh=convert(data.max_design_flux_lmh,'flux',$('#fluxUnit').value,'LMH');
   if(mode==='px'){data.px_lp_inlet_pressure=data.suction_pressure;data.mpe_hp_dp=.66;data.mpe_lp_dp=.74;data.mpe_mixing=.02;data.mpe_motor_power=.8;}
   const j=await requestJson(`/api/calculate/${mode}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)},'Calculation error');
+  if(calculationCancelRequested){const error=new Error('Calculation stopped by user.');error.kind='cancelled';error.cancelled=true;throw error;}
 
   if(mode==='multistage'){invalidateDerivedResultsFromBasePlant();caseResults.multistage=j;captured._last_calculated_signature=basePlantSignature(captured);modeStates.multistage={...captured};const c=activeCaseData();if(c){c.baseDesignSeed=makeBaseDesignSeed({...data,...captured},j);c.advancedDesignInput={};c.advancedDesignResult=null;}advancedDesignInput={};advancedDesignResult=null;}else{embeddedChemistryCache={};tailChemistryCache={};caseResults[mode]=j;}
   modeStates[mode]={...captured,...workflowMeta};caseResults[mode]=j;syncActiveCaseStore();syncSolveResult(j);show(j);renderCaseBar();updateWorkflowGates();
