@@ -1,6 +1,6 @@
 # TOT-210 full-suite application access readiness
 
-Base: `83a2733d0a7d6c8ed8b19786b0efa0589f32c1f7` (protected Alpha branch baseline; deployment state not inferred).
+Reconciled base: `4cdbc3e26ac0a955c7a8693071196a8bc7598260` (protected Alpha branch baseline; deployment state not inferred).
 
 | Suite surface | Catalog route | Readiness | Access after TOT-210 | Evidence basis |
 |---|---|---|---|---|
