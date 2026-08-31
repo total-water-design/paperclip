@@ -163,6 +163,7 @@ import { badRequest, conflict, forbidden, HttpError, notFound, unauthorized, unp
 import { privateJsonEtag } from "../middleware/private-json-etag.js";
 import { createRequestPromiseMemo } from "../lib/request-promise-memo.js";
 import { assertBoard, assertCompanyAccess, getAccessibleResource, getActorInfo } from "./authz.js";
+import { assertBoardReviewInteractionGate } from "../services/board-review-interaction-gate.js";
 import {
   assertNoAgentHostWorkspaceCommandMutation,
   collectIssueWorkspaceCommandPaths,
@@ -11240,6 +11241,11 @@ export function issueRoutes(
     const actor = getActorInfo(req);
     const agentSourceRunId = req.actor.type === "agent" ? requireAgentRunId(req, res) : null;
     if (req.actor.type === "agent" && !agentSourceRunId) return;
+    assertBoardReviewInteractionGate({
+      issue,
+      kind: req.body.kind,
+      resolverPolicy: req.body.resolverPolicy,
+    });
     if (
       req.body.kind === "request_confirmation"
       && req.body.addresseeAgentId

@@ -90,6 +90,7 @@ import { createPluginWorkerManager } from "./services/plugin-worker-manager.js";
 import { createStorageServiceFromConfig } from "./storage/index.js";
 import { printStartupBanner } from "./startup-banner.js";
 import { getBoardClaimWarningUrl, initializeBoardClaimChallenge } from "./board-claim.js";
+import { reconcileBoardReviewInteractionGate } from "./services/board-review-interaction-gate.js";
 import { maybePersistWorktreeRuntimePorts } from "./worktree-config.js";
 import { initTelemetry, getTelemetryClient } from "./telemetry.js";
 import { conflict } from "./errors.js";
@@ -1319,6 +1320,14 @@ export async function startServer(): Promise<StartedServer> {
           );
         }
 
+        const boardReviewReconciled = await reconcileBoardReviewInteractionGate(db as any);
+        if (
+          boardReviewReconciled.cancelledInteractionIds.length > 0
+          || boardReviewReconciled.removedBoardAssignmentIssueIds.length > 0
+        ) {
+          logger.warn({ ...boardReviewReconciled }, "startup Board-review interaction reconciliation changed state");
+        }
+
         const taskWatchdogsReconciled = await heartbeat.reconcileTaskWatchdogs();
         if (taskWatchdogsReconciled.triggered > 0) {
           logger.warn(
@@ -1554,6 +1563,15 @@ export async function startServer(): Promise<StartedServer> {
               const reconciled = await heartbeat.reconcileIssueGraphLiveness();
               if (reconciled.escalationsCreated > 0 || reconciled.dependencyWakesHealed > 0) {
                 logger.warn({ ...reconciled }, "periodic issue-graph liveness reconciliation changed issue graph state");
+              }
+            })
+            .then(async () => {
+              const reconciled = await reconcileBoardReviewInteractionGate(db as any);
+              if (
+                reconciled.cancelledInteractionIds.length > 0
+                || reconciled.removedBoardAssignmentIssueIds.length > 0
+              ) {
+                logger.warn({ ...reconciled }, "periodic Board-review interaction reconciliation changed state");
               }
             })
             .then(async () => {
