@@ -12,10 +12,11 @@ NotifyAccess=all
 User=paperclip
 Group=paperclip
 Environment=PAPERCLIP_ENV_FILE=/etc/paperclip/paperclip.env
+Environment=PAPERCLIP_SYSTEM_HOME=/home/paperclip
 EnvironmentFile=/etc/paperclip/paperclip.env
 ExecStartPre=/usr/lib/paperclip/paperclip-preflight
-ExecStart=/bin/sh -ec 'exec "$PAPERCLIP_EXECUTABLE" run --instance "$PAPERCLIP_INSTANCE_ID"'
-WorkingDirectory=/
+ExecStart=/bin/sh -ec 'exec /usr/bin/node /home/paperclip/.local/bin/paperclipai run --instance "$PAPERCLIP_INSTANCE_ID"'
+WorkingDirectory=/home/paperclip
 Restart=on-failure
 RestartSec=5s
 TimeoutStartSec=180s
@@ -25,7 +26,8 @@ UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ReadWritePaths=/var/lib/paperclip
+ProtectHome=read-only
+ReadWritePaths=/home/paperclip/.paperclip /home/paperclip/workspaces /home/paperclip/.codex /home/paperclip/.claude /home/paperclip/.cache /home/paperclip/.local/share
 StandardOutput=journal
 StandardError=journal
 
