@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { Router, type Request, type Response } from "express";
 import multer from "multer";
 import { shouldDefaultTwdsIssueProject, TWDS_PROJECT_ID } from "../services/twds-issue-defaults.js";
+import { bindTwdsValidationGrantSuccessor } from "../services/validation-execution-grants.js";
 import { z } from "zod";
 import { and, asc, desc, eq, inArray, isNull, notInArray } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
@@ -2182,6 +2183,12 @@ async function queueResolvedInteractionContinuationWakeup(input: {
       ...(forceFreshSession ? { forceFreshSession: true } : {}),
       ...(workspaceRefreshReason ? { workspaceRefreshReason } : {}),
     },
+  }).then(async (wakeRun) => {
+    const successorRunId = wakeRun && typeof wakeRun === "object" && "id" in wakeRun
+      ? readNonEmptyString((wakeRun as { id?: unknown }).id) : null;
+    if (successorRunId && input.interaction.sourceRunId) {
+      await bindTwdsValidationGrantSuccessor(input.db, { companyId: input.issue.companyId, interactionId: input.interaction.id, sourceRunId: input.interaction.sourceRunId, successorRunId });
+    }
   }).catch((err) => logger.warn({
     err,
     issueId: input.issue.id,
