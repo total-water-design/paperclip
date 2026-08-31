@@ -1,0 +1,126 @@
+{
+  "fixture": "local SQLite only; no live publication",
+  "url": "http://127.0.0.1:50847/",
+  "viewports": {
+    "desktop": {
+      "status": 200,
+      "cards": 3,
+      "card_copy": [
+        {
+          "release_label": "Current availability",
+          "title": "Available now",
+          "summary": "Total RO Design is available for preliminary reverse-osmosis design and reporting."
+        },
+        {
+          "release_label": "Work in progress",
+          "title": "In development",
+          "summary": "Additional water-treatment design applications are in development and will be introduced when ready."
+        },
+        {
+          "release_label": "No date announced",
+          "title": "Commercial access",
+          "summary": "Commercial access details will be shared when they are available."
+        }
+      ],
+      "screenshot": "home-desktop.png"
+    },
+    "mobile": {
+      "status": 200,
+      "cards": 3,
+      "card_copy": [
+        {
+          "release_label": "Current availability",
+          "title": "Available now",
+          "summary": "Total RO Design is available for preliminary reverse-osmosis design and reporting."
+        },
+        {
+          "release_label": "Work in progress",
+          "title": "In development",
+          "summary": "Additional water-treatment design applications are in development and will be introduced when ready."
+        },
+        {
+          "release_label": "No date announced",
+          "title": "Commercial access",
+          "summary": "Commercial access details will be shared when they are available."
+        }
+      ],
+      "screenshot": "home-mobile.png"
+    }
+  },
+  "console": [],
+  "page_errors": [],
+  "network": [
+    {
+      "status": 200,
+      "url": "http://127.0.0.1:50847/"
+    },
+    {
+      "status": 200,
+      "url": "http://127.0.0.1:50847/static/suite.css"
+    },
+    {
+      "status": 200,
+      "url": "http://127.0.0.1:50847/static/mobile.css"
+    },
+    {
+      "status": 200,
+      "url": "http://127.0.0.1:50847/static/whats_new.css"
+    },
+    {
+      "status": 200,
+      "url": "http://127.0.0.1:50847/static/branding/suite/total_water_design_suite_icon_128.png"
+    },
+    {
+      "status": 200,
+      "url": "http://127.0.0.1:50847/static/branding/suite/total_water_design_suite_icon_1024.png"
+    },
+    {
+      "status": 200,
+      "url": "http://127.0.0.1:50847/static/branding/jerry_ross_founder.png"
+    },
+    {
+      "status": 200,
+      "url": "http://127.0.0.1:50847/static/branding/suite/total_water_design_suite_icon_64.png"
+    },
+    {
+      "status": 200,
+      "url": "http://127.0.0.1:50847/static/mobile.js"
+    },
+    {
+      "status": 200,
+      "url": "http://127.0.0.1:50847/"
+    },
+    {
+      "status": 200,
+      "url": "http://127.0.0.1:50847/static/suite.css"
+    },
+    {
+      "status": 200,
+      "url": "http://127.0.0.1:50847/static/mobile.css"
+    },
+    {
+      "status": 200,
+      "url": "http://127.0.0.1:50847/static/whats_new.css"
+    },
+    {
+      "status": 200,
+      "url": "http://127.0.0.1:50847/static/branding/suite/total_water_design_suite_icon_128.png"
+    },
+    {
+      "status": 200,
+      "url": "http://127.0.0.1:50847/static/branding/suite/total_water_design_suite_icon_1024.png"
+    },
+    {
+      "status": 200,
+      "url": "http://127.0.0.1:50847/static/branding/jerry_ross_founder.png"
+    },
+    {
+      "status": 200,
+      "url": "http://127.0.0.1:50847/static/branding/suite/total_water_design_suite_icon_64.png"
+    },
+    {
+      "status": 200,
+      "url": "http://127.0.0.1:50847/static/mobile.js"
+    }
+  ]
+}

@@ -8,6 +8,28 @@ from auth import User, db, init_auth, login_manager
 from suite_communications import WhatsNewCard, init_suite_communications
 
 
+# Non-production fixture copy proposed for the three public What's New cards.
+# These strings deliberately make no release-date, deployment, or roadmap
+# commitment; the test database is the only place this fixture is published.
+PROPOSED_CARD_COPY = {
+    "recently_updated": (
+        "Available now",
+        "Total RO Design is available for preliminary reverse-osmosis design and reporting.",
+        "Current availability",
+    ),
+    "roadmap": (
+        "In development",
+        "Additional water-treatment design applications are in development and will be introduced when ready.",
+        "Work in progress",
+    ),
+    "commercial_launch": (
+        "Commercial access",
+        "Commercial access details will be shared when they are available.",
+        "No date announced",
+    ),
+}
+
+
 @pytest.fixture()
 def communications_app(tmp_path, monkeypatch):
     monkeypatch.setenv("TOTALRO_DATABASE_URL", f"sqlite:///{(tmp_path / 'communications.db').as_posix()}")
@@ -68,7 +90,7 @@ def test_empty_cards_are_safe_in_http_and_api_responses(communications_app):
     assert all(card["updated_at"] is None for card in payload["cards"].values())
 
 
-def test_admin_can_publish_all_three_reviewed_cards_without_deployment(communications_app):
+def test_non_production_fixture_renders_exact_customer_safe_copy(communications_app):
     app, admin_id = communications_app
     client = app.test_client()
     _login(client, admin_id)
@@ -87,14 +109,9 @@ def test_admin_can_publish_all_three_reviewed_cards_without_deployment(communica
     with app.app_context():
         assert db.session.query(WhatsNewCard).count() == 0
 
-    card_copy = {
-        "recently_updated": ("New in Alpha", "Reviewed improvements already available."),
-        "roadmap": ("In progress", "Approved areas currently being developed."),
-        "commercial_launch": ("Launch timing", "The current approved commercial timing."),
-    }
-    for slug, (title, summary) in card_copy.items():
+    for slug, (title, summary, release_label) in PROPOSED_CARD_COPY.items():
         response = client.post(f"/admin/communications/whats-new/{slug}", data={
-            "title": title, "summary": summary, "release_label": "Alpha 0.2",
+            "title": title, "summary": summary, "release_label": release_label,
             "reviewed": "1", "public": "1",
         })
         assert response.status_code == 302
@@ -104,18 +121,23 @@ def test_admin_can_publish_all_three_reviewed_cards_without_deployment(communica
     cards = api_response.get_json()["cards"]
     assert all(card["public_ready"] is True for card in cards.values())
     assert all(card["status"] == "approved" for card in cards.values())
-    assert all(card["release_label"] == "Alpha 0.2" for card in cards.values())
+    assert {slug: card["release_label"] for slug, card in cards.items()} == {
+        slug: copy[2] for slug, copy in PROPOSED_CARD_COPY.items()
+    }
     assert all(card["updated_at"] for card in cards.values())
 
     homepage = client.get("/")
     html = homepage.get_data(as_text=True)
     assert homepage.status_code == 200
-    for title, summary in card_copy.values():
+    for title, summary, _ in PROPOSED_CARD_COPY.values():
         assert title in html
         assert summary in html
-    assert html.count("Alpha 0.2") >= 3
+    for _, _, release_label in PROPOSED_CARD_COPY.values():
+        assert release_label in html
     assert html.count("Last updated:") == 3
     assert "83a2733" not in html
+    assert "New in Alpha" not in html
+    assert "The current approved commercial timing." not in html
 
 
 def test_unknown_card_slug_is_rejected(communications_app):
