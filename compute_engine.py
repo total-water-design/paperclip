@@ -123,6 +123,8 @@ _compute_state: dict[str, Any] = {
 }
 _cpu_sample = {"wall": None, "cpu": None}
 _cancel_event = threading.Event()
+_PENDING_CANCEL_TTL_SECONDS = 5.0
+_pending_cancel: dict[str, Any] | None = None
 _duration_history: dict[str, list[float]] = {}
 
 
@@ -171,12 +173,23 @@ def advance_compute_progress(delta: int = 1, *, phase: str | None = None,
 
 
 def begin_compute_run(kind: str, total_jobs: int = 1, workers: int = 1,
-                      backend: str = "cpu") -> int:
+                      backend: str = "cpu", *, owner: str | None = None) -> int:
+    global _pending_cancel
     now = time.time()
-    _cancel_event.clear()
     total_jobs = max(1, int(total_jobs or 1))
     workers = max(1, int(workers or 1))
     with _monitor_lock:
+        pending_cancel = _pending_cancel
+        consume_pending_cancel = bool(
+            pending_cancel is not None
+            and pending_cancel.get("owner") == owner
+            and now - float(pending_cancel.get("requested_at", 0.0)) <= _PENDING_CANCEL_TTL_SECONDS
+        )
+        _pending_cancel = None
+        if consume_pending_cancel:
+            _cancel_event.set()
+        else:
+            _cancel_event.clear()
         run_id = next(_run_counter)
         _compute_state.update({
             "active": True,
@@ -192,7 +205,7 @@ def begin_compute_run(kind: str, total_jobs: int = 1, workers: int = 1,
             "progress_completed": 0,
             "progress_explicit": False,
             "phase": str(kind or "calculation"),
-            "cancel_requested": False,
+            "cancel_requested": consume_pending_cancel,
             "cancelled": False,
             "started_at": now,
             "finished_at": None,
@@ -532,14 +545,20 @@ def _terminate_active_pool() -> None:
             pass
 
 
-def request_compute_cancel(run_id: int | None = None, *, hard: bool = True) -> dict[str, Any]:
+def request_compute_cancel(run_id: int | None = None, *, hard: bool = True,
+                           owner: str | None = None,
+                           allow_pending: bool = True) -> dict[str, Any]:
+    global _pending_cancel
     with _monitor_lock:
         active = bool(_compute_state.get("active"))
         current_id = _compute_state.get("run_id")
         if run_id is not None and current_id is not None and int(run_id) != int(current_id):
             return {"ok": False, "active": active, "run_id": current_id, "reason": "run_id_mismatch"}
         if not active:
-            return {"ok": True, "active": False, "run_id": current_id, "already_finished": True}
+            if not allow_pending:
+                return {"ok": True, "active": False, "run_id": current_id, "already_finished": True}
+            _pending_cancel = {"owner": owner, "requested_at": time.time()}
+            return {"ok": True, "active": False, "run_id": current_id, "pending_cancel": True}
         _compute_state["cancel_requested"] = True
         _compute_state["phase"] = "Cancelling calculation"
     _cancel_event.set()
