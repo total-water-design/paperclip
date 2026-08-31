@@ -73,6 +73,7 @@ import {
 } from "./issue-review-policy.js";
 import { issueService, runWorkspaceIsFinalized } from "./issues.js";
 import { questionResponseDeliveryValues } from "./question-response-delivery.js";
+import { createTwdsValidationGrant } from "./validation-execution-grants.js";
 import {
   assertIssueThreadInteractionResolverAudience,
   canonicalizeStoredResolverPolicy,
@@ -1672,6 +1673,7 @@ export function issueThreadInteractionService(db: Db, opts: IssueThreadInteracti
           "Interaction has already been resolved",
         );
       }
+      await createTwdsValidationGrant(tx as unknown as Db, { companyId: args.issue.companyId, approvalIssueId: args.issue.id, interaction: lockedCurrent, userId: args.actor.userId, now });
 
       let continuationIssue: IssueWakeTarget | null = null;
       if (shouldReturnAcceptedConfirmationToCreatorAgent({
