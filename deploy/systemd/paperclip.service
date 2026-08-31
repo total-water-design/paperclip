@@ -1,0 +1,31 @@
+[Unit]
+Description=Paperclip control plane (root-managed)
+Documentation=https://github.com/total-water-design/paperclip/blob/master/doc/ROOT-SYSTEMD-RUNBOOK.md
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=notify
+NotifyAccess=all
+User=paperclip
+Group=paperclip
+EnvironmentFile=/etc/paperclip/paperclip.env
+ExecStart=/usr/local/bin/paperclipai run --instance default
+WorkingDirectory=/
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=180s
+TimeoutStopSec=300s
+KillSignal=SIGTERM
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/var/lib/paperclip
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

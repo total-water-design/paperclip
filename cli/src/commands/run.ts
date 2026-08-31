@@ -20,6 +20,7 @@ import { assertForegroundRunAllowed } from "../services/service-manager.js";
 import { removeRuntimeInfoForPid, writeRuntimeInfo } from "../runtime-info.js";
 import { printUpdateNotice } from "../update-notice.js";
 import { ensureWorktreeSeeded } from "./worktree.js";
+import { containProcessStdioEpipe } from "../stdio-epipe.js";
 
 interface RunOptions {
   config?: string;
@@ -38,6 +39,9 @@ interface StartedServer {
 }
 
 export async function runCommand(opts: RunOptions): Promise<void> {
+  // `paperclipai run` owns the server process. A disconnected SSH/supervisor
+  // output pipe must not turn a logger write into an unhandled EPIPE that exits it.
+  containProcessStdioEpipe();
   const instanceId = resolvePaperclipInstanceId(opts.instance);
   process.env.PAPERCLIP_INSTANCE_ID = instanceId;
   await assertForegroundRunAllowed(instanceId, opts.force);
