@@ -7,14 +7,19 @@ host gate is approved.
 
 ## Invariants
 
-- Keep `server.deploymentMode` as `local_trusted` and `server.exposure` as
-  `private`.
-- Keep the configured server host as `127.0.0.1` and port as `3100`.
-- Preserve the existing `PAPERCLIP_HOME`, `PAPERCLIP_CONFIG`, embedded
-  PostgreSQL data directory, backup directory, storage, and secrets key. Do
-  not initialize a new instance or replace any of those paths.
-- Do not put secrets in the unit. `/etc/paperclip/paperclip.env` must be root
-  owned and mode `0600`.
+- The unit runs `/usr/lib/paperclip/paperclip-preflight` before every start.
+  It fails closed unless the selected config is exactly `local_trusted`,
+  `private`, `127.0.0.1`, and port `3100`; public/LAN/custom binding and
+  weakened deployment modes are rejected.
+- The root-owned environment file names the actual `PAPERCLIP_EXECUTABLE` and
+  `PAPERCLIP_NODE`; `/usr/local/bin/paperclipai` is not assumed. The preflight
+  rejects a missing, symlinked, or non-executable binary.
+- Preserve one existing instance and explicitly name its config, embedded
+  PostgreSQL data, backup, local storage, and local-encrypted secrets-key
+  paths. The preflight rejects missing paths, symlinks, group/other-writable
+  state, a disabled backup, or mismatched config references.
+- Do not put secret values in the unit or environment file. The secrets key is
+  a file reference only; inline `PAPERCLIP_SECRETS_MASTER_KEY` is rejected.
 - The bounded abnormal-restart policy is five starts in 60 seconds, followed by
   a five-second delay. Deliberate operator stops do not restart the service.
 
@@ -36,11 +41,11 @@ tr '\0' '\n' < "/proc/$old_pid/environ" | \
   grep -E '^(PAPERCLIP_HOME|PAPERCLIP_CONFIG|PAPERCLIP_INSTANCE_ID|DATABASE_URL)=' || true
 ```
 
-Confirm that the recorded `PAPERCLIP_HOME` contains the live instance's
-`instances/default/` directory and that the existing configuration resolves to
-the same embedded PostgreSQL data, backup, storage, and secrets paths. If the
-current process is not already using `/var/lib/paperclip`, do not silently
-change it: migrate only through a separately approved, backup-verified change.
+Confirm that the recorded paths identify one existing instance. The root unit
+supports only the mechanically checked private layout below. If the running
+process has a different bind, deployment mode, path layout, database, or
+secret provider, stop here and obtain a separately approved migration; do not
+silently rewrite it.
 
 Create the unit and environment file using the recorded existing paths (the
 values below are examples and must match the running instance exactly):
@@ -48,21 +53,34 @@ values below are examples and must match the running instance exactly):
 ```sh
 install -d -o root -g root -m 0755 /etc/paperclip
 install -o root -g root -m 0644 deploy/systemd/paperclip.service /etc/systemd/system/paperclip.service
-install -o root -g root -m 0600 /dev/null /etc/paperclip/paperclip.env
+install -d -o root -g root -m 0755 /usr/lib/paperclip
+install -o root -g root -m 0755 deploy/systemd/paperclip-preflight /usr/lib/paperclip/paperclip-preflight
+install -o root -g paperclip -m 0640 /dev/null /etc/paperclip/paperclip.env
 cat >/etc/paperclip/paperclip.env <<'EOF'
 PAPERCLIP_HOME=/var/lib/paperclip
 PAPERCLIP_CONFIG=/var/lib/paperclip/instances/default/config.json
 PAPERCLIP_INSTANCE_ID=default
+PAPERCLIP_EXECUTABLE=/opt/paperclip/current/bin/paperclipai
+PAPERCLIP_NODE=/usr/bin/node
+PAPERCLIP_DATA_DIR=/var/lib/paperclip/instances/default/db
+PAPERCLIP_BACKUP_DIR=/var/lib/paperclip/instances/default/data/backups
+PAPERCLIP_STORAGE_DIR=/var/lib/paperclip/instances/default/data/storage
+PAPERCLIP_SECRETS_KEY_FILE=/var/lib/paperclip/instances/default/secrets/master.key
 PAPERCLIP_SERVICE_MANAGED=1
 EOF
+chown root:paperclip /etc/paperclip/paperclip.env
+chmod 0640 /etc/paperclip/paperclip.env
 systemd-analyze verify /etc/systemd/system/paperclip.service
+/usr/lib/paperclip/paperclip-preflight
 ```
 
-If the selected state root is not `/var/lib/paperclip`, update both the
-environment file and the unit's `ReadWritePaths=` to the same approved absolute
-path before verification. Do not include `DATABASE_URL`, API keys, or other
-secrets in shell history; use the existing root-only environment/configuration
-source instead.
+Before this preflight can pass, `config.json` must contain absolute paths equal
+to the five corresponding `PAPERCLIP_*_DIR` / `PAPERCLIP_SECRETS_KEY_FILE`
+values, with `database.mode="embedded-postgres"`, an enabled backup, local-disk
+storage, and `secrets.provider="local_encrypted"`. All paths must be inside
+`$PAPERCLIP_HOME/instances/$PAPERCLIP_INSTANCE_ID`, exist before activation,
+and not be group/other writable. Do not include `DATABASE_URL`, API keys, or
+other secret values in shell history or the environment file.
 
 ## Production-host gate: install and health verification
 
@@ -76,6 +94,9 @@ test ! -e /etc/systemd/system/paperclip.service || \
   cp -a /etc/systemd/system/paperclip.service /root/paperclip-service-rollback/paperclip.service.previous
 test ! -e /etc/paperclip/paperclip.env || \
   cp -a /etc/paperclip/paperclip.env /root/paperclip-service-rollback/paperclip.env.previous
+test ! -e /usr/lib/paperclip/paperclip-preflight || \
+  cp -a /usr/lib/paperclip/paperclip-preflight /root/paperclip-service-rollback/paperclip-preflight.previous
+/usr/lib/paperclip/paperclip-preflight
 systemctl daemon-reload
 systemctl enable paperclip.service
 systemctl start paperclip.service
@@ -132,6 +153,7 @@ gate. The instance state is intentionally left untouched.
 ```sh
 cp -a /root/paperclip-service-rollback/paperclip.service.previous /etc/systemd/system/paperclip.service
 cp -a /root/paperclip-service-rollback/paperclip.env.previous /etc/paperclip/paperclip.env
+cp -a /root/paperclip-service-rollback/paperclip-preflight.previous /usr/lib/paperclip/paperclip-preflight
 systemctl daemon-reload
 systemctl restart paperclip.service
 curl -fsS http://127.0.0.1:3100/api/health | jq -e '.status == "ok"'

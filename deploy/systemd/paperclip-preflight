@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# Fail closed before the root-managed unit starts Paperclip.  This script is
+# intentionally standalone so systemd can run it before the CLI loads config.
+set -euo pipefail
+
+fail() { printf '%s\n' "paperclip preflight: $*" >&2; exit 1; }
+required=(
+  PAPERCLIP_HOME PAPERCLIP_CONFIG PAPERCLIP_INSTANCE_ID PAPERCLIP_EXECUTABLE
+  PAPERCLIP_NODE PAPERCLIP_DATA_DIR PAPERCLIP_BACKUP_DIR PAPERCLIP_STORAGE_DIR
+  PAPERCLIP_SECRETS_KEY_FILE PAPERCLIP_ENV_FILE
+)
+for name in "${required[@]}"; do
+  value="${!name:-}"
+  [[ -n "$value" ]] || fail "missing $name"
+done
+
+[[ "${PAPERCLIP_SERVICE_MANAGED:-}" == "1" ]] || fail "PAPERCLIP_SERVICE_MANAGED must be 1"
+[[ "$PAPERCLIP_INSTANCE_ID" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || fail "unsafe PAPERCLIP_INSTANCE_ID"
+for name in PAPERCLIP_HOME PAPERCLIP_CONFIG PAPERCLIP_EXECUTABLE PAPERCLIP_NODE PAPERCLIP_DATA_DIR PAPERCLIP_BACKUP_DIR PAPERCLIP_STORAGE_DIR PAPERCLIP_SECRETS_KEY_FILE PAPERCLIP_ENV_FILE; do
+  [[ "${!name}" = /* ]] || fail "$name must be an absolute path"
+  [[ ! -L "${!name}" ]] || fail "$name must not be a symlink"
+done
+
+instance_root="$PAPERCLIP_HOME/instances/$PAPERCLIP_INSTANCE_ID"
+[[ "$PAPERCLIP_CONFIG" == "$instance_root/config.json" ]] || fail "PAPERCLIP_CONFIG must be the selected instance config"
+for name in PAPERCLIP_DATA_DIR PAPERCLIP_BACKUP_DIR PAPERCLIP_STORAGE_DIR PAPERCLIP_SECRETS_KEY_FILE; do
+  [[ "${!name}" == "$instance_root"/* ]] || fail "$name must be inside the selected instance"
+done
+
+safe_path() {
+  local target="$1" kind="$2" mode
+  [[ ! -L "$target" ]] || fail "$kind is a symlink: $target"
+  if [[ "$kind" == "directory" ]]; then [[ -d "$target" ]] || fail "missing directory: $target"; else [[ -f "$target" ]] || fail "missing regular file: $target"; fi
+  mode=$(stat -c '%a' "$target")
+  (( (8#$mode & 022) == 0 )) || fail "unsafe permissions on $target (mode $mode)"
+}
+safe_path "$PAPERCLIP_HOME" directory
+safe_path "$instance_root" directory
+safe_path "$PAPERCLIP_DATA_DIR" directory
+safe_path "$PAPERCLIP_BACKUP_DIR" directory
+safe_path "$PAPERCLIP_STORAGE_DIR" directory
+safe_path "$PAPERCLIP_CONFIG" file
+safe_path "$PAPERCLIP_SECRETS_KEY_FILE" file
+safe_path "$PAPERCLIP_ENV_FILE" file
+[[ "$(stat -c '%U' "$PAPERCLIP_ENV_FILE")" == "root" ]] || fail "PAPERCLIP_ENV_FILE must be root-owned"
+secret_mode=$(stat -c '%a' "$PAPERCLIP_SECRETS_KEY_FILE")
+(( (8#$secret_mode & 077) == 0 )) || fail "secret key must not be readable by group or other (mode $secret_mode)"
+[[ -x "$PAPERCLIP_EXECUTABLE" && -f "$PAPERCLIP_EXECUTABLE" ]] || fail "PAPERCLIP_EXECUTABLE is not an executable regular file"
+[[ -x "$PAPERCLIP_NODE" && -f "$PAPERCLIP_NODE" ]] || fail "PAPERCLIP_NODE is not an executable regular file"
+[[ -z "${PAPERCLIP_SECRETS_MASTER_KEY:-}" ]] || fail "inline PAPERCLIP_SECRETS_MASTER_KEY is forbidden"
+
+"$PAPERCLIP_NODE" - "$PAPERCLIP_CONFIG" "$PAPERCLIP_DATA_DIR" "$PAPERCLIP_BACKUP_DIR" "$PAPERCLIP_STORAGE_DIR" "$PAPERCLIP_SECRETS_KEY_FILE" <<'NODE'
+const fs = require('node:fs');
+const [configPath, dataDir, backupDir, storageDir, keyPath] = process.argv.slice(2);
+let config;
+try { config = JSON.parse(fs.readFileSync(configPath, 'utf8')); } catch (error) { throw new Error(`invalid JSON config: ${error.message}`); }
+const server = config.server ?? {};
+const database = config.database ?? {};
+const storage = config.storage ?? {};
+const secrets = config.secrets ?? {};
+const reject = (message) => { throw new Error(message); };
+if (server.host !== '127.0.0.1' || server.port !== 3100 || server.deploymentMode !== 'local_trusted' || server.exposure !== 'private' || (server.bind !== undefined && server.bind !== 'loopback')) reject('server must be loopback-only local_trusted private on 127.0.0.1:3100');
+if (database.mode !== 'embedded-postgres' || database.embeddedPostgresDataDir !== dataDir) reject('embedded PostgreSQL data directory does not match PAPERCLIP_DATA_DIR');
+if (database.backup?.enabled !== true || database.backup?.dir !== backupDir) reject('enabled backup directory does not match PAPERCLIP_BACKUP_DIR');
+if (storage.provider !== 'local_disk' || storage.localDisk?.baseDir !== storageDir) reject('local storage directory does not match PAPERCLIP_STORAGE_DIR');
+if (secrets.provider !== 'local_encrypted' || secrets.localEncrypted?.keyFilePath !== keyPath) reject('local encrypted secret key reference does not match PAPERCLIP_SECRETS_KEY_FILE');
+NODE
