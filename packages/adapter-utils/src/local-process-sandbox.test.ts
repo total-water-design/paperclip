@@ -147,6 +147,7 @@ describe("local process sandbox", () => {
     });
 
     expect(target.args).toContain("--unshare-net");
+    expect(target.args).toEqual(expect.arrayContaining(["--dev-bind", "/dev", "/dev"]));
     expect(target.args).toContain("--bind");
     expect(target.args).not.toContain("--tmpfs");
     expect(target.env?.HTTP_PROXY).toBeUndefined();
