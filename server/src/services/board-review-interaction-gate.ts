@@ -87,8 +87,12 @@ export async function reconcileBoardReviewInteractionGate(db: Db) {
     ))
     .returning({ id: issues.id });
 
+  const cancelledRows = Array.isArray(cancelled)
+    ? cancelled
+    : ((cancelled as { rows?: unknown[] }).rows ?? []);
+
   return {
-    cancelledInteractionIds: cancelled.rows.map((row) => String((row as { id: unknown }).id)),
+    cancelledInteractionIds: cancelledRows.map((row) => String((row as { id: unknown }).id)),
     removedBoardAssignmentIssueIds: unassigned.map((row) => row.id),
   };
 }
