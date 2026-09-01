@@ -1,6 +1,6 @@
 {
   "fixture": "local SQLite only; no live publication",
-  "url": "http://127.0.0.1:50847/",
+  "url": "http://127.0.0.1:56449/",
   "viewports": {
     "desktop": {
       "status": 200,
@@ -22,6 +22,7 @@
           "summary": "Commercial access details will be shared when they are available."
         }
       ],
+      "stale_placeholders_visible": [],
       "screenshot": "home-desktop.png"
     },
     "mobile": {
@@ -44,6 +45,7 @@
           "summary": "Commercial access details will be shared when they are available."
         }
       ],
+      "stale_placeholders_visible": [],
       "screenshot": "home-mobile.png"
     }
   },
@@ -52,75 +54,75 @@
   "network": [
     {
       "status": 200,
-      "url": "http://127.0.0.1:50847/"
+      "url": "http://127.0.0.1:56449/"
     },
     {
       "status": 200,
-      "url": "http://127.0.0.1:50847/static/suite.css"
+      "url": "http://127.0.0.1:56449/static/suite.css"
     },
     {
       "status": 200,
-      "url": "http://127.0.0.1:50847/static/mobile.css"
+      "url": "http://127.0.0.1:56449/static/mobile.css"
     },
     {
       "status": 200,
-      "url": "http://127.0.0.1:50847/static/whats_new.css"
+      "url": "http://127.0.0.1:56449/static/whats_new.css"
     },
     {
       "status": 200,
-      "url": "http://127.0.0.1:50847/static/branding/suite/total_water_design_suite_icon_128.png"
+      "url": "http://127.0.0.1:56449/static/branding/suite/total_water_design_suite_icon_128.png"
     },
     {
       "status": 200,
-      "url": "http://127.0.0.1:50847/static/branding/suite/total_water_design_suite_icon_1024.png"
+      "url": "http://127.0.0.1:56449/static/branding/suite/total_water_design_suite_icon_1024.png"
     },
     {
       "status": 200,
-      "url": "http://127.0.0.1:50847/static/branding/jerry_ross_founder.png"
+      "url": "http://127.0.0.1:56449/static/branding/jerry_ross_founder.png"
     },
     {
       "status": 200,
-      "url": "http://127.0.0.1:50847/static/branding/suite/total_water_design_suite_icon_64.png"
+      "url": "http://127.0.0.1:56449/static/branding/suite/total_water_design_suite_icon_64.png"
     },
     {
       "status": 200,
-      "url": "http://127.0.0.1:50847/static/mobile.js"
+      "url": "http://127.0.0.1:56449/static/mobile.js"
     },
     {
       "status": 200,
-      "url": "http://127.0.0.1:50847/"
+      "url": "http://127.0.0.1:56449/"
     },
     {
       "status": 200,
-      "url": "http://127.0.0.1:50847/static/suite.css"
+      "url": "http://127.0.0.1:56449/static/suite.css"
     },
     {
       "status": 200,
-      "url": "http://127.0.0.1:50847/static/mobile.css"
+      "url": "http://127.0.0.1:56449/static/mobile.css"
     },
     {
       "status": 200,
-      "url": "http://127.0.0.1:50847/static/whats_new.css"
+      "url": "http://127.0.0.1:56449/static/whats_new.css"
     },
     {
       "status": 200,
-      "url": "http://127.0.0.1:50847/static/branding/suite/total_water_design_suite_icon_128.png"
+      "url": "http://127.0.0.1:56449/static/branding/suite/total_water_design_suite_icon_128.png"
     },
     {
       "status": 200,
-      "url": "http://127.0.0.1:50847/static/branding/suite/total_water_design_suite_icon_1024.png"
+      "url": "http://127.0.0.1:56449/static/branding/suite/total_water_design_suite_icon_1024.png"
     },
     {
       "status": 200,
-      "url": "http://127.0.0.1:50847/static/branding/jerry_ross_founder.png"
+      "url": "http://127.0.0.1:56449/static/branding/jerry_ross_founder.png"
     },
     {
       "status": 200,
-      "url": "http://127.0.0.1:50847/static/branding/suite/total_water_design_suite_icon_64.png"
+      "url": "http://127.0.0.1:56449/static/branding/suite/total_water_design_suite_icon_64.png"
     },
     {
       "status": 200,
-      "url": "http://127.0.0.1:50847/static/mobile.js"
+      "url": "http://127.0.0.1:56449/static/mobile.js"
     }
   ]
 }

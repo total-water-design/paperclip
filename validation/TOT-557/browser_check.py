@@ -42,6 +42,11 @@ COPY = {
         "No date announced",
     ),
 }
+STALE_PLACEHOLDERS = (
+    "No public release update has been published yet.",
+    "No public roadmap items have been approved for display yet.",
+    "Commercial launch timing will be published here after it is approved.",
+)
 
 
 def _port() -> int:
@@ -124,9 +129,17 @@ def main() -> None:
                         assert title in rendered
                         assert summary in rendered
                         rendered_cards.append(actual)
+                    visible_placeholders = [text for text in STALE_PLACEHOLDERS if text in rendered]
+                    assert not visible_placeholders, visible_placeholders
                     screenshot = EVIDENCE / f"home-{name}.png"
                     page.screenshot(path=str(screenshot), full_page=True)
-                    evidence["viewports"][name] = {"status": response.status, "cards": cards.count(), "card_copy": rendered_cards, "screenshot": screenshot.name}
+                    evidence["viewports"][name] = {
+                        "status": response.status,
+                        "cards": cards.count(),
+                        "card_copy": rendered_cards,
+                        "stale_placeholders_visible": visible_placeholders,
+                        "screenshot": screenshot.name,
+                    }
                     page.close()
                 browser.close()
         finally:

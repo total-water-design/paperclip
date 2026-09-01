@@ -29,6 +29,12 @@ PROPOSED_CARD_COPY = {
     ),
 }
 
+STALE_PLACEHOLDER_COPY = (
+    "No public release update has been published yet.",
+    "No public roadmap items have been approved for display yet.",
+    "Commercial launch timing will be published here after it is approved.",
+)
+
 
 @pytest.fixture()
 def communications_app(tmp_path, monkeypatch):
@@ -82,6 +88,8 @@ def test_empty_cards_are_safe_in_http_and_api_responses(communications_app):
     html = homepage.get_data(as_text=True)
     assert html.count("Last updated: Not published") == 3
     assert html.count("No approved update") == 3
+    for placeholder in STALE_PLACEHOLDER_COPY:
+        assert placeholder in html
 
     _login(client, admin_id)
     payload = client.get("/api/suite/whats-new").get_json()
@@ -134,6 +142,8 @@ def test_non_production_fixture_renders_exact_customer_safe_copy(communications_
         assert summary in html
     for _, _, release_label in PROPOSED_CARD_COPY.values():
         assert release_label in html
+    for placeholder in STALE_PLACEHOLDER_COPY:
+        assert placeholder not in html
     assert html.count("Last updated:") == 3
     assert "83a2733" not in html
     assert "New in Alpha" not in html

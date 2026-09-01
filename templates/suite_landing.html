@@ -116,7 +116,7 @@
             {% if release.summary %}<p>{{ release.summary }}</p>{% endif %}
             {% if release.highlights %}<ul>{% for item in release.highlights %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
           </div>
-          {% else %}<p class="suite-whats-new-empty">No public release update has been published yet.</p>{% endfor %}
+          {% else %}{% if not card.get('public_ready') %}<p class="suite-whats-new-empty">No public release update has been published yet.</p>{% endif %}{% endfor %}
         </article>
 
         {% set card = whats_new.cards.get('roadmap', {}) %}
@@ -127,7 +127,7 @@
           <small class="suite-whats-new-date">Last updated: {{ card.get('updated_at').strftime('%Y-%m-%d') if card.get('updated_at') else 'Not published' }}</small>
           {% for item in whats_new.roadmap %}
           <div class="suite-whats-new-item"><strong>{{ item.title }}</strong>{% if item.application and item.application != 'suite' %}<small>{{ item.application|replace('_',' ')|title }}</small>{% endif %}<p>{{ item.summary }}</p></div>
-          {% else %}<p class="suite-whats-new-empty">No public roadmap items have been approved for display yet.</p>{% endfor %}
+          {% else %}{% if not card.get('public_ready') %}<p class="suite-whats-new-empty">No public roadmap items have been approved for display yet.</p>{% endif %}{% endfor %}
         </article>
 
         {% set card = whats_new.cards.get('commercial_launch', {}) %}
@@ -136,7 +136,7 @@
           <h3>{{ card.get('title', 'Commercial Launch') }}</h3>
           {% if card.get('public_ready') %}<p>{{ card.get('summary') }}</p>{% endif %}
           <small class="suite-whats-new-date">Last updated: {{ card.get('updated_at').strftime('%Y-%m-%d') if card.get('updated_at') else 'Not published' }}</small>
-          {% if whats_new.commercial_launch_window %}<p class="suite-launch-window">{{ whats_new.commercial_launch_window }}</p><p>This timing is an estimate and may be updated as validation and deployment progress.</p>{% else %}<p class="suite-whats-new-empty">Commercial launch timing will be published here after it is approved.</p>{% endif %}
+          {% if whats_new.commercial_launch_window %}<p class="suite-launch-window">{{ whats_new.commercial_launch_window }}</p><p>This timing is an estimate and may be updated as validation and deployment progress.</p>{% elif not card.get('public_ready') %}<p class="suite-whats-new-empty">Commercial launch timing will be published here after it is approved.</p>{% endif %}
         </article>
       </div>
     </section>
