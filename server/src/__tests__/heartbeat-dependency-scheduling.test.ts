@@ -29,6 +29,7 @@ import {
   startEmbeddedPostgresTestDatabase,
 } from "./helpers/embedded-postgres.js";
 import { heartbeatService } from "../services/heartbeat.ts";
+import { canAdoptExactExecutionRunOwnership } from "../services/issue-run-ownership.ts";
 import { runningProcesses } from "../adapters/index.ts";
 
 const mockAdapterExecute = vi.hoisted(() =>
@@ -254,6 +255,10 @@ describeEmbeddedPostgres("heartbeat dependency-aware queued run selection", () =
       continuationPolicy: "wake_assignee",
       createdByAgentId: agentId,
       sourceRunId,
+      // The acceptance was made by a human under the restrictive policy; the
+      // continuation must retain that policy while its exact execution run is
+      // authorized to resume the issue work.
+      effectiveResolverPolicy: "human_only",
       payload: { version: 1, prompt: "Continue after human acceptance?" },
       result: { version: 1, outcome: "accepted" },
     });
@@ -279,14 +284,33 @@ describeEmbeddedPostgres("heartbeat dependency-aware queued run selection", () =
       .select({ contextSnapshot: heartbeatRuns.contextSnapshot })
       .from(heartbeatRuns)
       .where(eq(heartbeatRuns.id, continuationRun!.id));
+    const [persistedIssueAfterWake] = await db
+      .select({ executionRunId: issues.executionRunId, checkoutRunId: issues.checkoutRunId })
+      .from(issues)
+      .where(eq(issues.id, issueId));
 
     // Equality proof: the permitted source run and coalesced execution run
     // are the same UUID before validation can inspect the continuation.
     expect(continuationRun!.id).toBe(executionRunId);
     expect(persistedInteraction?.sourceRunId).toBe(executionRunId);
     expect(persistedWakeRun?.contextSnapshot).toMatchObject({ sourceRunId: executionRunId });
+    // The coalesced wake must preserve the authoritative exact-run lock.
+    expect(persistedIssueAfterWake).toMatchObject({ executionRunId, checkoutRunId: null });
     expect(persistedInteraction?.sourceRunId).not.toBe(sourceRunId);
     expect(persistedInteraction?.sourceRunId).not.toBe(unrelatedRunId);
+
+    // Exercise the exact first-claim authorization gate used by
+    // issueService.assertCheckoutOwner. Only the rebound execution run may
+    // claim the empty checkout lock; the adjacent candidate is denied.
+    const authorizationInput = {
+      status: "in_progress",
+      assigneeAgentId: agentId,
+      checkoutRunId: null,
+      executionRunId,
+      actorAgentId: agentId,
+    };
+    expect(canAdoptExactExecutionRunOwnership({ ...authorizationInput, actorRunId: executionRunId })).toBe(true);
+    expect(canAdoptExactExecutionRunOwnership({ ...authorizationInput, actorRunId: unrelatedRunId })).toBe(false);
   });
 
   it("keeps blocked descendants idle until their blockers resolve", async () => {

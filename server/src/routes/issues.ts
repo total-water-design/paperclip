@@ -248,6 +248,7 @@ import {
   type IssueThreadInteractionResolverAudienceDecision,
   type IssueThreadInteractionResolverRestriction,
 } from "../services/issue-thread-interaction-resolution.js";
+import { acceptedInteractionSourceRunRebind } from "../services/issue-thread-interaction-continuation.js";
 import { resolveSelectedSuggestedTasks } from "../services/issue-thread-interactions.js";
 import {
   crossIssueInfluenceLimitError,
@@ -2141,13 +2142,7 @@ async function queueResolvedInteractionContinuationWakeup(input: {
           result: interactionResult,
         }
       : null;
-  const acceptedInteractionSourceRunRebind =
-    input.interaction.status === "accepted" && input.interaction.sourceRunId
-      ? {
-          interactionId: input.interaction.id,
-          expectedSourceRunId: input.interaction.sourceRunId,
-        }
-      : undefined;
+  const acceptedSourceRunRebind = acceptedInteractionSourceRunRebind(input.interaction);
   void input.heartbeat.wakeup(input.issue.assigneeAgentId, {
     source: "automation",
     triggerDetail: "system",
@@ -2170,7 +2165,7 @@ async function queueResolvedInteractionContinuationWakeup(input: {
     idempotencyKey: input.idempotencyKey ?? `interaction:${input.interaction.id}:${input.interaction.status}`,
     requestedByActorType: input.actor.actorType,
     requestedByActorId: input.actor.actorId,
-    ...(acceptedInteractionSourceRunRebind ? { acceptedInteractionSourceRunRebind } : {}),
+    ...(acceptedSourceRunRebind ? { acceptedInteractionSourceRunRebind: acceptedSourceRunRebind } : {}),
     contextSnapshot: {
       issueId: input.issue.id,
       taskId: input.issue.id,
