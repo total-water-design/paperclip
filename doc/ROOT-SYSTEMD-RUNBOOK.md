@@ -140,6 +140,32 @@ The reconciliation command fails unless every pre-handoff run has a current
 state and every terminal run has an explicit recovery disposition. Never use
 `paperclipai run --force` for the service.
 
+## Database-unhealthy health-aware recovery
+
+After the primary service is healthy, enable the separate timer. It polls only
+`http://127.0.0.1:3100/api/health` every **one minute** (first run two minutes
+after boot), with a five-second HTTP timeout. A response is healthy only when
+its parsed JSON field is exactly `.status == "ok"`; HTTP success alone is not
+enough. The timer records three consecutive failed polls before recovery and
+then suppresses further recovery attempts for five minutes.
+
+```sh
+systemctl enable --now paperclip-health-recovery.timer
+systemctl list-timers paperclip-health-recovery.timer --all --no-pager
+journalctl -u paperclip-health-recovery.service --since '-10 min' --no-pager
+```
+
+The recovery service uses a non-blocking lock so there is at most one invocation.
+On threshold, it runs only `systemctl restart paperclip.service`, then waits at
+most 180 seconds for both the service to be active and the loopback health
+payload to report `status=ok`. The root service retains ownership of the
+embedded PostgreSQL lifecycle; this recovery artifact never invokes `initdb`,
+creates a replacement cluster, deletes data, or runs a database migration.
+Journal records include every failed poll, threshold crossing, serialized-run
+suppression, cooldown suppression, restart result, and the combined embedded
+PostgreSQL/Paperclip readiness result. It logs no API key, database URL, or
+secret value.
+
 ## Handoff and sandbox checks
 
 With an approved maintenance window, preserve the currently running instance
@@ -204,6 +230,11 @@ deploy/systemd/paperclip-service-install rollback
 grep -qx active "$PAPERCLIP_ROLLBACK_ROOT/prior.active" && \
   curl -fsS http://127.0.0.1:3100/api/health | jq -e '.status == "ok"' || true
 ```
+
+The installer manifest also snapshots the recovery service/timer files plus
+the timer's prior enabled and active state. Rollback restores that state; it
+does not remove the runtime counter directory, which disappears on reboot and
+contains only failure counts and epochs.
 
 Do not delete `/home/paperclip/.paperclip`, instance configuration, embedded PostgreSQL
 data, backups, storage, or secrets as part of rollback.

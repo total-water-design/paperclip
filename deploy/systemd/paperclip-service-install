@@ -6,8 +6,8 @@ root="${PAPERCLIP_INSTALL_ROOT:-/}"
 backup="${PAPERCLIP_ROLLBACK_ROOT:-/root/paperclip-service-rollback}"
 install_owner="${PAPERCLIP_INSTALL_OWNER:-root}"
 install_group="${PAPERCLIP_INSTALL_GROUP:-root}"
-paths=(etc/systemd/system/paperclip.service etc/paperclip/paperclip.env usr/lib/paperclip/paperclip-preflight usr/lib/paperclip/paperclip-service-transition)
-srcs=(deploy/systemd/paperclip.service deploy/systemd/paperclip.env deploy/systemd/paperclip-preflight deploy/systemd/paperclip-service-transition)
+paths=(etc/systemd/system/paperclip.service etc/systemd/system/paperclip-health-recovery.service etc/systemd/system/paperclip-health-recovery.timer etc/paperclip/paperclip.env usr/lib/paperclip/paperclip-preflight usr/lib/paperclip/paperclip-service-transition usr/lib/paperclip/paperclip-health-recovery)
+srcs=(deploy/systemd/paperclip.service deploy/systemd/paperclip-health-recovery.service deploy/systemd/paperclip-health-recovery.timer deploy/systemd/paperclip.env deploy/systemd/paperclip-preflight deploy/systemd/paperclip-service-transition deploy/systemd/paperclip-health-recovery)
 mkdir -p "$backup/files"
 
 snapshot() {
@@ -18,13 +18,15 @@ snapshot() {
   done
   systemctl is-enabled paperclip.service >"$backup/prior.enabled" 2>&1 || true
   systemctl is-active paperclip.service >"$backup/prior.active" 2>&1 || true
+  systemctl is-enabled paperclip-health-recovery.timer >"$backup/prior.health-recovery-timer.enabled" 2>&1 || true
+  systemctl is-active paperclip-health-recovery.timer >"$backup/prior.health-recovery-timer.active" 2>&1 || true
 }
 
 case "$action" in
   install)
     snapshot
     for i in "${!paths[@]}"; do mkdir -p "$(dirname "$root/${paths[$i]}")"; install -o "$install_owner" -g "$install_group" -m 0755 "${srcs[$i]}" "$root/${paths[$i]}"; done
-    chmod 0644 "$root/etc/systemd/system/paperclip.service"; chmod 0640 "$root/etc/paperclip/paperclip.env"
+    chmod 0644 "$root/etc/systemd/system/paperclip.service" "$root/etc/systemd/system/paperclip-health-recovery.service" "$root/etc/systemd/system/paperclip-health-recovery.timer"; chmod 0640 "$root/etc/paperclip/paperclip.env"
     systemctl daemon-reload
     ;;
   rollback)
@@ -37,6 +39,8 @@ case "$action" in
     systemctl daemon-reload
     grep -qx enabled "$backup/prior.enabled" && systemctl enable paperclip.service || systemctl disable paperclip.service
     if grep -qx active "$backup/prior.active"; then systemctl start paperclip.service; else systemctl stop paperclip.service; fi
+    grep -qx enabled "$backup/prior.health-recovery-timer.enabled" && systemctl enable paperclip-health-recovery.timer || systemctl disable paperclip-health-recovery.timer
+    if grep -qx active "$backup/prior.health-recovery-timer.active"; then systemctl start paperclip-health-recovery.timer; else systemctl stop paperclip-health-recovery.timer; fi
     ;;
   *) echo "usage: $0 {install|rollback}" >&2; exit 1 ;;
 esac
