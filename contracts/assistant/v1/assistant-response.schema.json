@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.totalwater.design/assistant/v1/assistant-response.schema.json",
+  "title": "TWDS Assistant Response v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract", "response_id", "assistant_id", "message", "actions", "provenance"],
+  "properties": {
+    "contract": {"const": "twds.assistant.response/v1"},
+    "response_id": {"type": "string", "minLength": 1},
+    "assistant_id": {"type": "string", "pattern": "^twds\\.[a-z0-9]+(?:[.-][a-z0-9]+)*$"},
+    "message": {"type": "string"},
+    "actions": {"type": "array", "items": {"$ref": "#/$defs/action"}},
+    "provenance": {"$ref": "#/$defs/provenance"},
+    "limitations": {"type": "array", "items": {"type": "string"}}
+  },
+  "$defs": {
+    "action": {
+      "oneOf": [
+        {"$ref": "#/$defs/targetAction"},
+        {"$ref": "#/$defs/toolAction"}
+      ]
+    },
+    "targetAction": {
+      "type": "object", "additionalProperties": false,
+      "required": ["action_id", "kind", "target_id", "label"],
+      "properties": {
+        "action_id": {"type": "string", "minLength": 1},
+        "kind": {"enum": ["navigate", "highlight"]},
+        "target_id": {"$ref": "#/$defs/id"},
+        "label": {"type": "string", "minLength": 1}
+      }
+    },
+    "toolAction": {
+      "type": "object", "additionalProperties": false,
+      "required": ["action_id", "kind", "tool_id", "arguments", "label", "requires_confirmation"],
+      "properties": {
+        "action_id": {"type": "string", "minLength": 1},
+        "kind": {"const": "propose_tool"},
+        "tool_id": {"$ref": "#/$defs/id"},
+        "arguments": {"type": "object"},
+        "label": {"type": "string", "minLength": 1},
+        "requires_confirmation": {"const": true}
+      }
+    },
+    "provenance": {
+      "type": "object", "additionalProperties": false,
+      "required": ["candidate_sha", "context_refs", "generated_at"],
+      "properties": {
+        "candidate_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "context_refs": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "tool_run_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "generated_at": {"type": "string", "format": "date-time"}
+      }
+    },
+    "id": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$"}
+  }
+}

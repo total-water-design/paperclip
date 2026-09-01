@@ -1,0 +1,9 @@
+{
+  "$schema": "./semantic-target-registry.schema.json",
+  "contract": "twds.assistant.semantic-targets/v1",
+  "registry_id": "twds.suite.semantic-targets",
+  "targets": [
+    {"target_id": "suite.home", "owner": "twds.suite-core", "kind": "page", "label": "Suite home"},
+    {"target_id": "suite.provenance", "owner": "twds.systems-integration", "kind": "section", "label": "Calculation provenance"}
+  ]
+}

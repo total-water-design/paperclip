@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.totalwater.design/assistant/v1/semantic-target-registry.schema.json",
+  "title": "TWDS Semantic Target Registry v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract", "registry_id", "targets"],
+  "properties": {
+    "$schema": {"type": "string", "format": "uri-reference"},
+    "contract": {"const": "twds.assistant.semantic-targets/v1"},
+    "registry_id": {"$ref": "#/$defs/id"},
+    "targets": {"type": "array", "items": {"$ref": "#/$defs/target"}}
+  },
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$"},
+    "target": {
+      "type": "object", "additionalProperties": false,
+      "required": ["target_id", "owner", "kind", "label"],
+      "properties": {
+        "target_id": {"$ref": "#/$defs/id"},
+        "owner": {"$ref": "#/$defs/id"},
+        "kind": {"enum": ["application", "page", "section", "field", "result", "action"]},
+        "label": {"type": "string", "minLength": 1},
+        "description": {"type": "string"}
+      }
+    }
+  }
+}
