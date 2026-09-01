@@ -57,6 +57,9 @@ import {
   issueRelations,
   issueThreadInteractions,
   issues,
+  managedSecretCapabilityGrants,
+  companySecretBindings,
+  companySecrets,
   issueWorkProducts,
   nativeRunFinalizations,
   projects,
@@ -14828,6 +14831,44 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
           }
         : undefined,
     });
+    const capabilityRows = await db.select({ grant: managedSecretCapabilityGrants, binding: companySecretBindings, secret: companySecrets })
+      .from(managedSecretCapabilityGrants)
+      .innerJoin(companySecretBindings, eq(companySecretBindings.id, managedSecretCapabilityGrants.bindingId))
+      .innerJoin(companySecrets, eq(companySecrets.id, companySecretBindings.secretId))
+      .where(and(
+        eq(managedSecretCapabilityGrants.companyId, agent.companyId),
+        eq(managedSecretCapabilityGrants.agentId, agent.id),
+        eq(managedSecretCapabilityGrants.status, "active"),
+        gt(managedSecretCapabilityGrants.expiresAt, new Date()),
+        or(
+          eq(managedSecretCapabilityGrants.runId, run.id),
+          issueId ? eq(managedSecretCapabilityGrants.issueId, issueId) : sql`false`,
+        ),
+      ));
+    const capabilityManifest = capabilityRows.map(({ grant, binding, secret }) => ({
+      bindingId: binding.id,
+      secretId: binding.secretId,
+      configPath: binding.configPath,
+      envKey: binding.configPath.startsWith("env.") ? binding.configPath.slice(4) : binding.configPath.slice(binding.configPath.indexOf(".") + 1),
+      secretKey: secret.key,
+      version: binding.versionSelector === "latest" ? secret.latestVersion : Number(binding.versionSelector),
+      provider: secret.provider as "local_encrypted" | "aws_secrets_manager" | "gcp_secret_manager" | "vault",
+      outcome: "success" as const,
+      versionSelector: binding.versionSelector,
+      required: binding.required,
+      projectionClass: binding.projectionClass,
+      grantId: grant.id,
+      grantScope: grant.runId ? "run" : "issue",
+      expiresAt: grant.expiresAt.toISOString(),
+    }));
+    if (capabilityManifest.length > 0) {
+      await Promise.all(capabilityRows.map(({ grant, binding }) => logActivity(db, {
+        companyId: agent.companyId, actorType: "system", actorId: "heartbeat", action: "secret.capability.manifest_included",
+        entityType: "secret_binding", entityId: binding.id, agentId: agent.id, runId: run.id, issueId,
+        details: { grantId: grant.id, scope: grant.runId ? "run" : "issue", expiresAt: grant.expiresAt.toISOString() },
+      })));
+    }
+    secretManifest.push(...capabilityManifest);
     if (secretManifest.length > 0) {
       context.paperclipSecrets = {
         manifest: secretManifest,
