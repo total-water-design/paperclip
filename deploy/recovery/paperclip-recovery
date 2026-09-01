@@ -1,0 +1,53 @@
+#!/bin/sh
+# Installed root-owned (0750) and invoked only via the exact no-argument
+# sudoers entry in paperclip-recovery.sudoers. This file is not an installer.
+set -eu
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
+if [ "$#" -ne 0 ]; then
+  echo "paperclip-recovery accepts no arguments" >&2
+  exit 64
+fi
+
+if [ "$(/usr/bin/id -u)" -ne 0 ] || [ "${SUDO_USER:-}" != "paperclip" ]; then
+  echo "paperclip-recovery must be invoked by the paperclip OS identity through sudo" >&2
+  exit 77
+fi
+
+token_file=/etc/paperclip/recovery.token
+if [ ! -r "$token_file" ]; then
+  echo "paperclip recovery token is unavailable" >&2
+  exit 78
+fi
+token=$(/bin/cat "$token_file")
+if [ -z "$token" ]; then
+  echo "paperclip recovery token is empty" >&2
+  exit 78
+fi
+
+# No caller-supplied service, URL, command, PID, company, or run identifier is
+# accepted. The only privileged action is this exact unit restart.
+/bin/systemctl restart paperclip.service
+
+attempt=0
+while [ "$attempt" -lt 30 ]; do
+  if /usr/bin/curl --fail --silent --show-error --max-time 2 \
+    http://127.0.0.1:3100/api/health >/dev/null; then
+    break
+  fi
+  attempt=$((attempt + 1))
+  /bin/sleep 1
+done
+if [ "$attempt" -eq 30 ]; then
+  echo "paperclip did not become healthy after fixed recovery restart" >&2
+  exit 75
+fi
+
+# The application endpoint authenticates the dedicated recovery principal and
+# performs the authoritative inventory/reconciliation; this helper never reads
+# or mutates PostgreSQL, Paperclip config, backups, or repositories.
+/usr/bin/curl --fail --silent --show-error --max-time 30 \
+  --request POST \
+  --header "x-paperclip-recovery-token: $token" \
+  http://127.0.0.1:3100/api/recovery/reconcile
