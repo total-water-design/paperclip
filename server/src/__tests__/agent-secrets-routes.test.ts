@@ -16,6 +16,8 @@ import {
   companySecrets,
   createDb,
   heartbeatRuns,
+  issues,
+  managedSecretCapabilityGrants,
   secretAccessEvents,
 } from "@paperclipai/db";
 import { LOW_TRUST_REVIEW_PRESET, type AgentApiKeyScope } from "@paperclipai/shared";
@@ -48,11 +50,13 @@ describeEmbeddedPostgres("agent secret routes", () => {
   afterEach(async () => {
     await db.delete(activityLog);
     await db.delete(secretAccessEvents);
+    await db.delete(managedSecretCapabilityGrants);
     await db.delete(companySecretBindings);
     await db.delete(companySecretVersions);
     await db.delete(companySecrets);
     await db.delete(companySecretProviderConfigs);
     await db.delete(heartbeatRuns);
+    await db.delete(issues);
     await db.delete(agents);
     await db.delete(companies);
   });
@@ -230,6 +234,45 @@ describeEmbeddedPostgres("agent secret routes", () => {
     const fixture = await seedAgentRun();
     await expect(createRunSecretRedactionRegistry(db).register(fixture.companyId, randomUUID(), "must-not-return"))
       .rejects.toThrow("Heartbeat run redaction registration failed");
+  });
+
+  it("enforces exact run/agent scope, expiry, revocation, and run-bound JWT access", async () => {
+    const fixture = await seedAgentRun();
+    const svc = secretService(db);
+    const secret = await svc.create(fixture.companyId, { key: "SCOPED", name: "Scoped", provider: "local_encrypted", value: "scoped-value" });
+    const { grant, binding } = await svc.grantAgentCapability({ companyId: fixture.companyId, agentId: fixture.agentId, targetType: "run", targetId: fixture.heartbeatRunId, secretId: secret.id, configPath: "access.SCOPED", expiresAt: new Date(Date.now() + 60_000) });
+    await db.update(heartbeatRuns).set({ contextSnapshot: { paperclipSecrets: { manifest: [{ bindingId: binding.id }] } } }).where(eq(heartbeatRuns.id, fixture.heartbeatRunId));
+
+    expect((await request(createApp(fixture)).post("/api/agents/me/secrets/scoped/value")).status).toBe(200);
+    expect((await request(createApp(fixture, { kind: "task_bridge", parentIssueId: randomUUID() }, "agent_key")).post("/api/agents/me/secrets/scoped/value")).status).toBe(403);
+
+    const unrelated = await seedAgentRun();
+    expect((await request(createApp(unrelated)).post("/api/agents/me/secrets/scoped/value")).status).toBe(403);
+    await svc.revokeAgentCapability(fixture.companyId, grant.id, null, "test");
+    expect((await request(createApp(fixture)).post("/api/agents/me/secrets/scoped/value")).status).toBe(403);
+
+    const second = await svc.grantAgentCapability({ companyId: fixture.companyId, agentId: fixture.agentId, targetType: "run", targetId: fixture.heartbeatRunId, bindingId: binding.id, expiresAt: new Date(Date.now() + 60_000) });
+    await db.update(managedSecretCapabilityGrants).set({ expiresAt: new Date(Date.now() - 1_000) }).where(eq(managedSecretCapabilityGrants.id, second.grant.id));
+    expect((await request(createApp(fixture)).post("/api/agents/me/secrets/scoped/value")).status).toBe(403);
+  });
+
+  it("allows an issue grant on a newly dispatched matching run and denies another issue", async () => {
+    const fixture = await seedAgentRun();
+    const issueId = randomUUID();
+    const otherIssueId = randomUUID();
+    await db.insert(issues).values([{ id: issueId, companyId: fixture.companyId, title: "Authorized issue" }, { id: otherIssueId, companyId: fixture.companyId, title: "Other issue" }]);
+    const svc = secretService(db);
+    const secret = await svc.create(fixture.companyId, { key: "ISSUE_SCOPED", name: "Issue scoped", provider: "local_encrypted", value: "issue-value" });
+    const { binding } = await svc.grantAgentCapability({ companyId: fixture.companyId, agentId: fixture.agentId, targetType: "issue", targetId: issueId, secretId: secret.id, configPath: "access.ISSUE_SCOPED", expiresAt: new Date(Date.now() + 60_000) });
+    await db.update(heartbeatRuns).set({ contextSnapshot: { issueId, paperclipSecrets: { manifest: [{ bindingId: binding.id }] } } }).where(eq(heartbeatRuns.id, fixture.heartbeatRunId));
+    expect((await request(createApp(fixture)).post("/api/agents/me/secrets/issue_scoped/value")).status).toBe(200);
+
+    const newRunId = randomUUID();
+    await db.insert(heartbeatRuns).values({ id: newRunId, companyId: fixture.companyId, agentId: fixture.agentId, status: "running", contextSnapshot: { issueId, paperclipSecrets: { manifest: [{ bindingId: binding.id }] } } });
+    expect((await request(createApp({ ...fixture, heartbeatRunId: newRunId })).post("/api/agents/me/secrets/issue_scoped/value")).status).toBe(200);
+
+    await db.update(heartbeatRuns).set({ contextSnapshot: { issueId: otherIssueId, paperclipSecrets: { manifest: [{ bindingId: binding.id }] } } }).where(eq(heartbeatRuns.id, newRunId));
+    expect((await request(createApp({ ...fixture, heartbeatRunId: newRunId })).post("/api/agents/me/secrets/issue_scoped/value")).status).toBe(403);
   });
 
   it("deduplicates concurrent redaction registrations for the same run and value", async () => {

@@ -75,6 +75,7 @@ export { issueComments } from "./issue_comments.js";
 export { issueCreateIdempotencyKeys } from "./issue_create_idempotency_keys.js";
 export { issueThreadInteractions } from "./issue_thread_interactions.js";
 export { validationExecutionGrants } from "./validation_execution_grants.js";
+export { managedSecretCapabilityGrants } from "./managed_secret_capability_grants.js";
 export { issueQuestionResponseDeliveries } from "./issue_question_response_deliveries.js";
 export {
   decisions,

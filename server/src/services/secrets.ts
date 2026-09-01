@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, inArray, like, ne, notInArray, notLike, or, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, like, ne, notInArray, notLike, or, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
   agents,
@@ -12,6 +12,7 @@ import {
   environments,
   heartbeatRuns,
   issues,
+  managedSecretCapabilityGrants,
   projects,
   routines,
   secretAccessEvents,
@@ -827,8 +828,8 @@ function assertSecretBindingConfigPath(input: {
   configPath: string;
 }) {
   if (!input.configPath.startsWith(AGENT_ACCESS_CONFIG_PATH_PREFIX)) return;
-  if (input.targetType !== "agent") {
-    throw unprocessable("API-only secret access bindings must target an agent");
+  if (!(["agent", "issue", "run"] as SecretBindingTargetType[]).includes(input.targetType)) {
+    throw unprocessable("API-only secret access bindings must target an agent, issue, or run");
   }
   const alias = input.configPath.slice(AGENT_ACCESS_CONFIG_PATH_PREFIX.length);
   if (!ENV_KEY_RE.test(alias)) {
@@ -1593,6 +1594,27 @@ export function secretService(db: Db) {
       const isDirectAgentBinding = binding.targetType === "agent" && binding.targetId === context.agentId;
       if (!isDirectAgentBinding && !manifestBindingIds.has(binding.id)) {
         throw forbidden("Secret access is not granted for this agent run");
+      }
+      if (binding.targetType === "issue" || binding.targetType === "run") {
+        const runContext = asRecord(run.contextSnapshot) ?? {};
+        const runIssueId = typeof runContext.issueId === "string"
+          ? runContext.issueId
+          : typeof (asRecord(runContext.paperclipIssue) ?? {}).id === "string"
+            ? String((asRecord(runContext.paperclipIssue) ?? {}).id)
+            : null;
+        const grant = await db.select({ id: managedSecretCapabilityGrants.id })
+          .from(managedSecretCapabilityGrants)
+          .where(and(
+            eq(managedSecretCapabilityGrants.companyId, companyId),
+            eq(managedSecretCapabilityGrants.bindingId, binding.id),
+            eq(managedSecretCapabilityGrants.agentId, context.agentId),
+            eq(managedSecretCapabilityGrants.status, "active"),
+            gt(managedSecretCapabilityGrants.expiresAt, new Date()),
+            binding.targetType === "run"
+              ? eq(managedSecretCapabilityGrants.runId, context.heartbeatRunId)
+              : and(eq(managedSecretCapabilityGrants.issueId, binding.targetId), runIssueId ? eq(managedSecretCapabilityGrants.issueId, runIssueId) : sql`false`),
+          )).then((rows) => rows[0] ?? null);
+        if (!grant) throw forbidden("Secret capability grant is revoked, expired, or outside this run scope");
       }
       bindingContext = {
         ...bindingContext,
@@ -4444,6 +4466,57 @@ export function secretService(db: Db) {
         })
         .returning()
         .then((rows) => rows[0]);
+    },
+
+    grantAgentCapability: async (input: {
+      companyId: string;
+      agentId: string;
+      targetType: "issue" | "run";
+      targetId: string;
+      bindingId?: string;
+      secretId?: string;
+      configPath?: string;
+      expiresAt: Date;
+      createdByUserId?: string | null;
+    }) => db.transaction(async (tx) => {
+      if (!(input.expiresAt.getTime() > Date.now())) throw unprocessable("Capability grant expiry must be in the future");
+      const agent = await tx.select({ id: agents.id }).from(agents).where(and(eq(agents.id, input.agentId), eq(agents.companyId, input.companyId))).then((r) => r[0]);
+      if (!agent) throw notFound("Agent not found");
+      let issueId: string | null = null;
+      let runId: string | null = null;
+      if (input.targetType === "issue") {
+        const issue = await tx.select({ id: issues.id }).from(issues).where(and(eq(issues.id, input.targetId), eq(issues.companyId, input.companyId))).then((r) => r[0]);
+        if (!issue) throw notFound("Issue not found");
+        issueId = issue.id;
+      } else {
+        const run = await tx.select({ id: heartbeatRuns.id, agentId: heartbeatRuns.agentId }).from(heartbeatRuns).where(and(eq(heartbeatRuns.id, input.targetId), eq(heartbeatRuns.companyId, input.companyId))).then((r) => r[0]);
+        if (!run || run.agentId !== input.agentId) throw notFound("Agent run not found");
+        runId = run.id;
+      }
+      let binding = input.bindingId
+        ? await tx.select().from(companySecretBindings).where(and(eq(companySecretBindings.id, input.bindingId), eq(companySecretBindings.companyId, input.companyId))).then((r) => r[0])
+        : null;
+      if (!binding) {
+        if (!input.secretId || !input.configPath) throw unprocessable("bindingId or secretId and configPath are required");
+        await assertSecretInCompany(input.companyId, input.secretId, tx);
+        assertSecretBindingConfigPath({ targetType: input.targetType, configPath: input.configPath });
+        binding = await tx.insert(companySecretBindings).values({ companyId: input.companyId, secretId: input.secretId, targetType: input.targetType, targetId: input.targetId, configPath: input.configPath }).returning().then((r) => r[0]);
+      }
+      if (!binding) throw new Error("Capability binding insert did not return a row");
+      if (binding.targetType !== input.targetType || binding.targetId !== input.targetId) throw unprocessable("Binding scope does not match capability scope");
+      const grant = await tx.insert(managedSecretCapabilityGrants).values({ companyId: input.companyId, bindingId: binding.id, agentId: input.agentId, issueId, runId, expiresAt: input.expiresAt, createdByUserId: input.createdByUserId ?? null }).returning().then((r) => r[0]);
+      return { grant, binding };
+    }),
+
+    revokeAgentCapability: async (companyId: string, grantId: string, actorUserId: string | null, reason: string | null) => {
+      const grant = await db.update(managedSecretCapabilityGrants).set({ status: "revoked", revokedAt: new Date(), revokedByUserId: actorUserId, revocationReason: reason, }).where(and(eq(managedSecretCapabilityGrants.id, grantId), eq(managedSecretCapabilityGrants.companyId, companyId), eq(managedSecretCapabilityGrants.status, "active"))).returning().then((r) => r[0]);
+      if (!grant) throw notFound("Active capability grant not found");
+      return grant;
+    },
+
+    listApplicableAgentCapabilityBindings: async (companyId: string, agentId: string, issueId: string | null, runId: string) => {
+      const rows = await db.select({ grant: managedSecretCapabilityGrants, binding: companySecretBindings }).from(managedSecretCapabilityGrants).innerJoin(companySecretBindings, eq(companySecretBindings.id, managedSecretCapabilityGrants.bindingId)).where(and(eq(managedSecretCapabilityGrants.companyId, companyId), eq(managedSecretCapabilityGrants.agentId, agentId), eq(managedSecretCapabilityGrants.status, "active"), gt(managedSecretCapabilityGrants.expiresAt, new Date()), or(eq(managedSecretCapabilityGrants.runId, runId), issueId ? eq(managedSecretCapabilityGrants.issueId, issueId) : sql`false`)));
+      return rows.map(({ grant, binding }) => ({ grant, binding }));
     },
 
     syncSecretRefsForTarget: async (
