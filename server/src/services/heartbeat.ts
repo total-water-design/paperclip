@@ -18685,9 +18685,34 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
             && !shouldQueueFollowupForRunningWake
             && availableActiveExecutionRun
           ) {
+            const binding = opts.acceptedInteractionSourceRunRebind;
+            if (binding) {
+              const rebound = await tx
+                .update(issueThreadInteractions)
+                .set({ sourceRunId: availableActiveExecutionRun.id, updatedAt: new Date() })
+                .where(and(
+                  eq(issueThreadInteractions.id, binding.interactionId),
+                  eq(issueThreadInteractions.companyId, agent.companyId),
+                  eq(issueThreadInteractions.issueId, issue.id),
+                  eq(issueThreadInteractions.status, "accepted"),
+                  eq(issueThreadInteractions.sourceRunId, binding.expectedSourceRunId),
+                ))
+                .returning({ id: issueThreadInteractions.id })
+                .then((rows) => rows[0] ?? null);
+              if (!rebound) {
+                throw conflict("Accepted interaction source-run binding changed before coalesced wake dispatch", {
+                  interactionId: binding.interactionId,
+                  expectedSourceRunId: binding.expectedSourceRunId,
+                  executionRunId: availableActiveExecutionRun.id,
+                });
+              }
+            }
+            const continuationContext = binding
+              ? { ...enrichedContextSnapshot, sourceRunId: availableActiveExecutionRun.id }
+              : enrichedContextSnapshot;
             const mergedContextSnapshot = mergeCoalescedContextSnapshot(
               availableActiveExecutionRun.contextSnapshot,
-              enrichedContextSnapshot,
+              continuationContext,
             );
             const mergedRun = await tx
               .update(heartbeatRuns)
@@ -18705,7 +18730,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
               source,
               triggerDetail,
               reason: "issue_execution_same_name",
-              payload,
+              payload: binding ? { ...(payload ?? {}), sourceRunId: availableActiveExecutionRun.id } : payload,
               status: "coalesced",
               coalescedCount: 1,
               requestedByActorType: opts.requestedByActorType ?? null,

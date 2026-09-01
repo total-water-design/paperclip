@@ -1013,6 +1013,10 @@ describe.sequential("issue thread interaction routes", () => {
           interactionKind: "request_confirmation",
           interactionStatus: "accepted",
         }),
+        acceptedInteractionSourceRunRebind: {
+          interactionId: "interaction-3",
+          expectedSourceRunId: RUN_3,
+        },
       }),
     );
     expect(mockHeartbeatService.wakeup.mock.calls[0]?.[1]?.payload).not.toHaveProperty("toolAction");
