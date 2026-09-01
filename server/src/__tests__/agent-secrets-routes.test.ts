@@ -122,6 +122,20 @@ describeEmbeddedPostgres("agent secret routes", () => {
     return app;
   }
 
+  function createBoardApp(companyId: string, actorType: "board" | "agent" = "board") {
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      req.actor = actorType === "board"
+        ? { type: "board", userId: "local-board", companyIds: [companyId], source: "local_implicit" }
+        : { type: "agent", agentId: randomUUID(), companyId, runId: randomUUID(), source: "agent_jwt", keyScope: { kind: "standard" } };
+      next();
+    });
+    app.use("/api", secretRoutes(db));
+    app.use(errorHandler);
+    return app;
+  }
+
   it("lists metadata only, reads env and access grants, and audits success and failure", async () => {
     const fixture = await seedAgentRun();
     const svc = secretService(db);
@@ -225,8 +239,8 @@ describeEmbeddedPostgres("agent secret routes", () => {
     expect(await db.select().from(secretAccessEvents)).not.toEqual(expect.arrayContaining([
       expect.objectContaining({ secretId: unboundSecret.id }),
     ]));
-    expect(await db.select().from(activityLog)).not.toEqual(expect.arrayContaining([
-      expect.objectContaining({ action: "secret.value.read", entityId: unboundSecret.id }),
+    expect(await db.select().from(activityLog)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ action: "secret.value.denied", agentId: fixture.agentId }),
     ]));
   });
 
@@ -241,10 +255,27 @@ describeEmbeddedPostgres("agent secret routes", () => {
     const svc = secretService(db);
     const secret = await svc.create(fixture.companyId, { key: "SCOPED", name: "Scoped", provider: "local_encrypted", value: "scoped-value" });
     const { grant, binding } = await svc.grantAgentCapability({ companyId: fixture.companyId, agentId: fixture.agentId, targetType: "run", targetId: fixture.heartbeatRunId, secretId: secret.id, configPath: "access.SCOPED", expiresAt: new Date(Date.now() + 60_000) });
+    const applicable = await svc.listApplicableAgentCapabilityBindings(fixture.companyId, fixture.agentId, null, fixture.heartbeatRunId);
+    expect(applicable).toEqual([expect.objectContaining({
+      grant: expect.objectContaining({ id: grant.id, runId: fixture.heartbeatRunId, issueId: null }),
+      binding: expect.objectContaining({ id: binding.id, targetType: "run", targetId: fixture.heartbeatRunId, configPath: "access.SCOPED" }),
+    })]);
+    expect(JSON.stringify(applicable)).not.toContain("scoped-value");
     await db.update(heartbeatRuns).set({ contextSnapshot: { paperclipSecrets: { manifest: [{ bindingId: binding.id }] } } }).where(eq(heartbeatRuns.id, fixture.heartbeatRunId));
 
     expect((await request(createApp(fixture)).post("/api/agents/me/secrets/scoped/value")).status).toBe(200);
     expect((await request(createApp(fixture, { kind: "task_bridge", parentIssueId: randomUUID() }, "agent_key")).post("/api/agents/me/secrets/scoped/value")).status).toBe(403);
+
+    const unrelatedRunId = randomUUID();
+    await db.insert(heartbeatRuns).values({ id: unrelatedRunId, companyId: fixture.companyId, agentId: fixture.agentId, status: "running", contextSnapshot: {} });
+    expect(await svc.listApplicableAgentCapabilityBindings(fixture.companyId, fixture.agentId, null, unrelatedRunId)).toEqual([]);
+    expect((await request(createApp({ ...fixture, heartbeatRunId: unrelatedRunId })).post("/api/agents/me/secrets/scoped/value")).status).toBe(403);
+
+    const unrelatedAgentId = randomUUID();
+    await db.insert(agents).values({ id: unrelatedAgentId, companyId: fixture.companyId, name: "Unrelated", role: "engineer", adapterType: "codex_local", adapterConfig: {}, permissions: {}, status: "idle" });
+    const unrelatedAgentRunId = randomUUID();
+    await db.insert(heartbeatRuns).values({ id: unrelatedAgentRunId, companyId: fixture.companyId, agentId: unrelatedAgentId, status: "running", contextSnapshot: {} });
+    expect((await request(createApp({ ...fixture, agentId: unrelatedAgentId, heartbeatRunId: unrelatedAgentRunId })).post("/api/agents/me/secrets/scoped/value")).status).toBe(403);
 
     const unrelated = await seedAgentRun();
     expect((await request(createApp(unrelated)).post("/api/agents/me/secrets/scoped/value")).status).toBe(403);
@@ -254,6 +285,28 @@ describeEmbeddedPostgres("agent secret routes", () => {
     const second = await svc.grantAgentCapability({ companyId: fixture.companyId, agentId: fixture.agentId, targetType: "run", targetId: fixture.heartbeatRunId, bindingId: binding.id, expiresAt: new Date(Date.now() + 60_000) });
     await db.update(managedSecretCapabilityGrants).set({ expiresAt: new Date(Date.now() - 1_000) }).where(eq(managedSecretCapabilityGrants.id, second.grant.id));
     expect((await request(createApp(fixture)).post("/api/agents/me/secrets/scoped/value")).status).toBe(403);
+
+    const denials = await db.select().from(activityLog).where(eq(activityLog.action, "secret.value.denied"));
+    expect(denials.length).toBeGreaterThanOrEqual(5);
+    expect(JSON.stringify(denials)).not.toContain("scoped-value");
+  });
+
+  it("restricts grant and revoke to Board callers and audits both operations", async () => {
+    const fixture = await seedAgentRun();
+    const svc = secretService(db);
+    const secret = await svc.create(fixture.companyId, { key: "CONTROL", name: "Control", provider: "local_encrypted", value: "control-value" });
+    const payload = { agentId: fixture.agentId, targetType: "run", targetId: fixture.heartbeatRunId, secretId: secret.id, configPath: "access.CONTROL", expiresAt: new Date(Date.now() + 60_000).toISOString() };
+
+    expect((await request(createBoardApp(fixture.companyId, "agent")).post(`/api/companies/${fixture.companyId}/grant_agent_capability`).send(payload)).status).toBe(403);
+    const granted = await request(createBoardApp(fixture.companyId)).post(`/api/companies/${fixture.companyId}/grant_agent_capability`).send(payload);
+    expect(granted.status).toBe(201);
+    expect(JSON.stringify(granted.body)).not.toContain("control-value");
+    const revoked = await request(createBoardApp(fixture.companyId)).post(`/api/companies/${fixture.companyId}/agent-capability-grants/${granted.body.grant.id}/revoke`).send({ reason: "test" });
+    expect(revoked.status).toBe(200);
+    expect(await db.select().from(activityLog)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ action: "secret.capability.granted" }),
+      expect.objectContaining({ action: "secret.capability.revoked" }),
+    ]));
   });
 
   it("allows an issue grant on a newly dispatched matching run and denies another issue", async () => {
