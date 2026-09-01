@@ -327,19 +327,28 @@ export function secretRoutes(db: Db, deps: SecretRoutesDeps = {}) {
     const context = agentSecretContext(req);
     const available = await svc.listAgentSecretAccess(context.companyId, context);
     const secret = available.find((entry) => entry.key === req.params.key);
-    if (!secret) throw forbidden("Secret access is not granted for this agent");
-    const resolution = await svc.resolveSecretValueForAgentAccess(
-      context.companyId,
-      secret.secretId,
-      secret.versionSelector,
-      {
-        ...context,
-        configPath: secret.configPath,
-        bindingId: secret.bindingId,
-        issueId: null,
-        registerForRedaction: (value) => runRedactions.register(context.companyId, context.heartbeatRunId, value),
-      },
-    );
+    if (!secret) {
+      await logActivity(db, { companyId: context.companyId, actorType: "agent", actorId: context.agentId, action: "secret.value.denied", entityType: "agent", entityId: context.agentId, agentId: context.agentId, runId: context.heartbeatRunId, details: { key: req.params.key, reason: "not_granted" } });
+      throw forbidden("Secret access is not granted for this agent");
+    }
+    let resolution;
+    try {
+      resolution = await svc.resolveSecretValueForAgentAccess(
+        context.companyId,
+        secret.secretId,
+        secret.versionSelector,
+        {
+          ...context,
+          configPath: secret.configPath,
+          bindingId: secret.bindingId,
+          issueId: null,
+          registerForRedaction: (value) => runRedactions.register(context.companyId, context.heartbeatRunId, value),
+        },
+      );
+    } catch (error) {
+      await logActivity(db, { companyId: context.companyId, actorType: "agent", actorId: context.agentId, action: "secret.value.denied", entityType: "secret", entityId: secret.secretId, agentId: context.agentId, runId: context.heartbeatRunId, details: { key: secret.key, reason: "access_check_failed" } }).catch(() => undefined);
+      throw error;
+    }
     res.set("Cache-Control", "no-store");
     res.json({
       key: secret.key,
@@ -586,6 +595,39 @@ export function secretRoutes(db: Db, deps: SecretRoutesDeps = {}) {
     assertCompanyAccess(req, companyId);
     const secrets = await svc.list(companyId);
     res.json(secrets);
+  });
+
+  // Board/control-plane only. This deliberately cannot create an agent-wide binding.
+  router.post("/companies/:companyId/grant_agent_capability", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanySecretWrite(req, companyId);
+    const targetType = req.body?.targetType;
+    if (targetType !== "issue" && targetType !== "run") throw unprocessable("targetType must be issue or run");
+    if (typeof req.body?.agentId !== "string" || typeof req.body?.targetId !== "string") throw unprocessable("agentId and targetId are required");
+    const expiresAt = new Date(req.body?.expiresAt);
+    if (Number.isNaN(expiresAt.getTime())) throw unprocessable("Valid expiresAt is required");
+    const result = await svc.grantAgentCapability({
+      companyId,
+      agentId: req.body.agentId,
+      targetType,
+      targetId: req.body.targetId,
+      bindingId: typeof req.body.bindingId === "string" ? req.body.bindingId : undefined,
+      secretId: typeof req.body.secretId === "string" ? req.body.secretId : undefined,
+      configPath: typeof req.body.configPath === "string" ? req.body.configPath : undefined,
+      expiresAt,
+      createdByUserId: req.actor.userId ?? null,
+    });
+    await logActivity(db, { companyId, actorType: "user", actorId: req.actor.userId ?? "board", action: "secret.capability.granted", entityType: "secret_binding", entityId: result.binding.id, details: { grantId: result.grant.id, agentId: result.grant.agentId, targetType, targetId: req.body.targetId, expiresAt: result.grant.expiresAt.toISOString() } });
+    res.status(201).json({ grant: result.grant, binding: { id: result.binding.id, configPath: result.binding.configPath, targetType: result.binding.targetType, targetId: result.binding.targetId, versionSelector: result.binding.versionSelector, required: result.binding.required, label: result.binding.label, projectionClass: result.binding.projectionClass } });
+  });
+
+  router.post("/companies/:companyId/agent-capability-grants/:grantId/revoke", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanySecretWrite(req, companyId);
+    const reason = typeof req.body?.reason === "string" ? req.body.reason.trim() || null : null;
+    const grant = await svc.revokeAgentCapability(companyId, req.params.grantId as string, req.actor.userId ?? null, reason);
+    await logActivity(db, { companyId, actorType: "user", actorId: req.actor.userId ?? "board", action: "secret.capability.revoked", entityType: "secret_binding", entityId: grant.bindingId, details: { grantId: grant.id, agentId: grant.agentId, issueId: grant.issueId, runId: grant.runId, reason } });
+    res.json(grant);
   });
 
   router.get("/companies/:companyId/user-secret-definitions", async (req, res) => {
