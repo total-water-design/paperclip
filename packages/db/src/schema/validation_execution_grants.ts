@@ -19,7 +19,7 @@ export const validationExecutionGrants = pgTable("validation_execution_grants", 
   issueId: uuid("issue_id").notNull().references(() => issues.id),
   candidateSha: text("candidate_sha").notNull(), contractSha: text("contract_sha").notNull(), oracleSha: text("oracle_sha").notNull(),
   capability: text("capability").notNull().default("validation_execution"), status: text("status").notNull().default("issued"),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(), consumedAt: timestamp("consumed_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(), expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(), consumedAt: timestamp("consumed_at", { withTimezone: true }),
   invalidatedAt: timestamp("invalidated_at", { withTimezone: true }), invalidationReason: text("invalidation_reason"),
 }, (t) => ({
   approvalUq: uniqueIndex("validation_execution_grants_approval_interaction_uq").on(t.approvalInteractionId),
