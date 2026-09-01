@@ -1,0 +1,3 @@
+# Install only through the separately Board-gated production procedure.
+# Root-owned mode 0440. The empty argument string prohibits all arguments.
+paperclip ALL=(root) NOPASSWD: /usr/local/lib/paperclip/paperclip-recovery ""

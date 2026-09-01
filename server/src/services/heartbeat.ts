@@ -13910,6 +13910,19 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     return recovery.reconcileStrandedAssignedIssues({ issueCreatedAtGte: await getWorktreeExecutionCutoff() });
   }
 
+  async function getRecoveryRunInventory() {
+    // This is deliberately database-backed application state. Callers must not
+    // infer an active run from a PID, log file, or an unauthenticated endpoint.
+    const rows = await db
+      .select({ id: heartbeatRuns.id, status: heartbeatRuns.status })
+      .from(heartbeatRuns)
+      .where(inArray(heartbeatRuns.status, ["running", "queued"]));
+    return {
+      activeRunIds: rows.filter((row) => row.status === "running").map((row) => row.id),
+      queuedRunIds: rows.filter((row) => row.status === "queued").map((row) => row.id),
+    };
+  }
+
   async function sweepStaleIssueLocks() {
     return recovery.sweepStaleIssueLocks();
   }
@@ -19729,6 +19742,8 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     retryScheduledRetryNow,
 
     resumeQueuedRuns,
+
+    getRecoveryRunInventory,
 
     scheduleBoundedRetry: async (
       runId: string,
