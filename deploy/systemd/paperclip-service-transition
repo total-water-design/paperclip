@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# Auditable, non-migrating transition between a named manual Paperclip process
+# and the root-managed systemd unit. Production mutations require an explicit
+# action; `capture` is read-only.
+set -euo pipefail
+
+fail() { printf 'paperclip transition: %s\n' "$*" >&2; exit 1; }
+action="${1:-}"
+evidence_dir="${PAPERCLIP_TRANSITION_EVIDENCE_DIR:-}"
+instance="${PAPERCLIP_INSTANCE_ID:-default}"
+unit="${PAPERCLIP_SYSTEMD_UNIT:-paperclip.service}"
+rollback_root="${PAPERCLIP_ROLLBACK_ROOT:-/root/paperclip-service-rollback}"
+manual_pid="${PAPERCLIP_MANUAL_PID:-}"
+[[ "$instance" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || fail "unsafe instance id"
+[[ -n "$evidence_dir" && "$evidence_dir" = /* ]] || fail "set PAPERCLIP_TRANSITION_EVIDENCE_DIR to an absolute change-record directory"
+mkdir -p "$evidence_dir"
+
+record_service() {
+  systemctl is-enabled "$unit" >"$evidence_dir/service.enabled" 2>&1 || true
+  systemctl is-active "$unit" >"$evidence_dir/service.active" 2>&1 || true
+  systemctl show "$unit" -p MainPID -p ActiveState -p SubState -p NRestarts -p ExecMainStatus --no-pager >"$evidence_dir/service.show" 2>&1 || true
+}
+
+capture_runs() {
+  local output="$1"
+  [[ -n "${PAPERCLIP_API_URL:-}" && -n "${PAPERCLIP_API_KEY:-}" ]] || fail "run accounting requires PAPERCLIP_API_URL and PAPERCLIP_API_KEY"
+  curl -fsS -H "Authorization: Bearer $PAPERCLIP_API_KEY" "${PAPERCLIP_API_URL%/}/heartbeat-runs?status=queued,running" |
+    jq -e --arg instance "$instance" '[.[] | select((.instanceId // "default") == $instance) | {id,status}] | sort_by(.id)' >"$output"
+}
+
+case "$action" in
+  capture)
+    record_service
+    capture_runs "$evidence_dir/runs.before.json"
+    curl -fsS http://127.0.0.1:3100/api/health | jq . >"$evidence_dir/health.before.json"
+    ;;
+  handoff)
+    [[ "$manual_pid" =~ ^[0-9]+$ && "$manual_pid" -gt 1 ]] || fail "set PAPERCLIP_MANUAL_PID to the captured manual process"
+    [[ -r "/proc/$manual_pid/cmdline" && -r "/proc/$manual_pid/environ" ]] || fail "manual PID is not inspectable"
+    tr '\0' ' ' <"/proc/$manual_pid/cmdline" >"$evidence_dir/manual.cmdline"
+    tr '\0' '\n' <"/proc/$manual_pid/environ" | grep -E '^(PAPERCLIP_HOME|PAPERCLIP_CONFIG|PAPERCLIP_INSTANCE_ID)=' >"$evidence_dir/manual.instance-env" || true
+    grep -Eq "(^| )run( |$)" "$evidence_dir/manual.cmdline" || fail "PID is not a Paperclip run process"
+    grep -Fxq "PAPERCLIP_INSTANCE_ID=$instance" "$evidence_dir/manual.instance-env" || fail "manual process does not prove named instance $instance"
+    [[ -s "$evidence_dir/runs.before.json" ]] || capture_runs "$evidence_dir/runs.before.json"
+    kill -TERM "$manual_pid"
+    timeout 300 sh -c 'pid="$1"; while kill -0 "$pid" 2>/dev/null; do sleep 1; done' sh "$manual_pid" || fail "manual process did not stop gracefully"
+    systemctl start "$unit"
+    timeout 180 sh -c 'until systemctl is-active --quiet "$1" && curl -fsS http://127.0.0.1:3100/api/health | jq -e '\''.status == "ok"'\'' >/dev/null; do sleep 1; done' sh "$unit"
+    record_service
+    capture_runs "$evidence_dir/runs.after.json"
+    journalctl -u "$unit" --since '-10 min' --no-pager >"$evidence_dir/journal.handoff.log"
+    ;;
+  reconcile)
+    [[ -s "$evidence_dir/runs.before.json" ]] || fail "missing runs.before.json"
+    : >"$evidence_dir/run-reconciliation.jsonl"
+    jq -r '.[].id' "$evidence_dir/runs.before.json" | while IFS= read -r run_id; do
+      curl -fsS -H "Authorization: Bearer $PAPERCLIP_API_KEY" "${PAPERCLIP_API_URL%/}/heartbeat-runs/$run_id" |
+        jq -ce --arg id "$run_id" '{id:$id,status,recoveryDisposition:(.recoveryDisposition // null)}' >>"$evidence_dir/run-reconciliation.jsonl"
+    done
+    expected="$(jq 'length' "$evidence_dir/runs.before.json")"
+    actual="$(wc -l <"$evidence_dir/run-reconciliation.jsonl")"
+    [[ "$actual" -eq "$expected" ]] || fail "not every pre-existing run was accounted for"
+    jq -se 'all(.[]; (.status == "queued" or .status == "running" or .status == "succeeded" or .status == "failed" or .status == "cancelled") and ((.status == "queued" or .status == "running") or .recoveryDisposition != null))' "$evidence_dir/run-reconciliation.jsonl" >/dev/null || fail "a pre-existing run lacks an inspectable recovery outcome"
+    ;;
+  sigkill-test)
+    [[ "${PAPERCLIP_ALLOW_SIGKILL_TEST:-}" == "APPROVED" ]] || fail "SIGKILL test is gated; set PAPERCLIP_ALLOW_SIGKILL_TEST=APPROVED only in the authorized window"
+    before_pid="$(systemctl show "$unit" -p MainPID --value)"
+    [[ "$before_pid" =~ ^[0-9]+$ && "$before_pid" -gt 1 ]] || fail "no managed main PID"
+    printf '%s\n' "$before_pid" >"$evidence_dir/sigkill.before-pid"
+    capture_runs "$evidence_dir/runs.before.json"
+    systemctl kill --signal=SIGKILL --kill-who=main "$unit"
+    timeout 60 sh -c 'old="$1"; unit="$2"; until new=$(systemctl show "$unit" -p MainPID --value) && test "$new" -gt 1 && test "$new" != "$old" && systemctl is-active --quiet "$unit" && curl -fsS http://127.0.0.1:3100/api/health | jq -e '\''.status == "ok"'\'' >/dev/null; do sleep 1; done' sh "$before_pid" "$unit"
+    record_service
+    journalctl -u "$unit" --since '-10 min' --no-pager >"$evidence_dir/journal.sigkill.log"
+    "$0" reconcile
+    ;;
+  *) fail "usage: $0 {capture|handoff|reconcile|sigkill-test}" ;;
+esac

@@ -384,6 +384,13 @@ export async function buildLocalProcessSandboxSpawnTarget(input: {
   let executable = input.executable;
   let executableArgs = input.args;
 
+  // A network-only sandbox leaves the host filesystem visible.  Re-bind /dev
+  // explicitly so later Bubblewrap argument changes cannot turn that mode into
+  // a device-less namespace (Node CLIs need at least /dev/null and /dev/urandom).
+  if (!filesystemScope && networkScope) {
+    args.push("--dev-bind", "/dev", "/dev");
+  }
+
   if (filesystemScope === "workspace") {
     args.push("--tmpfs", "/", "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp");
     args.push(

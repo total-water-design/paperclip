@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Snapshot/install/rollback service files without touching Paperclip instance data.
+set -euo pipefail
+action="${1:-}"
+root="${PAPERCLIP_INSTALL_ROOT:-/}"
+backup="${PAPERCLIP_ROLLBACK_ROOT:-/root/paperclip-service-rollback}"
+install_owner="${PAPERCLIP_INSTALL_OWNER:-root}"
+install_group="${PAPERCLIP_INSTALL_GROUP:-root}"
+paths=(etc/systemd/system/paperclip.service etc/systemd/system/paperclip-health-recovery.service etc/systemd/system/paperclip-health-recovery.timer etc/paperclip/paperclip.env usr/lib/paperclip/paperclip-preflight usr/lib/paperclip/paperclip-service-transition usr/lib/paperclip/paperclip-health-recovery)
+srcs=(deploy/systemd/paperclip.service deploy/systemd/paperclip-health-recovery.service deploy/systemd/paperclip-health-recovery.timer deploy/systemd/paperclip.env deploy/systemd/paperclip-preflight deploy/systemd/paperclip-service-transition deploy/systemd/paperclip-health-recovery)
+mkdir -p "$backup/files"
+
+snapshot() {
+  : >"$backup/manifest.tsv"
+  for rel in "${paths[@]}"; do
+    target="$root/$rel"
+    if [[ -e "$target" || -L "$target" ]]; then printf 'present\t%s\n' "$rel" >>"$backup/manifest.tsv"; mkdir -p "$backup/files/$(dirname "$rel")"; cp -a "$target" "$backup/files/$rel"; else printf 'absent\t%s\n' "$rel" >>"$backup/manifest.tsv"; fi
+  done
+  systemctl is-enabled paperclip.service >"$backup/prior.enabled" 2>&1 || true
+  systemctl is-active paperclip.service >"$backup/prior.active" 2>&1 || true
+  systemctl is-enabled paperclip-health-recovery.timer >"$backup/prior.health-recovery-timer.enabled" 2>&1 || true
+  systemctl is-active paperclip-health-recovery.timer >"$backup/prior.health-recovery-timer.active" 2>&1 || true
+}
+
+case "$action" in
+  install)
+    snapshot
+    for i in "${!paths[@]}"; do mkdir -p "$(dirname "$root/${paths[$i]}")"; install -o "$install_owner" -g "$install_group" -m 0755 "${srcs[$i]}" "$root/${paths[$i]}"; done
+    chmod 0644 "$root/etc/systemd/system/paperclip.service" "$root/etc/systemd/system/paperclip-health-recovery.service" "$root/etc/systemd/system/paperclip-health-recovery.timer"; chmod 0640 "$root/etc/paperclip/paperclip.env"
+    systemctl daemon-reload
+    ;;
+  rollback)
+    [[ -s "$backup/manifest.tsv" ]] || { echo "missing rollback manifest" >&2; exit 1; }
+    mkdir -p "$backup/replaced"
+    while IFS=$'\t' read -r state rel; do
+      target="$root/$rel"
+      if [[ "$state" == present ]]; then cp -a "$backup/files/$rel" "$target"; else [[ ! -e "$target" && ! -L "$target" ]] || { mkdir -p "$backup/replaced/$(dirname "$rel")"; mv "$target" "$backup/replaced/$rel"; }; fi
+    done <"$backup/manifest.tsv"
+    systemctl daemon-reload
+    grep -qx enabled "$backup/prior.enabled" && systemctl enable paperclip.service || systemctl disable paperclip.service
+    if grep -qx active "$backup/prior.active"; then systemctl start paperclip.service; else systemctl stop paperclip.service; fi
+    grep -qx enabled "$backup/prior.health-recovery-timer.enabled" && systemctl enable paperclip-health-recovery.timer || systemctl disable paperclip-health-recovery.timer
+    if grep -qx active "$backup/prior.health-recovery-timer.active"; then systemctl start paperclip-health-recovery.timer; else systemctl stop paperclip-health-recovery.timer; fi
+    ;;
+  *) echo "usage: $0 {install|rollback}" >&2; exit 1 ;;
+esac
