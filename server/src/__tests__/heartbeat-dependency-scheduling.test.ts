@@ -18,6 +18,7 @@ import {
   heartbeatRuns,
   issueComments,
   issueDocuments,
+  issueThreadInteractions,
   issueRelations,
   issueTreeHolds,
   issues,
@@ -28,6 +29,7 @@ import {
   startEmbeddedPostgresTestDatabase,
 } from "./helpers/embedded-postgres.js";
 import { heartbeatService } from "../services/heartbeat.ts";
+import { canAdoptExactExecutionRunOwnership } from "../services/issue-run-ownership.ts";
 import { runningProcesses } from "../adapters/index.ts";
 
 const mockAdapterExecute = vi.hoisted(() =>
@@ -133,6 +135,7 @@ describeEmbeddedPostgres("heartbeat dependency-aware queued run selection", () =
     await db.delete(environmentLeases);
     await db.delete(activityLog);
     await db.delete(companySkills);
+    await db.delete(issueThreadInteractions);
     await db.delete(issueComments);
     await db.delete(issueDocuments);
     await db.delete(documentRevisions);
@@ -167,6 +170,147 @@ describeEmbeddedPostgres("heartbeat dependency-aware queued run selection", () =
 
   afterAll(async () => {
     await tempDb?.cleanup();
+  });
+
+  it("atomically rebinds an accepted interaction to its exact continuation run", async () => {
+    // Fixed fixture UUIDs make the exact-run regression reproducible.
+    const companyId = "a1010000-0000-4000-8000-000000000001";
+    const agentId = "a1010000-0000-4000-8000-000000000002";
+    const issueId = "a1010000-0000-4000-8000-000000000003";
+    const interactionId = "a1010000-0000-4000-8000-000000000004";
+    const sourceRunId = "a1010000-0000-4000-8000-000000000005";
+    const executionRunId = "a1010000-0000-4000-8000-000000000006";
+    const unrelatedRunId = "a1010000-0000-4000-8000-000000000007";
+
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+      defaultResponsibleUserId: "responsible-user",
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      companyId,
+      name: "ExactRunAgent",
+      role: "engineer",
+      status: "active",
+      adapterType: "codex_local",
+      adapterConfig: {},
+      runtimeConfig: { heartbeat: { wakeOnDemand: true, maxConcurrentRuns: 1 } },
+      permissions: {},
+    });
+    await db.insert(issues).values({
+      id: issueId,
+      companyId,
+      title: "Rebind accepted confirmation",
+      status: "in_progress",
+      priority: "high",
+      assigneeAgentId: agentId,
+      responsibleUserId: "responsible-user",
+    });
+
+    // The queued execution makes this a coalesced wake. Before this fix the
+    // interaction retained sourceRunId, so run-specific validation rejected
+    // the active execution run and re-entered the confirmation wake loop.
+    await db.insert(heartbeatRuns).values([
+      {
+        id: sourceRunId,
+        companyId,
+        agentId,
+        invocationSource: "assignment",
+        status: "succeeded",
+        contextSnapshot: { issueId },
+      },
+      {
+        id: executionRunId,
+        companyId,
+        agentId,
+        invocationSource: "assignment",
+        status: "queued",
+        contextSnapshot: { issueId, wakeReason: "issue_assigned" },
+      },
+      {
+        // Adjacent negative control: this other completed run never becomes
+        // authorized merely because it belongs to the same agent and issue.
+        id: unrelatedRunId,
+        companyId,
+        agentId,
+        invocationSource: "assignment",
+        status: "succeeded",
+        contextSnapshot: { issueId },
+      },
+    ]);
+    await db
+      .update(issues)
+      .set({ executionRunId })
+      .where(eq(issues.id, issueId));
+
+    await db.insert(issueThreadInteractions).values({
+      id: interactionId,
+      companyId,
+      issueId,
+      kind: "request_confirmation",
+      status: "accepted",
+      continuationPolicy: "wake_assignee",
+      createdByAgentId: agentId,
+      sourceRunId,
+      // The acceptance was made by a human under the restrictive policy; the
+      // continuation must retain that policy while its exact execution run is
+      // authorized to resume the issue work.
+      effectiveResolverPolicy: "human_only",
+      payload: { version: 1, prompt: "Continue after human acceptance?" },
+      result: { version: 1, outcome: "accepted" },
+    });
+
+    const continuationRun = await heartbeat.wakeup(agentId, {
+      source: "automation",
+      triggerDetail: "system",
+      reason: "issue_commented",
+      payload: { issueId, interactionId, sourceRunId },
+      contextSnapshot: { issueId, interactionId, sourceRunId, wakeReason: "issue_commented" },
+      acceptedInteractionSourceRunRebind: {
+        interactionId,
+        expectedSourceRunId: sourceRunId,
+      },
+    });
+    expect(continuationRun).not.toBeNull();
+
+    const [persistedInteraction] = await db
+      .select({ sourceRunId: issueThreadInteractions.sourceRunId })
+      .from(issueThreadInteractions)
+      .where(eq(issueThreadInteractions.id, interactionId));
+    const [persistedWakeRun] = await db
+      .select({ contextSnapshot: heartbeatRuns.contextSnapshot })
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, continuationRun!.id));
+    const [persistedIssueAfterWake] = await db
+      .select({ executionRunId: issues.executionRunId, checkoutRunId: issues.checkoutRunId })
+      .from(issues)
+      .where(eq(issues.id, issueId));
+
+    // Equality proof: the permitted source run and coalesced execution run
+    // are the same UUID before validation can inspect the continuation.
+    expect(continuationRun!.id).toBe(executionRunId);
+    expect(persistedInteraction?.sourceRunId).toBe(executionRunId);
+    expect(persistedWakeRun?.contextSnapshot).toMatchObject({ sourceRunId: executionRunId });
+    // The coalesced wake must preserve the authoritative exact-run lock.
+    expect(persistedIssueAfterWake).toMatchObject({ executionRunId, checkoutRunId: null });
+    expect(persistedInteraction?.sourceRunId).not.toBe(sourceRunId);
+    expect(persistedInteraction?.sourceRunId).not.toBe(unrelatedRunId);
+
+    // Exercise the exact first-claim authorization gate used by
+    // issueService.assertCheckoutOwner. Only the rebound execution run may
+    // claim the empty checkout lock; the adjacent candidate is denied.
+    const authorizationInput = {
+      status: "in_progress",
+      assigneeAgentId: agentId,
+      checkoutRunId: null,
+      executionRunId,
+      actorAgentId: agentId,
+    };
+    expect(canAdoptExactExecutionRunOwnership({ ...authorizationInput, actorRunId: executionRunId })).toBe(true);
+    expect(canAdoptExactExecutionRunOwnership({ ...authorizationInput, actorRunId: unrelatedRunId })).toBe(false);
   });
 
   it("keeps blocked descendants idle until their blockers resolve", async () => {

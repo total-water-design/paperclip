@@ -95,6 +95,7 @@ import { resolveIssueGoalId, resolveNextIssueGoalId } from "./issue-goal-fallbac
 import { getRunLogStore } from "./run-log-store.js";
 import { getDefaultCompanyGoal } from "./goals.js";
 import { assertAssignableAgent } from "./agent-assignability.js";
+import { canAdoptExactExecutionRunOwnership } from "./issue-run-ownership.js";
 import { DEFAULT_INSERT_CHUNK_ROWS, insertRowsInChunks } from "./batch-insert.js";
 import type {
   ImportIssueRow,
@@ -8386,13 +8387,7 @@ export function issueService(db: Db) {
         assigneeAgentId: string | null;
         checkoutRunId: string | null;
         executionRunId: string | null;
-      }) => (
-        actorRunId
-        && candidate.status === "in_progress"
-        && candidate.assigneeAgentId === actorAgentId
-        && candidate.checkoutRunId == null
-        && (candidate.executionRunId == null || candidate.executionRunId === actorRunId)
-      );
+      }) => canAdoptExactExecutionRunOwnership({ ...candidate, actorAgentId, actorRunId });
 
       const resolveOwnership = async (
         candidate: {
