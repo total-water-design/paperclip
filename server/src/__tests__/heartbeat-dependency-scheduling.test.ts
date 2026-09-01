@@ -177,6 +177,9 @@ describeEmbeddedPostgres("heartbeat dependency-aware queued run selection", () =
     const agentId = "a1010000-0000-4000-8000-000000000002";
     const issueId = "a1010000-0000-4000-8000-000000000003";
     const interactionId = "a1010000-0000-4000-8000-000000000004";
+    const sourceRunId = "a1010000-0000-4000-8000-000000000005";
+    const executionRunId = "a1010000-0000-4000-8000-000000000006";
+    const unrelatedRunId = "a1010000-0000-4000-8000-000000000007";
 
     await db.insert(companies).values({
       id: companyId,
@@ -206,27 +209,41 @@ describeEmbeddedPostgres("heartbeat dependency-aware queued run selection", () =
       responsibleUserId: "responsible-user",
     });
 
-    const creatorRun = await heartbeat.wakeup(agentId, {
-      source: "assignment",
-      triggerDetail: "system",
-      reason: "issue_assigned",
-      payload: { issueId },
-      contextSnapshot: { issueId, wakeReason: "issue_assigned" },
-    });
-    expect(creatorRun).not.toBeNull();
-    await waitForCondition(async () => (await heartbeat.getRun(creatorRun!.id))?.status === "succeeded");
-
-    // This distinct, completed run is the adjacent negative control: it must
-    // never gain the confirmation's exact-run authorization.
-    const unrelatedRun = await heartbeat.wakeup(agentId, {
-      source: "assignment",
-      triggerDetail: "system",
-      reason: "issue_assigned",
-      payload: { issueId },
-      contextSnapshot: { issueId, wakeReason: "issue_assigned" },
-    });
-    expect(unrelatedRun).not.toBeNull();
-    await waitForCondition(async () => (await heartbeat.getRun(unrelatedRun!.id))?.status === "succeeded");
+    // The queued execution makes this a coalesced wake. Before this fix the
+    // interaction retained sourceRunId, so run-specific validation rejected
+    // the active execution run and re-entered the confirmation wake loop.
+    await db.insert(heartbeatRuns).values([
+      {
+        id: sourceRunId,
+        companyId,
+        agentId,
+        invocationSource: "assignment",
+        status: "succeeded",
+        contextSnapshot: { issueId },
+      },
+      {
+        id: executionRunId,
+        companyId,
+        agentId,
+        invocationSource: "assignment",
+        status: "queued",
+        contextSnapshot: { issueId, wakeReason: "issue_assigned" },
+      },
+      {
+        // Adjacent negative control: this other completed run never becomes
+        // authorized merely because it belongs to the same agent and issue.
+        id: unrelatedRunId,
+        companyId,
+        agentId,
+        invocationSource: "assignment",
+        status: "succeeded",
+        contextSnapshot: { issueId },
+      },
+    ]);
+    await db
+      .update(issues)
+      .set({ executionRunId })
+      .where(eq(issues.id, issueId));
 
     await db.insert(issueThreadInteractions).values({
       id: interactionId,
@@ -236,7 +253,7 @@ describeEmbeddedPostgres("heartbeat dependency-aware queued run selection", () =
       status: "accepted",
       continuationPolicy: "wake_assignee",
       createdByAgentId: agentId,
-      sourceRunId: creatorRun!.id,
+      sourceRunId,
       payload: { version: 1, prompt: "Continue after human acceptance?" },
       result: { version: 1, outcome: "accepted" },
     });
@@ -245,11 +262,11 @@ describeEmbeddedPostgres("heartbeat dependency-aware queued run selection", () =
       source: "automation",
       triggerDetail: "system",
       reason: "issue_commented",
-      payload: { issueId, interactionId, sourceRunId: creatorRun!.id },
-      contextSnapshot: { issueId, interactionId, sourceRunId: creatorRun!.id, wakeReason: "issue_commented" },
+      payload: { issueId, interactionId, sourceRunId },
+      contextSnapshot: { issueId, interactionId, sourceRunId, wakeReason: "issue_commented" },
       acceptedInteractionSourceRunRebind: {
         interactionId,
-        expectedSourceRunId: creatorRun!.id,
+        expectedSourceRunId: sourceRunId,
       },
     });
     expect(continuationRun).not.toBeNull();
@@ -263,12 +280,13 @@ describeEmbeddedPostgres("heartbeat dependency-aware queued run selection", () =
       .from(heartbeatRuns)
       .where(eq(heartbeatRuns.id, continuationRun!.id));
 
-    // Equality proof: the permitted source run and queued execution run are
-    // the same UUID before the scheduler may claim it.
-    expect(persistedInteraction?.sourceRunId).toBe(continuationRun!.id);
-    expect(persistedWakeRun?.contextSnapshot).toMatchObject({ sourceRunId: continuationRun!.id });
-    // Adjacent negative control: a different completed run remains unauthorized.
-    expect(persistedInteraction?.sourceRunId).not.toBe(unrelatedRun!.id);
+    // Equality proof: the permitted source run and coalesced execution run
+    // are the same UUID before validation can inspect the continuation.
+    expect(continuationRun!.id).toBe(executionRunId);
+    expect(persistedInteraction?.sourceRunId).toBe(executionRunId);
+    expect(persistedWakeRun?.contextSnapshot).toMatchObject({ sourceRunId: executionRunId });
+    expect(persistedInteraction?.sourceRunId).not.toBe(sourceRunId);
+    expect(persistedInteraction?.sourceRunId).not.toBe(unrelatedRunId);
   });
 
   it("keeps blocked descendants idle until their blockers resolve", async () => {
