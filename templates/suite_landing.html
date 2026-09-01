@@ -37,7 +37,7 @@
     </nav>
   </header>
 
-  {% set whats_new = twds_whats_new|default({'recently_updated': [], 'roadmap': [], 'commercial_launch_window': ''}, true) %}
+  {% set whats_new = twds_whats_new|default({'recently_updated': [], 'roadmap': [], 'commercial_launch_window': '', 'cards': {}}, true) %}
   <main>
     <section class="suite-hero">
       <div class="suite-hero-copy">
@@ -104,9 +104,12 @@
     <section id="whats-new" class="suite-section suite-whats-new">
       <div class="suite-section-heading compact"><div><p class="suite-eyebrow">WHAT'S NEW</p><h2>Recent improvements and approved next steps.</h2></div></div>
       <div class="suite-whats-new-grid">
+        {% set card = whats_new.cards.get('recently_updated', {}) %}
         <article class="suite-whats-new-card">
-          <span>Recently Updated</span>
-          <h3>Changes already deployed</h3>
+          <span>{{ card.get('release_label', 'No approved update') }}</span>
+          <h3>{{ card.get('title', 'Recently Updated') }}</h3>
+          {% if card.get('public_ready') %}<p>{{ card.get('summary') }}</p>{% endif %}
+          <small class="suite-whats-new-date">Last updated: {{ card.get('updated_at').strftime('%Y-%m-%d') if card.get('updated_at') else 'Not published' }}</small>
           {% for release in whats_new.recently_updated %}
           <div class="suite-whats-new-item">
             <strong>{{ release.title }}</strong><small>{{ release.version }}{% if release.deployed_at %} · {{ release.deployed_at.strftime('%Y-%m-%d') }}{% endif %}</small>
@@ -116,17 +119,23 @@
           {% else %}<p class="suite-whats-new-empty">No public release update has been published yet.</p>{% endfor %}
         </article>
 
+        {% set card = whats_new.cards.get('roadmap', {}) %}
         <article class="suite-whats-new-card">
-          <span>What We're Working On</span>
-          <h3>Administrator-approved roadmap</h3>
+          <span>{{ card.get('release_label', 'No approved update') }}</span>
+          <h3>{{ card.get('title', "What We're Working On") }}</h3>
+          {% if card.get('public_ready') %}<p>{{ card.get('summary') }}</p>{% endif %}
+          <small class="suite-whats-new-date">Last updated: {{ card.get('updated_at').strftime('%Y-%m-%d') if card.get('updated_at') else 'Not published' }}</small>
           {% for item in whats_new.roadmap %}
           <div class="suite-whats-new-item"><strong>{{ item.title }}</strong>{% if item.application and item.application != 'suite' %}<small>{{ item.application|replace('_',' ')|title }}</small>{% endif %}<p>{{ item.summary }}</p></div>
           {% else %}<p class="suite-whats-new-empty">No public roadmap items have been approved for display yet.</p>{% endfor %}
         </article>
 
+        {% set card = whats_new.cards.get('commercial_launch', {}) %}
         <article class="suite-whats-new-card">
-          <span>Commercial Launch</span>
-          <h3>Current estimated timing</h3>
+          <span>{{ card.get('release_label', 'No approved update') }}</span>
+          <h3>{{ card.get('title', 'Commercial Launch') }}</h3>
+          {% if card.get('public_ready') %}<p>{{ card.get('summary') }}</p>{% endif %}
+          <small class="suite-whats-new-date">Last updated: {{ card.get('updated_at').strftime('%Y-%m-%d') if card.get('updated_at') else 'Not published' }}</small>
           {% if whats_new.commercial_launch_window %}<p class="suite-launch-window">{{ whats_new.commercial_launch_window }}</p><p>This timing is an estimate and may be updated as validation and deployment progress.</p>{% else %}<p class="suite-whats-new-empty">Commercial launch timing will be published here after it is approved.</p>{% endif %}
         </article>
       </div>
