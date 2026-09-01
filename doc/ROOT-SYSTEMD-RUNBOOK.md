@@ -57,30 +57,20 @@ different bind, deployment mode, path layout, database, or secret provider,
 stop here and obtain a separately approved migration; do not silently rewrite
 it.
 
-Create the unit and environment file using the recorded existing paths (the
-values below are examples and must match the running instance exactly):
+The checked-in `deploy/systemd/paperclip.env` is the production-layout fixture
+for the named `default` instance. Compare it with the recorded process before
+installing. If any value differs, stop: this procedure is not a migration.
+Create an evidence directory on the approved change record, capture the current
+service/run state, then use the reversible installer:
 
 ```sh
-install -d -o root -g root -m 0755 /etc/paperclip
-install -o root -g root -m 0644 deploy/systemd/paperclip.service /etc/systemd/system/paperclip.service
-install -d -o root -g root -m 0755 /usr/lib/paperclip
-install -o root -g root -m 0755 deploy/systemd/paperclip-preflight /usr/lib/paperclip/paperclip-preflight
-install -o root -g paperclip -m 0640 /dev/null /etc/paperclip/paperclip.env
-cat >/etc/paperclip/paperclip.env <<'EOF'
-PAPERCLIP_HOME=/home/paperclip/.paperclip
-PAPERCLIP_CONFIG=/home/paperclip/.paperclip/instances/default/config.json
-PAPERCLIP_INSTANCE_ID=default
-PAPERCLIP_EXECUTABLE=/home/paperclip/.local/bin/paperclipai
-PAPERCLIP_NODE=/usr/bin/node
-PAPERCLIP_DATA_DIR=/home/paperclip/.paperclip/instances/default/db
-PAPERCLIP_BACKUP_DIR=/home/paperclip/.paperclip/instances/default/data/backups
-PAPERCLIP_STORAGE_DIR=/home/paperclip/.paperclip/instances/default/data/storage
-PAPERCLIP_SECRETS_KEY_FILE=/home/paperclip/.paperclip/instances/default/secrets/master.key
-PAPERCLIP_WORKSPACES_DIR=/home/paperclip/workspaces
-PAPERCLIP_SERVICE_MANAGED=1
-EOF
+export PAPERCLIP_INSTANCE_ID=default
+export PAPERCLIP_TRANSITION_EVIDENCE_DIR=/root/change-record/paperclip-systemd-$(date -u +%Y%m%dT%H%M%SZ)
+export PAPERCLIP_ROLLBACK_ROOT="$PAPERCLIP_TRANSITION_EVIDENCE_DIR/rollback"
+install -d -m 0700 "$PAPERCLIP_TRANSITION_EVIDENCE_DIR"
+deploy/systemd/paperclip-service-transition capture
+deploy/systemd/paperclip-service-install install
 chown root:paperclip /etc/paperclip/paperclip.env
-chmod 0640 /etc/paperclip/paperclip.env
 systemd-analyze verify /etc/systemd/system/paperclip.service
 /usr/lib/paperclip/paperclip-preflight
 ```
@@ -127,30 +117,28 @@ otherwise change the embedded PostgreSQL, backups, storage, or secret key.
 
 ## Production-host gate: install and health verification
 
-Only after explicit approval, make a restorable copy of the previous unit and
-reload the supervisor. These commands are intentionally operational and must
-not be run during code staging.
+The installer records whether each managed file was present or absent and the
+unit's prior enabled/active state before changing files. It does not touch the
+named instance. Only after explicit approval, perform the handoff below.
 
 ```sh
-install -d -m 0700 /root/paperclip-service-rollback
-test ! -e /etc/systemd/system/paperclip.service || \
-  cp -a /etc/systemd/system/paperclip.service /root/paperclip-service-rollback/paperclip.service.previous
-test ! -e /etc/paperclip/paperclip.env || \
-  cp -a /etc/paperclip/paperclip.env /root/paperclip-service-rollback/paperclip.env.previous
-test ! -e /usr/lib/paperclip/paperclip-preflight || \
-  cp -a /usr/lib/paperclip/paperclip-preflight /root/paperclip-service-rollback/paperclip-preflight.previous
 /usr/lib/paperclip/paperclip-preflight
-systemctl daemon-reload
 systemctl enable paperclip.service
-systemctl start paperclip.service
+export PAPERCLIP_MANUAL_PID='<captured manual PID>'
+/usr/lib/paperclip/paperclip-service-transition handoff
+/usr/lib/paperclip/paperclip-service-transition reconcile
 systemctl is-active --quiet paperclip.service
 curl -fsS http://127.0.0.1:3100/api/health | jq -e '.status == "ok"'
 systemctl show paperclip.service -p MainPID -p ActiveState -p NRestarts --no-pager
 ```
 
-`systemctl start` is safe only when no other Paperclip process owns the same
-instance. The foreground-run single-writer guard protects normal starts; do not
-use `paperclipai run --force` for the service.
+The handoff refuses an uninspectable PID or a process whose environment does
+not name the selected instance. It sends SIGTERM, waits up to 300 seconds for
+the old PID to exit, and only then starts systemd. It records the old command,
+instance environment, before/after run inventories, service state, and journal.
+The reconciliation command fails unless every pre-handoff run has a current
+state and every terminal run has an explicit recovery disposition. Never use
+`paperclipai run --force` for the service.
 
 ## Handoff and sandbox checks
 
@@ -174,14 +162,16 @@ PID, then proves that systemd starts a replacement and health returns without
 Board intervention.
 
 ```sh
-before_pid="$(systemctl show paperclip.service -p MainPID --value)"
-test "$before_pid" -gt 1
-systemctl kill --signal=SIGKILL --kill-who=main paperclip.service
-timeout 60 sh -c 'until systemctl is-active --quiet paperclip.service && curl -fsS http://127.0.0.1:3100/api/health | jq -e '.status == "ok"' >/dev/null; do sleep 1; done'
-after_pid="$(systemctl show paperclip.service -p MainPID --value)"
-test "$after_pid" -gt 1 && test "$after_pid" != "$before_pid"
-systemctl show paperclip.service -p ActiveState -p NRestarts -p ExecMainStatus --no-pager
+# The literal approval value is deliberate and must only be exported inside
+# the authorized destructive-test window.
+export PAPERCLIP_ALLOW_SIGKILL_TEST=APPROVED
+/usr/lib/paperclip/paperclip-service-transition sigkill-test
+unset PAPERCLIP_ALLOW_SIGKILL_TEST
 ```
+
+Without that exact authorization variable the command fails before sending a
+signal. Repository tests establish the gate and accounting mechanics only;
+they do not claim that a production SIGKILL or live reconciliation occurred.
 
 ## Orphan and heartbeat reconciliation verification
 
@@ -203,17 +193,16 @@ open a recovery issue before declaring the change successful.
 
 ## Rollback
 
-If startup, health, or reconciliation fails, restore the backed-up unit and
-environment file, reload systemd, and restart only under an approved production
-gate. The instance state is intentionally left untouched.
+If startup, health, or reconciliation fails, use the same exported rollback
+root. Files previously present are restored byte-for-byte; files previously
+absent are moved into the change record's `replaced/` quarantine (not deleted),
+and prior enabled/disabled plus active/inactive state is restored. The instance
+state is intentionally left untouched.
 
 ```sh
-cp -a /root/paperclip-service-rollback/paperclip.service.previous /etc/systemd/system/paperclip.service
-cp -a /root/paperclip-service-rollback/paperclip.env.previous /etc/paperclip/paperclip.env
-cp -a /root/paperclip-service-rollback/paperclip-preflight.previous /usr/lib/paperclip/paperclip-preflight
-systemctl daemon-reload
-systemctl restart paperclip.service
-curl -fsS http://127.0.0.1:3100/api/health | jq -e '.status == "ok"'
+deploy/systemd/paperclip-service-install rollback
+grep -qx active "$PAPERCLIP_ROLLBACK_ROOT/prior.active" && \
+  curl -fsS http://127.0.0.1:3100/api/health | jq -e '.status == "ok"' || true
 ```
 
 Do not delete `/home/paperclip/.paperclip`, instance configuration, embedded PostgreSQL

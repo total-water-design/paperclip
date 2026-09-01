@@ -40,4 +40,26 @@ describe("root systemd preflight", () => {
     expect(result.stderr).toBe("");
     expect(JSON.parse(fs.readFileSync(argumentLog, "utf8"))).toEqual(["run", "--instance", "shim-fixture"]);
   });
+  it("ships an exact production /home/paperclip environment contract", () => {
+    const env = fs.readFileSync(path.resolve(import.meta.dirname, "../../../deploy/systemd/paperclip.env"), "utf8");
+    expect(env).toContain("PAPERCLIP_HOME=/home/paperclip/.paperclip");
+    expect(env).toContain("PAPERCLIP_CONFIG=/home/paperclip/.paperclip/instances/default/config.json");
+    expect(env).toContain("PAPERCLIP_EXECUTABLE=/home/paperclip/.local/bin/paperclipai");
+    expect(env).toContain("PAPERCLIP_WORKSPACES_DIR=/home/paperclip/workspaces");
+    expect(env).not.toContain("/tmp/");
+  });
+  it("keeps destructive recovery explicitly gated and accounts for every captured run", () => {
+    const transition = fs.readFileSync(path.resolve(import.meta.dirname, "../../../deploy/systemd/paperclip-service-transition"), "utf8");
+    expect(transition).toContain('PAPERCLIP_ALLOW_SIGKILL_TEST:-}" == "APPROVED"');
+    expect(transition).toContain('actual="$(wc -l <"$evidence_dir/run-reconciliation.jsonl")"');
+    expect(transition).toContain('[[ "$actual" -eq "$expected" ]]');
+    expect(transition).toContain("kill -TERM \"$manual_pid\"");
+  });
+  it("records absent files and restores prior enabled and active state", () => {
+    const installer = fs.readFileSync(path.resolve(import.meta.dirname, "../../../deploy/systemd/paperclip-service-install"), "utf8");
+    expect(installer).toContain("printf 'absent\\t%s\\n'");
+    expect(installer).toContain('mv "$target" "$backup/replaced/$rel"');
+    expect(installer).toContain('grep -qx enabled "$backup/prior.enabled"');
+    expect(installer).toContain('grep -qx active "$backup/prior.active"');
+  });
 });
