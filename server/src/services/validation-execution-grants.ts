@@ -9,12 +9,13 @@ export const TWDS_VALIDATION_GRANT = {
 } as const;
 export type ValidationTuple = Pick<typeof TWDS_VALIDATION_GRANT, "issueId" | "candidateSha" | "contractSha" | "oracleSha">;
 export const isValidationExecutionOnlyAction = (action: string) => action === "validation_execution";
+const TWDS_VALIDATION_GRANT_TTL_MS = 60 * 60 * 1_000;
 
 /** Called under the locked acceptance transaction. Every other confirmation is fail-closed. */
 export async function createTwdsValidationGrant(tx: Db, input: { companyId: string; approvalIssueId: string; interaction: { id: string; kind: string; sourceCommentId: string | null; sourceRunId: string | null; effectiveResolverPolicy: string }; userId: string | null | undefined; now: Date }) {
   const i = input.interaction;
   if (input.approvalIssueId !== TWDS_VALIDATION_GRANT.approvalIssueId || i.kind !== "request_confirmation" || i.sourceCommentId !== TWDS_VALIDATION_GRANT.approvalCommentId || i.effectiveResolverPolicy !== "human_only" || !input.userId || !i.sourceRunId) return null;
-  const [row] = await tx.insert(validationExecutionGrants).values({ companyId: input.companyId, approvalIssueId: input.approvalIssueId, approvalInteractionId: i.id, approvalCommentId: TWDS_VALIDATION_GRANT.approvalCommentId, approvalSourceRunId: i.sourceRunId, issueId: TWDS_VALIDATION_GRANT.issueId, candidateSha: TWDS_VALIDATION_GRANT.candidateSha, contractSha: TWDS_VALIDATION_GRANT.contractSha, oracleSha: TWDS_VALIDATION_GRANT.oracleSha, createdAt: input.now }).onConflictDoNothing().returning();
+  const [row] = await tx.insert(validationExecutionGrants).values({ companyId: input.companyId, approvalIssueId: input.approvalIssueId, approvalInteractionId: i.id, approvalCommentId: TWDS_VALIDATION_GRANT.approvalCommentId, approvalSourceRunId: i.sourceRunId, issueId: TWDS_VALIDATION_GRANT.issueId, candidateSha: TWDS_VALIDATION_GRANT.candidateSha, contractSha: TWDS_VALIDATION_GRANT.contractSha, oracleSha: TWDS_VALIDATION_GRANT.oracleSha, createdAt: input.now, expiresAt: new Date(input.now.getTime() + TWDS_VALIDATION_GRANT_TTL_MS) }).onConflictDoNothing().returning();
   return row ?? null;
 }
 
@@ -28,9 +29,10 @@ export async function consumeTwdsValidationGrant(db: Db, input: { companyId: str
   return db.transaction(async (tx) => {
     const [grant] = await tx.select().from(validationExecutionGrants).where(and(eq(validationExecutionGrants.companyId, input.companyId), or(eq(validationExecutionGrants.approvalSourceRunId, input.runId), eq(validationExecutionGrants.successorRunId, input.runId)))).for("update");
     if (!grant) return { ok: false as const, code: "grant_not_found" };
-    if (grant.status !== "issued") return { ok: false as const, code: "grant_unavailable" };
-    const exact = grant.issueId === input.tuple.issueId && grant.candidateSha === input.tuple.candidateSha && grant.contractSha === input.tuple.contractSha && grant.oracleSha === input.tuple.oracleSha;
     const now = input.now ?? new Date();
+    if (grant.status !== "issued") return { ok: false as const, code: "grant_unavailable" };
+    if (grant.expiresAt <= now) { await tx.update(validationExecutionGrants).set({ status: "invalidated", invalidatedAt: now, invalidationReason: "expired" }).where(eq(validationExecutionGrants.id, grant.id)); return { ok: false as const, code: "grant_expired" }; }
+    const exact = grant.issueId === input.tuple.issueId && grant.candidateSha === input.tuple.candidateSha && grant.contractSha === input.tuple.contractSha && grant.oracleSha === input.tuple.oracleSha;
     if (!exact) { await tx.update(validationExecutionGrants).set({ status: "invalidated", invalidatedAt: now, invalidationReason: "tuple_mismatch" }).where(eq(validationExecutionGrants.id, grant.id)); return { ok: false as const, code: "tuple_mismatch" }; }
     const [consumed] = await tx.update(validationExecutionGrants).set({ status: "consumed", consumerRunId: input.runId, consumedAt: now }).where(and(eq(validationExecutionGrants.id, grant.id), eq(validationExecutionGrants.status, "issued"))).returning({ id: validationExecutionGrants.id });
     return consumed ? { ok: true as const, grantId: consumed.id } : { ok: false as const, code: "grant_unavailable" };
@@ -38,5 +40,5 @@ export async function consumeTwdsValidationGrant(db: Db, input: { companyId: str
 }
 
 export async function invalidateTwdsValidationGrants(db: Db, input: { companyId: string; issueId: string; reason: "validation_completed" | "terminal_issue" | "expired"; now?: Date }) {
-  return db.update(validationExecutionGrants).set({ status: "invalidated", invalidatedAt: input.now ?? new Date(), invalidationReason: input.reason }).where(and(eq(validationExecutionGrants.companyId, input.companyId), eq(validationExecutionGrants.issueId, input.issueId), eq(validationExecutionGrants.status, "issued"))).returning({ id: validationExecutionGrants.id });
+  return db.update(validationExecutionGrants).set({ status: "invalidated", invalidatedAt: input.now ?? new Date(), invalidationReason: input.reason }).where(and(eq(validationExecutionGrants.companyId, input.companyId), eq(validationExecutionGrants.issueId, input.issueId), sql`${validationExecutionGrants.status} <> 'invalidated'`)).returning({ id: validationExecutionGrants.id });
 }

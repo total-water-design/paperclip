@@ -157,6 +157,7 @@ import {
   WORKTREE_INSTANCE_ROOT_METADATA_KEY,
 } from "./workspace-instance-cleanup.js";
 import { issueService } from "./issues.js";
+import { consumeTwdsValidationGrant, invalidateTwdsValidationGrants, TWDS_VALIDATION_GRANT } from "./validation-execution-grants.js";
 import { projectService } from "./projects.js";
 import { getEnvironmentDriverTraits } from "./environment-driver-traits.js";
 import { authorizationService, type AuthorizationActor } from "./authorization.js";
@@ -15731,6 +15732,21 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       outputProgressState.pending = null;
     };
     try {
+      // Canonical internal validation-start boundary. This executes after the
+      // run is claimed but before any adapter dispatch, regardless of whether
+      // the run originated in the UI, runner, or an interaction continuation.
+      if (issueId === TWDS_VALIDATION_GRANT.issueId) {
+        const grant = await consumeTwdsValidationGrant(db, {
+          companyId: agent.companyId,
+          runId: run.id,
+          action: "validation_execution",
+          tuple: TWDS_VALIDATION_GRANT,
+        });
+        if (!grant.ok) {
+          throw new HttpError(403, "TWDS validation execution grant denied", { code: grant.code });
+        }
+        context.twdsValidationGrant = { grantId: grant.grantId, consumedByRunId: run.id };
+      }
       const startedAt = run.startedAt ?? new Date();
       const runningWithSession = await db
         .update(heartbeatRuns)
@@ -16632,6 +16648,13 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
 
       const finalizedRun = persistedRun ?? (await getRun(run.id));
       if (finalizedRun) {
+        if (issueId === TWDS_VALIDATION_GRANT.issueId) {
+          await invalidateTwdsValidationGrants(db, {
+            companyId: agent.companyId,
+            issueId,
+            reason: "validation_completed",
+          });
+        }
         await appendRunEvent(finalizedRun, seq++, {
           eventType: "lifecycle",
           stream: "system",
