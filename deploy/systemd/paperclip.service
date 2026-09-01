@@ -15,7 +15,7 @@ Environment=PAPERCLIP_ENV_FILE=/etc/paperclip/paperclip.env
 Environment=PAPERCLIP_SYSTEM_HOME=/home/paperclip
 EnvironmentFile=/etc/paperclip/paperclip.env
 ExecStartPre=/usr/lib/paperclip/paperclip-preflight
-ExecStart=/bin/sh -ec 'exec /usr/bin/node /home/paperclip/.local/bin/paperclipai run --instance "$PAPERCLIP_INSTANCE_ID"'
+ExecStart=/bin/sh -ec 'exec /home/paperclip/.local/bin/paperclipai run --instance "$PAPERCLIP_INSTANCE_ID"'
 WorkingDirectory=/home/paperclip
 Restart=on-failure
 RestartSec=5s

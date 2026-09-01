@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -24,5 +24,20 @@ describe("root systemd preflight", () => {
   it("accepts an isolated production-layout fixture", () => { expect(run(fixture())).toBe(""); });
   it.each([["public exposure", { server: { host: "127.0.0.1", port: 3100, deploymentMode: "local_trusted", exposure: "public" } }], ["public binding", { server: { host: "0.0.0.0", port: 3100, deploymentMode: "local_trusted", exposure: "private" } }], ["weakened mode", { server: { host: "127.0.0.1", port: 3100, deploymentMode: "authenticated", exposure: "private" } }]])("rejects %s", (_name, config) => { const input = fixture(config); expect(() => run(input)).toThrow(/loopback-only local_trusted private/); });
   it("rejects missing executable and unsafe secret permissions", () => { const input = fixture(); fs.unlinkSync(input.executable); expect(() => run(input)).toThrow(/not an executable/); const second = fixture(); fs.chmodSync(second.key, 0o644); expect(() => run(second)).toThrow(/secret key must not be readable/); });
-  it("requires the unit to execute the fail-closed fixed production layout", () => { const unit = fs.readFileSync(path.resolve(import.meta.dirname, "../../../deploy/systemd/paperclip.service"), "utf8"); expect(unit).toContain("ExecStartPre=/usr/lib/paperclip/paperclip-preflight"); expect(unit).toContain("Environment=PAPERCLIP_SYSTEM_HOME=/home/paperclip"); expect(unit).toContain("WorkingDirectory=/home/paperclip"); expect(unit).toContain("exec /usr/bin/node /home/paperclip/.local/bin/paperclipai run"); expect(unit).toContain("User=paperclip"); expect(unit).toContain("NoNewPrivileges=true"); expect(unit).toContain("ProtectSystem=strict"); expect(unit).toContain("/home/paperclip/workspaces"); expect(unit).not.toContain("/usr/local/bin/paperclipai"); });
+  it("requires the unit to execute the fail-closed fixed production layout", () => { const unit = fs.readFileSync(path.resolve(import.meta.dirname, "../../../deploy/systemd/paperclip.service"), "utf8"); expect(unit).toContain("ExecStartPre=/usr/lib/paperclip/paperclip-preflight"); expect(unit).toContain("Environment=PAPERCLIP_SYSTEM_HOME=/home/paperclip"); expect(unit).toContain("WorkingDirectory=/home/paperclip"); expect(unit).toContain("exec /home/paperclip/.local/bin/paperclipai run"); expect(unit).toContain("User=paperclip"); expect(unit).toContain("NoNewPrivileges=true"); expect(unit).toContain("ProtectSystem=strict"); expect(unit).toContain("/home/paperclip/workspaces"); expect(unit).not.toContain("/usr/local/bin/paperclipai"); });
+  it("runs the executable shell shim through its Node-backed CLI with the service arguments", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "paperclip-root-exec-")); directories.push(root);
+    const shim = path.join(root, "paperclipai"), cli = path.join(root, "managed-cli.js"), argumentLog = path.join(root, "arguments.json");
+    fs.writeFileSync(cli, "require('node:fs').writeFileSync(process.env.PAPERCLIP_ARGUMENT_LOG, JSON.stringify(process.argv.slice(2)))");
+    fs.writeFileSync(shim, `#!/bin/sh\nexec /usr/bin/node "$PAPERCLIP_MANAGED_CLI" "$@"\n`, { mode: 0o755 });
+    const unit = fs.readFileSync(path.resolve(import.meta.dirname, "../../../deploy/systemd/paperclip.service"), "utf8");
+    const execStart = unit.match(/^ExecStart=(.+)$/m)?.[1];
+    expect(execStart).toBeDefined();
+    const fixtureExecStart = execStart!.replace("/home/paperclip/.local/bin/paperclipai", shim);
+    expect(fixtureExecStart).not.toBe(execStart);
+    const result = spawnSync("/bin/sh", ["-c", fixtureExecStart], { encoding: "utf8", env: { ...process.env, PAPERCLIP_INSTANCE_ID: "shim-fixture", PAPERCLIP_MANAGED_CLI: cli, PAPERCLIP_ARGUMENT_LOG: argumentLog } });
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(JSON.parse(fs.readFileSync(argumentLog, "utf8"))).toEqual(["run", "--instance", "shim-fixture"]);
+  });
 });

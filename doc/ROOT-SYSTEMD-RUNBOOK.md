@@ -13,9 +13,10 @@ host gate is approved.
   weakened deployment modes are rejected.
 - This candidate is fixed to `WorkingDirectory=/home/paperclip`,
   `PAPERCLIP_HOME=/home/paperclip/.paperclip`, engineering workspaces at
-  `/home/paperclip/workspaces`, and the checked shim
-  `/home/paperclip/.local/bin/paperclipai`, executed by `/usr/bin/node`.
-  The preflight rejects any different home, workspace, shim, or Node path.
+  `/home/paperclip/workspaces`, and the checked executable shell shim
+  `/home/paperclip/.local/bin/paperclipai`, which is invoked directly so its
+  shebang can dispatch to its managed Node CLI. The preflight rejects any
+  different home, workspace, shim, or `/usr/bin/node` host path.
 - Preserve the named existing instance and explicitly name its config, embedded
   PostgreSQL data, backup, local storage, and local-encrypted secrets-key
   paths. The preflight rejects missing paths, symlinks, group/other-writable
