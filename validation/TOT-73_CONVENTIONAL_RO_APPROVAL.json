@@ -1,0 +1,8 @@
+{
+  "schema": "tot-73-conventional-ro-detached-approval/v1",
+  "manifest_sha256": "f33c58639c21a99a80ddda1310e1d2a6b18d39e1c930582118ff9c426cfb8b36",
+  "approved_by": "local-board",
+  "approved_at": "2026-08-30T19:58:44.250Z",
+  "approval_record": "paperclip-comment:b18e72d3-ec96-41b2-bb3d-d6b9f1466586",
+  "candidate_commit_sha": "45c55675053a1f07629ffd989ad7c1cbf845be0c"
+}
