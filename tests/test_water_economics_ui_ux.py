@@ -67,6 +67,25 @@ class WaterEconomicsUiUxTests(unittest.TestCase):
         self.assertNotIn("twd-economics-theme", js)
         self.assertNotIn("setupTheme", js)
 
+    def test_six_area_workflow_modes_and_first_run_choices_are_exposed(self):
+        template = read("templates/economics_suite.html")
+        js = read("static/economics.js")
+        for label in ("Model Setup", "CAPEX &amp; Construction", "Operations &amp; Revenue", "Financing", "Scenarios &amp; Sensitivities", "Results &amp; Reports"):
+            self.assertIn(label, template)
+        for mode in ("Quick Economics", "Financial Model", "Project Finance"):
+            self.assertIn(mode, template)
+        for choice in ("Start Blank", "Start From Template", "Build From TWDS Project"):
+            self.assertIn(choice, template)
+        self.assertIn('role="radiogroup"', template)
+        self.assertIn('aria-live="polite"', template)
+        self.assertIn("setModelMode", js)
+
+    def test_scenarios_have_scrollable_grid_and_chart_data_alternative(self):
+        template = read("templates/economics_suite.html")
+        self.assertIn('data-panel-content="scenarios"', template)
+        self.assertIn('aria-label="Scenario comparison table"', template)
+        self.assertIn("Data-table alternative", template)
+
     def test_common_project_controls_report_and_snapshot_are_wired(self):
         template = read("templates/economics_suite.html")
         js = read("static/economics.js")

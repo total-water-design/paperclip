@@ -12,8 +12,10 @@ from copy import deepcopy
 import economic_summary_contract as economic_contract
 from economic_cost_schema import canonicalize_cost_items
 from economic_guardrails import install_contract_extensions, prepare_source_summaries
+from economic_risk_costs import analyze_risk_costs
 from project_finance import analyze_project_finance
 from total_economic_design import analyze_estimate
+from capex_wbs import analyze_capex_wbs
 
 install_contract_extensions(economic_contract)
 
@@ -119,15 +121,33 @@ def analyze_total_economic_design(payload: dict | None) -> dict:
     )
     aggregation["warnings"] = guard_warnings + list(aggregation.get("warnings") or [])
 
+    wbs = analyze_capex_wbs(request.get("capex_wbs") or {}, reporting_currency=project_currency)
     local_items = request.get("cost_items") or []
     if not isinstance(local_items, list):
         raise ValueError("cost_items must be a list.")
-    prepared_local, cost_schema = _prepared_local_cost_items(local_items, project)
+    prepared_local, cost_schema = _prepared_local_cost_items(list(local_items) + wbs["cost_items"], project)
     request["cost_items"] = list(aggregation["cost_items"]) + prepared_local
+
+    risk_costs = analyze_risk_costs(request.get("risk_costs") or {})
+    if risk_costs["capitalized_total"] > 0:
+        request["cost_items"].append({
+            "item_id": "tweco-d-capitalized-risk-costs",
+            "description": "Land, ROW, insurance and guarantee capitalized costs",
+            "bucket": "owner_cost",
+            "discipline": "Project development",
+            "quantity": 1,
+            "unit": "LS",
+            "unit_cost": risk_costs["capitalized_total"],
+            "amount": risk_costs["capitalized_total"],
+            "source_type": "user",
+            "source_reference": "twds.risk_cost_schedule v1.0",
+            "currency": project_currency,
+            "notes": "Aggregate of explicitly modeled capitalized TWECO-D schedule rows.",
+        })
 
     op = dict(operating)
     manual_other = float(op.get("other_opex_y") or 0.0)
-    op["other_opex_y"] = manual_other + aggregation["annual_opex_total"]
+    op["other_opex_y"] = manual_other + aggregation["annual_opex_total"] + risk_costs["annual_opex_steady_state"]
     if op.get("capacity_m3d") in (None, "", 0, 0.0):
         op["capacity_m3d"] = project.get("capacity_m3d") or 0.0
     request["operating"] = op
@@ -137,6 +157,9 @@ def analyze_total_economic_design(payload: dict | None) -> dict:
     result["source_aggregation"] = aggregation
     result["project_cost_schema"] = cost_schema
     result["project_cost_currency_lineage"] = cost_schema["currency_lineage"]
+    result["capex_wbs"] = {key: value for key, value in wbs.items() if key != "cost_items"}
+    result["risk_costs"] = risk_costs
+    result["methodology_notes"] = list(result.get("methodology_notes") or []) + wbs["warnings"]
     if cost_schema["warnings"]:
         result.setdefault("methodology_notes", []).extend(cost_schema["warnings"])
 
@@ -144,6 +167,7 @@ def analyze_total_economic_design(payload: dict | None) -> dict:
     result["operating"]["source_application_opex_y"] = source_total
     result["operating"]["source_opex_breakdown"] = aggregation["opex"]
     result["operating"]["project_level_opex_y"] = result["operating"]["annual_opex_y"] - source_total
+    result["operating"]["risk_cost_opex_y"] = risk_costs["annual_opex_steady_state"]
     result["operating"]["combined_annual_cost_y"] = (
         result["operating"]["annualized_capital_y"] + result["operating"]["annual_opex_y"]
     )

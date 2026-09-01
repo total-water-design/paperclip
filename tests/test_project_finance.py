@@ -1,3 +1,6 @@
+import hashlib
+import json
+import random
 import unittest
 
 from project_finance import analyze_project_finance
@@ -136,6 +139,97 @@ class ProjectFinanceTests(unittest.TestCase):
         cfg["debt_tenor_years"] = 30
         with self.assertRaisesRegex(ValueError, "cannot exceed"):
             analyze_project_finance({"project_finance": cfg}, self.base_result())
+
+    def test_v1_covenant_reports_both_bases_and_tests_reserve_aware_by_default(self):
+        result = analyze_project_finance({"project_finance": self.base_cfg()}, self.base_result())
+        self.assertEqual(result["debt"]["covenant_dscr_basis"], "reserve_aware")
+        for row in result["operations"]["rows"]:
+            self.assertIn("raw_dscr", row)
+            self.assertIn("reserve_aware_dscr", row)
+            self.assertIn("reserve_deficiency", row)
+            self.assertGreaterEqual(row["reserve_deficiency"], 0.0)
+            if row["debt_service"]:
+                self.assertAlmostEqual(row["tested_dscr"], row["reserve_aware_dscr"], places=12)
+
+        raw_cfg = self.base_cfg()
+        raw_cfg["covenant_dscr_basis"] = "raw"
+        raw = analyze_project_finance({"project_finance": raw_cfg}, self.base_result())
+        self.assertEqual(raw["debt"]["covenant_dscr_basis"], "raw")
+        self.assertAlmostEqual(raw["operations"]["rows"][0]["tested_dscr"], raw["operations"]["rows"][0]["raw_dscr"], places=12)
+
+    def test_sculpting_metadata_persists_exact_scenario_and_cfads_vector(self):
+        cfg = self.base_cfg()
+        cfg["sculpting_scenario_id"] = "contracted-offtake-p50"
+        result = analyze_project_finance({"project_finance": cfg}, self.base_result())
+        sculpting = result["debt"]["sculpting"]
+        self.assertEqual(sculpting["scenario_id"], "contracted-offtake-p50")
+        self.assertEqual(sculpting["cfads_vector"], [row["cfads"] for row in result["operations"]["rows"][:18]])
+        self.assertEqual(len(sculpting["debt_schedule"]), 18)
+        self.assertIn("informative only", sculpting["note"])
+
+    def test_equity_cure_is_disabled_by_default_and_disclosed_when_used(self):
+        cfg = self.base_cfg()
+        cfg.update({"tariff_m3": 0.85, "target_min_dscr": 1.30})
+        disabled = analyze_project_finance({"project_finance": cfg}, self.base_result())
+        self.assertFalse(disabled["debt"]["equity_cure"]["enabled"])
+        self.assertEqual(disabled["debt"]["equity_cure"]["uses"], 0)
+
+        cfg["equity_cure"] = {"enabled": True, "amount_basis": "dscr_shortfall", "frequency": "once", "consecutive_use_cap": 1, "total_use_cap": 1, "treatment": "cfads_addition"}
+        cured = analyze_project_finance({"project_finance": cfg}, self.base_result())
+        debt = cured["debt"]
+        self.assertEqual(debt["equity_cure"]["uses"], 1)
+        first = cured["operations"]["rows"][0]
+        self.assertGreater(first["equity_cure_cfads_addition"], 0)
+        self.assertAlmostEqual(first["tested_dscr"], 1.30, places=10)
+
+        prepay_cfg = self.base_cfg()
+        prepay_cfg.update({"tariff_m3": 0.85, "target_min_dscr": 1.30, "equity_cure": {"enabled": True, "amount_basis": "fixed_amount", "amount": 100_000, "frequency": "once", "consecutive_use_cap": 1, "total_use_cap": 1, "treatment": "debt_prepayment"}})
+        prepaid = analyze_project_finance({"project_finance": prepay_cfg}, self.base_result())
+        prepay_rows = prepaid["operations"]["rows"]
+        self.assertEqual(prepay_rows[0]["equity_cure_debt_prepayment"], 100_000)
+        self.assertEqual(prepay_rows[0]["equity_cure_cfads_addition"], 0.0)
+        self.assertLess(prepay_rows[1]["opening_debt"], disabled["operations"]["rows"][1]["opening_debt"])
+
+    def test_project_irr_bases_and_v1_warnings_are_explicit(self):
+        result = analyze_project_finance({"project_finance": self.base_cfg()}, self.base_result())
+        returns = result["returns"]
+        self.assertIn("unlevered tax", returns["project_irr_basis"])
+        self.assertIn("interest tax shield", returns["levered_tax_project_irr_basis"])
+        self.assertIsNotNone(returns["levered_tax_project_irr"])
+        self.assertNotEqual(returns["project_irr"], returns["levered_tax_project_irr"])
+        text = " ".join(result["limitations"])
+        self.assertIn("seasonality", text)
+        self.assertIn("VAT/GST", text)
+
+    def test_one_tranche_legacy_projection_is_byte_stable(self):
+        """The validated one-tranche mechanics remain unchanged; v1 fields are additive."""
+        output = analyze_project_finance({"project_finance": self.base_cfg()}, self.base_result())
+        new_row_keys = {"raw_dscr", "reserve_aware_cfads", "reserve_aware_dscr", "selected_dscr_pre_cure", "tested_dscr", "covenant_dscr_basis", "reserve_deficiency", "equity_cure_amount", "equity_cure_treatment", "equity_cure_cfads_addition", "equity_cure_debt_prepayment", "levered_tax_project_free_cash_flow"}
+        legacy = {
+            "construction": {key: output["construction"][key] for key in ("months", "curve", "rows", "base_capex", "upfront_financing_fee", "idc", "total_funding_requirement", "debt_funding", "equity_funding", "debt_fraction_effective", "initial_dsra", "funding_requirement_including_initial_dsra")},
+            "operations": {"concession_years": output["operations"]["concession_years"], "tariff_m3": output["operations"]["tariff_m3"], "rows": [{key: value for key, value in row.items() if key not in new_row_keys} for row in output["operations"]["rows"]]},
+            "returns": {key: output["returns"][key] for key in ("wacc", "project_irr", "equity_irr", "project_npv", "equity_npv", "project_cashflow_sign_changes", "equity_cashflow_sign_changes")},
+            "debt": {key: output["debt"][key] for key in ("debt_at_cod", "min_dscr", "average_dscr", "llcr", "plcr", "initial_dsra")},
+        }
+        canonical = json.dumps(legacy, sort_keys=True, separators=(",", ":")).encode()
+        self.assertEqual(hashlib.sha256(canonical).hexdigest(), "c838128a345dd082875c2252095c8bd891f0ca540da29e4f22bdb0862abc5f54")
+
+    def test_randomized_contract_invariants(self):
+        rng = random.Random(336)
+        for _ in range(100):
+            cfg = self.base_cfg()
+            cfg.update({
+                "debt_fraction": rng.uniform(0.1, 0.9), "debt_interest_rate": rng.uniform(0.0, 0.12),
+                "tariff_m3": rng.uniform(0.5, 2.5), "dsra_months": rng.uniform(0, 12),
+                "covenant_dscr_basis": rng.choice(["raw", "reserve_aware"]),
+                "target_min_dscr": rng.uniform(0.0, 1.8),
+            })
+            result = analyze_project_finance({"project_finance": cfg}, self.base_result())
+            for row in result["operations"]["rows"]:
+                self.assertGreaterEqual(row["reserve_deficiency"], 0.0)
+                if row["debt_service"] > 1e-9:
+                    expected = row["raw_dscr"] if cfg["covenant_dscr_basis"] == "raw" else row["reserve_aware_dscr"]
+                    self.assertAlmostEqual(row["tested_dscr"], expected, places=10)
 
 
 if __name__ == "__main__":

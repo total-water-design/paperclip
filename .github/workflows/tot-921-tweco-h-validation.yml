@@ -1,0 +1,86 @@
+name: TOT-921 TWECO-H validation
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [alpha]
+    paths:
+      - "app.py"
+      - "capex_wbs.py"
+      - "economic_*.py"
+      - "economics_reporting.py"
+      - "project_finance.py"
+      - "static/economics*.js"
+      - "static/economics*.css"
+      - "templates/economics_suite.html"
+      - "tests/test_*economic*.py"
+      - "tests/test_capex_wbs.py"
+      - "tests/test_project_finance.py"
+      - ".github/workflows/tot-921-tweco-h-validation.yml"
+
+permissions:
+  contents: read
+
+env:
+  TOTALRO_DEPLOYMENT_MODE: server
+  TOTALRO_AUTH_ENABLED: "true"
+  TOTALRO_COOKIE_SECURE: "false"
+  TOTALRO_SECRET_KEY: tot-921-ci-only-secret-key-not-for-production
+  TOTALRO_DATABASE_URL: sqlite:////tmp/tot-921-ci.db
+
+jobs:
+  economics-validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install scoped validation dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install -r requirements-server.txt pytest playwright openpyxl pypdf reportlab
+          python -m playwright install --with-deps chromium
+      - name: Run scoped Economics automated tests
+        run: |
+          set -euo pipefail
+          mkdir -p validation/tot-921-ci
+          python -m pytest -q \
+            tests/test_capex_wbs.py \
+            tests/test_economic_inflation.py \
+            tests/test_economic_model_architecture.py \
+            tests/test_economic_risk_costs.py \
+            tests/test_economics_api_authorization.py \
+            tests/test_economics_reporting.py \
+            tests/test_project_finance.py \
+            tests/test_water_economics_ui_ux.py \
+            | tee validation/tot-921-ci/pytest.txt
+      - name: Run authenticated browser QA
+        run: |
+          set -euo pipefail
+          python -m pytest -q tests/test_water_economics_authenticated_browser.py | tee validation/tot-921-ci/browser-qa.txt
+      - name: Record candidate identity
+        if: always()
+        run: |
+          set -euo pipefail
+          git rev-parse HEAD > validation/tot-921-ci/candidate-sha.txt
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha || github.sha }}"
+          git rev-parse HEAD^ > validation/tot-921-ci/alpha-parent-sha.txt
+          git diff --name-only HEAD^ HEAD > validation/tot-921-ci/changed-files.txt
+      - name: Upload retrievable raw evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tot-921-tweco-h-validation-${{ github.run_id }}
+          path: |
+            validation/tot-921-ci/
+            validation/TOT-271-screenshots/
+          if-no-files-found: error
+          retention-days: 30
