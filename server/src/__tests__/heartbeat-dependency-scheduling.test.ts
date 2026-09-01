@@ -18,6 +18,7 @@ import {
   heartbeatRuns,
   issueComments,
   issueDocuments,
+  issueThreadInteractions,
   issueRelations,
   issueTreeHolds,
   issues,
@@ -133,6 +134,7 @@ describeEmbeddedPostgres("heartbeat dependency-aware queued run selection", () =
     await db.delete(environmentLeases);
     await db.delete(activityLog);
     await db.delete(companySkills);
+    await db.delete(issueThreadInteractions);
     await db.delete(issueComments);
     await db.delete(issueDocuments);
     await db.delete(documentRevisions);
@@ -167,6 +169,106 @@ describeEmbeddedPostgres("heartbeat dependency-aware queued run selection", () =
 
   afterAll(async () => {
     await tempDb?.cleanup();
+  });
+
+  it("atomically rebinds an accepted interaction to its exact continuation run", async () => {
+    // Fixed fixture UUIDs make the exact-run regression reproducible.
+    const companyId = "a1010000-0000-4000-8000-000000000001";
+    const agentId = "a1010000-0000-4000-8000-000000000002";
+    const issueId = "a1010000-0000-4000-8000-000000000003";
+    const interactionId = "a1010000-0000-4000-8000-000000000004";
+
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+      defaultResponsibleUserId: "responsible-user",
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      companyId,
+      name: "ExactRunAgent",
+      role: "engineer",
+      status: "active",
+      adapterType: "codex_local",
+      adapterConfig: {},
+      runtimeConfig: { heartbeat: { wakeOnDemand: true, maxConcurrentRuns: 1 } },
+      permissions: {},
+    });
+    await db.insert(issues).values({
+      id: issueId,
+      companyId,
+      title: "Rebind accepted confirmation",
+      status: "in_progress",
+      priority: "high",
+      assigneeAgentId: agentId,
+      responsibleUserId: "responsible-user",
+    });
+
+    const creatorRun = await heartbeat.wakeup(agentId, {
+      source: "assignment",
+      triggerDetail: "system",
+      reason: "issue_assigned",
+      payload: { issueId },
+      contextSnapshot: { issueId, wakeReason: "issue_assigned" },
+    });
+    expect(creatorRun).not.toBeNull();
+    await waitForCondition(async () => (await heartbeat.getRun(creatorRun!.id))?.status === "succeeded");
+
+    // This distinct, completed run is the adjacent negative control: it must
+    // never gain the confirmation's exact-run authorization.
+    const unrelatedRun = await heartbeat.wakeup(agentId, {
+      source: "assignment",
+      triggerDetail: "system",
+      reason: "issue_assigned",
+      payload: { issueId },
+      contextSnapshot: { issueId, wakeReason: "issue_assigned" },
+    });
+    expect(unrelatedRun).not.toBeNull();
+    await waitForCondition(async () => (await heartbeat.getRun(unrelatedRun!.id))?.status === "succeeded");
+
+    await db.insert(issueThreadInteractions).values({
+      id: interactionId,
+      companyId,
+      issueId,
+      kind: "request_confirmation",
+      status: "accepted",
+      continuationPolicy: "wake_assignee",
+      createdByAgentId: agentId,
+      sourceRunId: creatorRun!.id,
+      payload: { version: 1, prompt: "Continue after human acceptance?" },
+      result: { version: 1, outcome: "accepted" },
+    });
+
+    const continuationRun = await heartbeat.wakeup(agentId, {
+      source: "automation",
+      triggerDetail: "system",
+      reason: "issue_commented",
+      payload: { issueId, interactionId, sourceRunId: creatorRun!.id },
+      contextSnapshot: { issueId, interactionId, sourceRunId: creatorRun!.id, wakeReason: "issue_commented" },
+      acceptedInteractionSourceRunRebind: {
+        interactionId,
+        expectedSourceRunId: creatorRun!.id,
+      },
+    });
+    expect(continuationRun).not.toBeNull();
+
+    const [persistedInteraction] = await db
+      .select({ sourceRunId: issueThreadInteractions.sourceRunId })
+      .from(issueThreadInteractions)
+      .where(eq(issueThreadInteractions.id, interactionId));
+    const [persistedWakeRun] = await db
+      .select({ contextSnapshot: heartbeatRuns.contextSnapshot })
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, continuationRun!.id));
+
+    // Equality proof: the permitted source run and queued execution run are
+    // the same UUID before the scheduler may claim it.
+    expect(persistedInteraction?.sourceRunId).toBe(continuationRun!.id);
+    expect(persistedWakeRun?.contextSnapshot).toMatchObject({ sourceRunId: continuationRun!.id });
+    // Adjacent negative control: a different completed run remains unauthorized.
+    expect(persistedInteraction?.sourceRunId).not.toBe(unrelatedRun!.id);
   });
 
   it("keeps blocked descendants idle until their blockers resolve", async () => {

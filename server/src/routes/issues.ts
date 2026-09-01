@@ -2141,6 +2141,13 @@ async function queueResolvedInteractionContinuationWakeup(input: {
           result: interactionResult,
         }
       : null;
+  const acceptedInteractionSourceRunRebind =
+    input.interaction.status === "accepted" && input.interaction.sourceRunId
+      ? {
+          interactionId: input.interaction.id,
+          expectedSourceRunId: input.interaction.sourceRunId,
+        }
+      : undefined;
   void input.heartbeat.wakeup(input.issue.assigneeAgentId, {
     source: "automation",
     triggerDetail: "system",
@@ -2163,6 +2170,7 @@ async function queueResolvedInteractionContinuationWakeup(input: {
     idempotencyKey: input.idempotencyKey ?? `interaction:${input.interaction.id}:${input.interaction.status}`,
     requestedByActorType: input.actor.actorType,
     requestedByActorId: input.actor.actorId,
+    ...(acceptedInteractionSourceRunRebind ? { acceptedInteractionSourceRunRebind } : {}),
     contextSnapshot: {
       issueId: input.issue.id,
       taskId: input.issue.id,

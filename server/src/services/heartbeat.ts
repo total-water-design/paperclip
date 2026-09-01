@@ -2657,6 +2657,16 @@ interface WakeupOptions {
   requestedByActorType?: "user" | "agent" | "system";
   requestedByActorId?: string | null;
   contextSnapshot?: Record<string, unknown>;
+  /**
+   * Rebind an already accepted interaction to the exact queued run created by
+   * this wake. This is deliberately completed inside enqueueWakeup's issue
+   * transaction: publishing a run and fixing the interaction afterwards lets
+   * the scheduler claim the run with stale, creator-run authorization.
+   */
+  acceptedInteractionSourceRunRebind?: {
+    interactionId: string;
+    expectedSourceRunId: string;
+  };
 }
 
 type UsageTotals = {
@@ -18957,6 +18967,44 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
           .returning()
           .then((rows) => rows[0]);
 
+        let queuedRun = newRun;
+        if (opts.acceptedInteractionSourceRunRebind) {
+          const binding = opts.acceptedInteractionSourceRunRebind;
+          const rebound = await tx
+            .update(issueThreadInteractions)
+            .set({ sourceRunId: newRun.id, updatedAt: new Date() })
+            .where(and(
+              eq(issueThreadInteractions.id, binding.interactionId),
+              eq(issueThreadInteractions.companyId, agent.companyId),
+              eq(issueThreadInteractions.issueId, issue.id),
+              eq(issueThreadInteractions.status, "accepted"),
+              eq(issueThreadInteractions.sourceRunId, binding.expectedSourceRunId),
+            ))
+            .returning({ id: issueThreadInteractions.id })
+            .then((rows) => rows[0] ?? null);
+          if (!rebound) {
+            throw conflict("Accepted interaction source-run binding changed before wake dispatch", {
+              interactionId: binding.interactionId,
+              expectedSourceRunId: binding.expectedSourceRunId,
+              queuedRunId: newRun.id,
+            });
+          }
+
+          const boundContextSnapshot = { ...enrichedContextSnapshot, sourceRunId: newRun.id };
+          await tx
+            .update(heartbeatRuns)
+            .set({ contextSnapshot: boundContextSnapshot, updatedAt: new Date() })
+            .where(eq(heartbeatRuns.id, newRun.id));
+          await tx
+            .update(agentWakeupRequests)
+            .set({
+              payload: { ...(payload ?? {}), sourceRunId: newRun.id },
+              updatedAt: new Date(),
+            })
+            .where(eq(agentWakeupRequests.id, wakeupRequest.id));
+          queuedRun = { ...newRun, contextSnapshot: boundContextSnapshot };
+        }
+
         await tx
           .update(agentWakeupRequests)
           .set({
@@ -18969,7 +19017,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         // doesn't start it). It will be stamped in claimQueuedRun() once the run
         // transitions to "running" — Fix A (lazy locking).
 
-        return { kind: "queued" as const, run: newRun };
+        return { kind: "queued" as const, run: queuedRun };
       });
 
       if (outcome.kind === "deferred" || outcome.kind === "skipped") return null;
