@@ -324,37 +324,55 @@ export function secretRoutes(db: Db, deps: SecretRoutesDeps = {}) {
   });
 
   router.post("/agents/me/secrets/:key/value", async (req, res) => {
-    const context = agentSecretContext(req);
-    const available = await svc.listAgentSecretAccess(context.companyId, context);
-    const secret = available.find((entry) => entry.key === req.params.key);
-    if (!secret) {
-      await logActivity(db, { companyId: context.companyId, actorType: "agent", actorId: context.agentId, action: "secret.value.denied", entityType: "agent", entityId: context.agentId, agentId: context.agentId, runId: context.heartbeatRunId, details: { key: req.params.key, reason: "not_granted" } });
-      throw forbidden("Secret access is not granted for this agent");
-    }
-    let resolution;
+    let context: ReturnType<typeof agentSecretContext> | null = null;
+    let secret: Awaited<ReturnType<typeof svc.listAgentSecretAccess>>[number] | undefined;
     try {
-      resolution = await svc.resolveSecretValueForAgentAccess(
-        context.companyId,
+      context = agentSecretContext(req);
+      const runContext = context;
+      const available = await svc.listAgentSecretAccess(runContext.companyId, runContext);
+      secret = available.find((entry) => entry.key === req.params.key);
+      if (!secret) throw forbidden("Secret access is not granted for this agent");
+      const resolution = await svc.resolveSecretValueForAgentAccess(
+        runContext.companyId,
         secret.secretId,
         secret.versionSelector,
         {
-          ...context,
+          ...runContext,
           configPath: secret.configPath,
           bindingId: secret.bindingId,
           issueId: null,
-          registerForRedaction: (value) => runRedactions.register(context.companyId, context.heartbeatRunId, value),
+          registerForRedaction: (value) => runRedactions.register(runContext.companyId, runContext.heartbeatRunId, value),
         },
       );
+      res.set("Cache-Control", "no-store");
+      res.json({
+        key: secret.key,
+        value: resolution.value,
+        version: resolution.version,
+      });
     } catch (error) {
-      await logActivity(db, { companyId: context.companyId, actorType: "agent", actorId: context.agentId, action: "secret.value.denied", entityType: "secret", entityId: secret.secretId, agentId: context.agentId, runId: context.heartbeatRunId, details: { key: secret.key, reason: "access_check_failed" } }).catch(() => undefined);
+      const companyId = context?.companyId ?? req.actor.companyId;
+      const agentId = context?.agentId ?? req.actor.agentId;
+      if (companyId && agentId) {
+        await logActivity(db, {
+          companyId,
+          actorType: "agent",
+          actorId: agentId,
+          action: "secret.value.denied",
+          entityType: secret ? "secret" : "agent",
+          entityId: secret?.secretId ?? agentId,
+          agentId,
+          runId: context?.heartbeatRunId ?? req.actor.runId ?? null,
+          details: {
+            key: secret?.key ?? req.params.key,
+            reason: context ? (secret ? "access_check_failed" : "not_granted") : "run_bound_auth_required",
+            actorSource: req.actor.source ?? null,
+            keyScopeKind: req.actor.keyScope?.kind ?? null,
+          },
+        }).catch(() => undefined);
+      }
       throw error;
     }
-    res.set("Cache-Control", "no-store");
-    res.json({
-      key: secret.key,
-      value: resolution.value,
-      version: resolution.version,
-    });
   });
 
   router.get("/companies/:companyId/secret-providers", (req, res) => {

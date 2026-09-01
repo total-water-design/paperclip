@@ -57,8 +57,6 @@ import {
   issueRelations,
   issueThreadInteractions,
   issues,
-  managedSecretCapabilityGrants,
-  companySecretBindings,
   companySecrets,
   issueWorkProducts,
   nativeRunFinalizations,
@@ -14818,20 +14816,19 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
           }
         : undefined,
     });
-    const capabilityRows = await db.select({ grant: managedSecretCapabilityGrants, binding: companySecretBindings, secret: companySecrets })
-      .from(managedSecretCapabilityGrants)
-      .innerJoin(companySecretBindings, eq(companySecretBindings.id, managedSecretCapabilityGrants.bindingId))
-      .innerJoin(companySecrets, eq(companySecrets.id, companySecretBindings.secretId))
-      .where(and(
-        eq(managedSecretCapabilityGrants.companyId, agent.companyId),
-        eq(managedSecretCapabilityGrants.agentId, agent.id),
-        eq(managedSecretCapabilityGrants.status, "active"),
-        gt(managedSecretCapabilityGrants.expiresAt, new Date()),
-        or(
-          eq(managedSecretCapabilityGrants.runId, run.id),
-          issueId ? eq(managedSecretCapabilityGrants.issueId, issueId) : sql`false`,
-        ),
-      ));
+    const applicableCapabilities = await secretsSvc.listApplicableAgentCapabilityBindings(
+      agent.companyId,
+      agent.id,
+      issueId,
+      run.id,
+    );
+    const capabilityRows = (await Promise.all(applicableCapabilities.map(async ({ grant, binding }) => {
+      const secret = await db.select().from(companySecrets).where(and(
+        eq(companySecrets.id, binding.secretId),
+        eq(companySecrets.companyId, agent.companyId),
+      )).then((rows) => rows[0] ?? null);
+      return secret ? { grant, binding, secret } : null;
+    }))).filter((row): row is NonNullable<typeof row> => row !== null);
     const capabilityManifest = capabilityRows.map(({ grant, binding, secret }) => ({
       bindingId: binding.id,
       secretId: binding.secretId,

@@ -4515,7 +4515,31 @@ export function secretService(db: Db) {
     },
 
     listApplicableAgentCapabilityBindings: async (companyId: string, agentId: string, issueId: string | null, runId: string) => {
-      const rows = await db.select({ grant: managedSecretCapabilityGrants, binding: companySecretBindings }).from(managedSecretCapabilityGrants).innerJoin(companySecretBindings, eq(companySecretBindings.id, managedSecretCapabilityGrants.bindingId)).where(and(eq(managedSecretCapabilityGrants.companyId, companyId), eq(managedSecretCapabilityGrants.agentId, agentId), eq(managedSecretCapabilityGrants.status, "active"), gt(managedSecretCapabilityGrants.expiresAt, new Date()), or(eq(managedSecretCapabilityGrants.runId, runId), issueId ? eq(managedSecretCapabilityGrants.issueId, issueId) : sql`false`)));
+      const rows = await db.select({ grant: managedSecretCapabilityGrants, binding: companySecretBindings })
+        .from(managedSecretCapabilityGrants)
+        .innerJoin(companySecretBindings, and(
+          eq(companySecretBindings.id, managedSecretCapabilityGrants.bindingId),
+          eq(companySecretBindings.companyId, managedSecretCapabilityGrants.companyId),
+        ))
+        .where(and(
+          eq(managedSecretCapabilityGrants.companyId, companyId),
+          eq(companySecretBindings.companyId, companyId),
+          eq(managedSecretCapabilityGrants.agentId, agentId),
+          eq(managedSecretCapabilityGrants.status, "active"),
+          gt(managedSecretCapabilityGrants.expiresAt, new Date()),
+          or(
+            and(
+              eq(managedSecretCapabilityGrants.runId, runId),
+              eq(companySecretBindings.targetType, "run"),
+              eq(companySecretBindings.targetId, runId),
+            ),
+            issueId ? and(
+              eq(managedSecretCapabilityGrants.issueId, issueId),
+              eq(companySecretBindings.targetType, "issue"),
+              eq(companySecretBindings.targetId, issueId),
+            ) : sql`false`,
+          ),
+        ));
       return rows.map(({ grant, binding }) => ({ grant, binding }));
     },
 
