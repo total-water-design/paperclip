@@ -123,6 +123,7 @@ import {
 import { visibleIssueCondition } from "./issue-visibility.js";
 import { finalizeStatusCardsForStalledGeneration } from "./status-card-finalization.js";
 import { finalizeSummarySlotsForTerminalIssue } from "./summary-slot-finalization.js";
+import { invalidateTwdsValidationGrants, TWDS_VALIDATION_GRANT } from "./validation-execution-grants.js";
 import {
   logActivity,
   persistActivity,
@@ -7883,6 +7884,13 @@ export function issueService(db: Db) {
             }
           }
           if (updated.status === "done" || updated.status === "cancelled") {
+            if (updated.id === TWDS_VALIDATION_GRANT.issueId) {
+              await invalidateTwdsValidationGrants(tx as unknown as Db, {
+                companyId: updated.companyId,
+                issueId: updated.id,
+                reason: "terminal_issue",
+              });
+            }
             await finalizeSummarySlotsForTerminalIssue(tx, updated);
             // Every terminal transition funnels through here, including direct
             // service callers (tree control, recovery, pipelines, status cards)
