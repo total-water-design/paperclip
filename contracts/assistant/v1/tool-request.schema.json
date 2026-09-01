@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.totalwater.design/assistant/v1/tool-request.schema.json",
+  "title": "TWDS Deterministic Tool Request v1",
+  "type": "object", "additionalProperties": false,
+  "required": ["contract", "request_id", "tool_id", "arguments", "context", "provenance"],
+  "properties": {
+    "contract": {"const": "twds.assistant.tool-request/v1"}, "request_id": {"type": "string", "minLength": 1},
+    "tool_id": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$"}, "arguments": {"type": "object"},
+    "context": {"$ref": "context-envelope.schema.json"},
+    "provenance": {"type": "object", "additionalProperties": false, "required": ["requested_by", "requested_at"], "properties": {"requested_by": {"type": "string", "minLength": 1}, "requested_at": {"type": "string", "format": "date-time"}}}
+  }
+}

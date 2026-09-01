@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.totalwater.design/assistant/v1/context-envelope.schema.json",
+  "title": "TWDS Cross-Application Context Envelope v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract", "context_id", "source", "waterstream", "chemistry", "mass_energy_balance", "convergence", "units", "handoff"],
+  "properties": {
+    "contract": {"const": "twds.assistant.context/v1"},
+    "context_id": {"type": "string", "minLength": 1},
+    "source": {"type": "object", "additionalProperties": false, "required": ["application", "case_ref", "candidate_sha"], "properties": {"application": {"type": "string", "minLength": 1}, "case_ref": {"type": "string", "minLength": 1}, "candidate_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"}}},
+    "waterstream": {"type": "object", "additionalProperties": false, "required": ["water_state", "streams"], "properties": {"water_state": {"type": "object"}, "streams": {"type": "array", "items": {"type": "object"}}}},
+    "chemistry": {"type": "object", "additionalProperties": false, "required": ["composition", "speciation"], "properties": {"composition": {"type": "object", "additionalProperties": {"type": "number"}}, "speciation": {"type": "object"}}},
+    "mass_energy_balance": {"type": "object", "additionalProperties": false, "required": ["water_closure", "component_closure", "energy"], "properties": {"water_closure": {"type": "number"}, "component_closure": {"type": "object"}, "energy": {"type": "object"}}},
+    "convergence": {"type": "object", "additionalProperties": false, "required": ["state", "iterations"], "properties": {"state": {"enum": ["converged", "non_converged", "failed"]}, "iterations": {"type": "integer", "minimum": 0}, "residual_norm": {"type": "number"}, "failure": {"type": "object", "additionalProperties": false, "required": ["code", "message"], "properties": {"code": {"type": "string", "minLength": 1}, "message": {"type": "string", "minLength": 1}}}}},
+    "units": {"type": "object", "additionalProperties": {"type": "string"}},
+    "handoff": {"type": "object", "additionalProperties": false, "required": ["state"], "properties": {"state": {"enum": ["none", "available", "consumed", "failed"]}, "source_ref": {"type": "string"}, "target_application": {"type": "string"}}}
+  }
+}

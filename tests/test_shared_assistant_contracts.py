@@ -2,6 +2,16 @@ import json
 from pathlib import Path
 
 import jsonschema
+import pytest
+
+from contracts.assistant.v1 import (
+    ContractValidationError,
+    build_context_envelope,
+    dispatch_tool,
+    validate_action,
+    validate_context_envelope,
+)
+from flowsheet import Stream
 
 
 ROOT = Path(__file__).parents[1] / "contracts" / "assistant" / "v1"
@@ -17,6 +27,9 @@ def test_contract_schemas_are_valid_draft_2020_12():
         "assistant-response.schema.json",
         "semantic-target-registry.schema.json",
         "tool-registration.schema.json",
+        "context-envelope.schema.json",
+        "tool-request.schema.json",
+        "tool-result.schema.json",
     ):
         jsonschema.Draft202012Validator.check_schema(load(name))
 
@@ -59,3 +72,83 @@ def test_registry_ids_are_unique():
     tools = [item["tool_id"] for item in load("tools.json")["tools"]]
     assert len(targets) == len(set(targets))
     assert len(tools) == len(set(tools))
+
+
+def context(state="converged"):
+    value = {
+        "contract": "twds.assistant.context/v1", "context_id": "context-1",
+        "source": {"application": "total-ro", "case_ref": "case:1", "candidate_sha": "a" * 40},
+        "waterstream": {"water_state": {"pressure_bar": 55.0}, "streams": [{"name": "permeate"}]},
+        "chemistry": {"composition": {"boron": 1.5}, "speciation": {"boron": {"H3BO3": 1.0}}},
+        "mass_energy_balance": {"water_closure": 0.0, "component_closure": {"boron": 0.0}, "energy": {"kwh": 2.0}},
+        "convergence": {"state": state, "iterations": 7, "residual_norm": 0.0001},
+        "units": {"flow": "m3/h", "pressure": "bar"}, "handoff": {"state": "available", "target_application": "total-zld"},
+    }
+    if state != "converged":
+        value["convergence"]["failure"] = {"code": "MAX_ITERATIONS", "message": "solver stopped"}
+    return value
+
+
+def request(state="converged"):
+    return {
+        "contract": "twds.assistant.tool-request/v1", "request_id": "run-1", "tool_id": "ro.evaluate-boron",
+        "arguments": {"report": True}, "context": context(state),
+        "provenance": {"requested_by": "suite-core", "requested_at": "2026-09-01T00:00:00Z"},
+    }
+
+
+REGISTRY = {"tools": [{"tool_id": "ro.evaluate-boron", "deterministic": True, "input_schema": {
+    "type": "object", "additionalProperties": False, "required": ["report"], "properties": {"report": {"const": True}}
+}}]}
+
+
+def test_context_envelope_serializes_cross_domain_state_and_requires_failure_details():
+    validate_context_envelope(context())
+    validate_context_envelope(context("non_converged"))
+    failed = context("failed")
+    del failed["convergence"]["failure"]
+    with pytest.raises(ContractValidationError, match="failure"):
+        validate_context_envelope(failed)
+
+
+def test_context_builder_serializes_application_owned_waterstream_without_solver_calls():
+    stream = Stream(2.5, pressure_bar=55.0, composition_mg_l={"boron": 1.5}, name="feed")
+    envelope = build_context_envelope(
+        context_id="context-1", source=context()["source"], water_state={"temperature_c": 25.0}, streams=[stream],
+        composition={"boron": 1.5}, speciation={"boron": {"H3BO3": 1.0}},
+        mass_energy_balance={"water_closure": 0.0, "component_closure": {"boron": 0.0}, "energy": {"kwh": 2.0}},
+        convergence={"state": "converged", "iterations": 7}, units={"flow": "m3/h"}, handoff={"state": "none"},
+    )
+    assert envelope["waterstream"]["streams"][0]["name"] == "feed"
+
+
+def test_dispatch_is_deterministic_and_requires_boron_provenance():
+    def boron_handler(arguments, envelope):
+        assert arguments == {"report": True}
+        return {"output": {"boron_mg_l": envelope["chemistry"]["composition"]["boron"]}, "provenance": {
+            "candidate_sha": "a" * 40, "context_id": envelope["context_id"], "tool_run_id": "tool-1",
+            "boron_tool": {"status": "evaluated", "method": "speciation"},
+        }}
+
+    result = dispatch_tool(request(), REGISTRY, {"ro.evaluate-boron": boron_handler})
+    assert result["status"] == "succeeded"
+    assert result["output"] == {"boron_mg_l": 1.5}
+
+    def missing_boron(arguments, envelope):
+        return {"provenance": {"candidate_sha": "a" * 40, "context_id": envelope["context_id"], "tool_run_id": "tool-2"}}
+
+    with pytest.raises(ContractValidationError, match="boron_tool"):
+        dispatch_tool(request(), REGISTRY, {"ro.evaluate-boron": missing_boron})
+
+
+def test_nonconverged_tool_result_is_propagated_and_semantic_actions_must_resolve():
+    def failed_handler(arguments, envelope):
+        return {"status": "non_converged", "output": {}, "failure": {"code": "MAX_ITERATIONS", "message": "solver stopped"}, "provenance": {
+            "candidate_sha": "a" * 40, "context_id": envelope["context_id"], "tool_run_id": "tool-3",
+            "boron_tool": {"status": "unavailable"},
+        }}
+
+    assert dispatch_tool(request("non_converged"), REGISTRY, {"ro.evaluate-boron": failed_handler})["status"] == "non_converged"
+    validate_action({"kind": "navigate", "target_id": "suite.home"}, load("semantic-targets.json"), REGISTRY)
+    with pytest.raises(ContractValidationError, match="not registered"):
+        validate_action({"kind": "propose_tool", "tool_id": "missing.tool", "requires_confirmation": True}, load("semantic-targets.json"), REGISTRY)

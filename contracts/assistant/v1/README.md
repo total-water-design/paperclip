@@ -18,9 +18,18 @@ Files:
   selectors remain implementation details outside this shared contract.
 - `tool-registration.schema.json`: deterministic, side-effect-declared tool
   registrations with JSON Schema input and output contracts.
+- `context-envelope.schema.json`: serializable WaterStream/WaterState,
+  chemistry/speciation, balance, convergence, units, and handoff boundary.
+- `tool-request.schema.json` and `tool-result.schema.json`: the deterministic
+  tool RPC interface. Results always carry boron-tool provenance and propagate
+  non-converged or failed states.
 - `semantic-targets.json` and `tools.json`: the initial suite-wide registries.
 
 Consumers must reject unknown major contract identifiers. A response action is
 valid only when its `target_id` or `tool_id` resolves in the registries named by
 the manifest. Tool execution is never implied by a response: the host remains
 responsible for authorization, validation, and user confirmation.
+
+Suite/Core imports `contracts.assistant.v1` and calls `validate_context_envelope`,
+`validate_action`, and `dispatch_tool`. Applications supply registered handlers;
+the shared adapter never imports solver modules or model/LLM code.
