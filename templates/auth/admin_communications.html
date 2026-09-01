@@ -1,8 +1,29 @@
 {% extends "auth/admin_base.html" %}
 {% block title %}Communications — Total Water Design Suite{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="{{ url_for('static', filename='communications_admin.css') }}">{% endblock %}
 {% block content %}
 <section class="admin-toolbar" style="grid-template-columns:1fr">
   <div><strong>Release communications</strong><div class="admin-debug-note" style="margin:6px 0 0">What's New and product-update emails are driven only by administrator-approved records. Raw branches are never published automatically.</div></div>
+</section>
+<section class="admin-toolbar" style="grid-template-columns:1fr"><div><strong>Public What's New cards</strong><div class="admin-debug-note">Each card remains in a safe unpublished state until its title, summary, release label, and content review are complete. Saving here updates the public site without a deployment.</div></div></section>
+<section class="admin-card-grid">
+{% for card in cards %}{% set row = card.row %}
+  <article class="admin-card">
+    <h2>{{ card.default_title }}</h2>
+    <form method="post" action="{{ url_for('suite_communications.save_whats_new_card', slug=card.slug) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="admin-card-fields">
+        <label><span>Public title</span><input name="title" value="{{ row.title if row else '' }}" required maxlength="200"></label>
+        <label><span>Public summary</span><textarea name="summary" required rows="4">{{ row.summary if row else '' }}</textarea></label>
+        <label><span>Release label</span><input name="release_label" value="{{ row.release_label if row else '' }}" required maxlength="80" placeholder="Alpha 0.2"></label>
+      </div>
+      <div class="admin-debug-note">Status: {{ row.status if row else 'draft' }} · Last updated: {{ row.updated_at.strftime('%Y-%m-%d') if row and row.updated_at else 'Not saved' }}</div>
+      <label class="toggle-label"><input type="checkbox" name="reviewed" value="1" {% if row and row.reviewed_at %}checked{% endif %}><span>Public-information content reviewed</span></label>
+      <label class="toggle-label"><input type="checkbox" name="public" value="1" {% if row and row.public %}checked{% endif %}><span>Approved to show publicly</span></label>
+      <button class="admin-primary" type="submit">Save {{ card.default_title }} card</button>
+    </form>
+  </article>
+{% endfor %}
 </section>
 <section class="admin-card-grid">
   <article class="admin-card"><h2>Commercial launch</h2><form method="post" action="{{ url_for('suite_communications.save_launch_window') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><label><span>Estimated launch date / window</span><input name="commercial_launch_window" value="{{ launch_window }}" maxlength="200" placeholder="Administrator-configured"></label><button class="admin-primary" type="submit">Save launch window</button></form></article>

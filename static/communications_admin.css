@@ -1,0 +1,31 @@
+.admin-card-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.admin-card {
+  padding: 16px;
+  border: 1px solid var(--admin-line);
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 5px 20px rgba(18, 42, 62, .04);
+}
+
+.admin-card h2 { margin: 0 0 12px; color: var(--admin-navy); font-size: 17px; }
+.admin-card form, .admin-card-fields, .admin-card-fields label { display: grid; gap: 8px; }
+.admin-card-fields label > span { color: #52687a; font-size: 10px; font-weight: 800; }
+.admin-card-fields input, .admin-card-fields textarea {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #cad7e1;
+  border-radius: 7px;
+  padding: 8px 10px;
+  color: var(--admin-ink);
+  font: inherit;
+}
+.admin-card-fields textarea { resize: vertical; }
+.admin-card .admin-primary { justify-self: start; }
+
+@media (max-width: 1050px) { .admin-card-grid { grid-template-columns: 1fr; } }
