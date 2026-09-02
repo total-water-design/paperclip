@@ -29,6 +29,10 @@ Consumers must reject unknown major contract identifiers. A response action is
 valid only when its `target_id` or `tool_id` resolves in the registries named by
 the manifest. Tool execution is never implied by a response: the host remains
 responsible for authorization, validation, and user confirmation.
+Every tool request carries a time-bounded confirmation whose canonical digest
+binds its action ID, request ID, tool ID, arguments, and context. `dispatch_tool`
+requires a trusted host verifier and rejects missing, malformed, stale,
+mismatched, or unverifiable grants before calling a handler.
 
 Suite/Core imports `contracts.assistant.v1` and calls `validate_context_envelope`,
 `validate_action`, and `dispatch_tool`. Applications supply registered handlers;

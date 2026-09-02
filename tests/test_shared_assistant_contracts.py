@@ -1,4 +1,6 @@
 import json
+from copy import deepcopy
+from datetime import datetime, timezone
 from pathlib import Path
 
 import jsonschema
@@ -7,6 +9,7 @@ import pytest
 from contracts.assistant.v1 import (
     ContractValidationError,
     build_context_envelope,
+    confirmation_request_digest,
     dispatch_tool,
     validate_action,
     validate_context_envelope,
@@ -90,11 +93,23 @@ def context(state="converged"):
 
 
 def request(state="converged"):
-    return {
+    value = {
         "contract": "twds.assistant.tool-request/v1", "request_id": "run-1", "tool_id": "ro.evaluate-boron",
         "arguments": {"report": True}, "context": context(state),
         "provenance": {"requested_by": "suite-core", "requested_at": "2026-09-01T00:00:00Z"},
     }
+    value["confirmation"] = {
+        "action_id": "action-1", "request_digest": confirmation_request_digest(value, "action-1"),
+        "issued_at": "2026-09-01T00:00:00Z", "expires_at": "2026-09-01T00:05:00Z", "token": "signed-grant",
+    }
+    return value
+
+
+NOW = datetime(2026, 9, 1, 0, 1, tzinfo=timezone.utc)
+
+
+def verified(confirmation, binding):
+    return confirmation["token"] == "signed-grant" and binding["action_id"] == "action-1"
 
 
 REGISTRY = {"tools": [{"tool_id": "ro.evaluate-boron", "deterministic": True, "input_schema": {
@@ -130,7 +145,7 @@ def test_dispatch_is_deterministic_and_requires_boron_provenance():
             "boron_tool": {"status": "evaluated", "method": "speciation"},
         }}
 
-    result = dispatch_tool(request(), REGISTRY, {"ro.evaluate-boron": boron_handler})
+    result = dispatch_tool(request(), REGISTRY, {"ro.evaluate-boron": boron_handler}, verified, now=NOW)
     assert result["status"] == "succeeded"
     assert result["output"] == {"boron_mg_l": 1.5}
 
@@ -138,7 +153,7 @@ def test_dispatch_is_deterministic_and_requires_boron_provenance():
         return {"provenance": {"candidate_sha": "a" * 40, "context_id": envelope["context_id"], "tool_run_id": "tool-2"}}
 
     with pytest.raises(ContractValidationError, match="boron_tool"):
-        dispatch_tool(request(), REGISTRY, {"ro.evaluate-boron": missing_boron})
+        dispatch_tool(request(), REGISTRY, {"ro.evaluate-boron": missing_boron}, verified, now=NOW)
 
 
 def test_dispatch_rejects_handler_output_that_violates_registered_schema():
@@ -149,7 +164,7 @@ def test_dispatch_rejects_handler_output_that_violates_registered_schema():
         }}
 
     with pytest.raises(ContractValidationError, match="tool output:.*not of type 'object'"):
-        dispatch_tool(request(), REGISTRY, {"ro.evaluate-boron": invalid_output_handler})
+        dispatch_tool(request(), REGISTRY, {"ro.evaluate-boron": invalid_output_handler}, verified, now=NOW)
 
 
 def test_nonconverged_tool_result_is_propagated_and_semantic_actions_must_resolve():
@@ -159,7 +174,49 @@ def test_nonconverged_tool_result_is_propagated_and_semantic_actions_must_resolv
             "boron_tool": {"status": "unavailable"},
         }}
 
-    assert dispatch_tool(request("non_converged"), REGISTRY, {"ro.evaluate-boron": failed_handler})["status"] == "non_converged"
+    assert dispatch_tool(request("non_converged"), REGISTRY, {"ro.evaluate-boron": failed_handler}, verified, now=NOW)["status"] == "non_converged"
     validate_action({"kind": "navigate", "target_id": "suite.home"}, load("semantic-targets.json"), REGISTRY)
     with pytest.raises(ContractValidationError, match="not registered"):
         validate_action({"kind": "propose_tool", "tool_id": "missing.tool", "requires_confirmation": True}, load("semantic-targets.json"), REGISTRY)
+
+
+def test_dispatch_rejects_absent_or_malformed_confirmation_without_execution():
+    calls = []
+    handler = lambda arguments, envelope: calls.append(True)
+    absent = request()
+    del absent["confirmation"]
+    with pytest.raises(ContractValidationError, match="confirmation.*required"):
+        dispatch_tool(absent, REGISTRY, {"ro.evaluate-boron": handler}, verified, now=NOW)
+    malformed = request()
+    malformed["confirmation"]["request_digest"] = "not-a-digest"
+    with pytest.raises(ContractValidationError, match="does not match"):
+        dispatch_tool(malformed, REGISTRY, {"ro.evaluate-boron": handler}, verified, now=NOW)
+    assert calls == []
+
+
+def test_dispatch_rejects_stale_mismatched_and_ungated_confirmation_without_execution():
+    calls = []
+    handler = lambda arguments, envelope: calls.append(True)
+    with pytest.raises(ContractValidationError, match="stale"):
+        dispatch_tool(request(), REGISTRY, {"ro.evaluate-boron": handler}, verified,
+                      now=datetime(2026, 9, 1, 0, 6, tzinfo=timezone.utc))
+    mismatched = request()
+    mismatched["confirmation"]["action_id"] = "action-other"
+    with pytest.raises(ContractValidationError, match="exact request/action"):
+        dispatch_tool(mismatched, REGISTRY, {"ro.evaluate-boron": handler}, verified, now=NOW)
+    with pytest.raises(ContractValidationError, match="could not be verified"):
+        dispatch_tool(request(), REGISTRY, {"ro.evaluate-boron": handler}, lambda confirmation, binding: False, now=NOW)
+    with pytest.raises(ContractValidationError, match="could not be verified"):
+        dispatch_tool(request(), REGISTRY, {"ro.evaluate-boron": handler}, now=NOW)
+    assert calls == []
+
+
+def test_confirmation_is_bound_to_arguments_and_context():
+    changed_arguments = deepcopy(request())
+    changed_arguments["arguments"] = {"report": False}
+    with pytest.raises(ContractValidationError, match="exact request/action"):
+        dispatch_tool(changed_arguments, REGISTRY, {}, verified, now=NOW)
+    changed_context = deepcopy(request())
+    changed_context["context"]["context_id"] = "context-2"
+    with pytest.raises(ContractValidationError, match="exact request/action"):
+        dispatch_tool(changed_context, REGISTRY, {}, verified, now=NOW)

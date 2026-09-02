@@ -7,6 +7,9 @@ solver snapshots and invokes only an explicitly registered Python callable.
 from __future__ import annotations
 
 import json
+import hashlib
+import hmac
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
@@ -86,8 +89,46 @@ def validate_action(action: Mapping[str, Any], targets: Mapping[str, Any], tools
         raise ContractValidationError("action kind is not supported")
 
 
+def confirmation_request_digest(request: Mapping[str, Any], action_id: str) -> str:
+    """Return the canonical digest a confirmation must authorize."""
+    binding = {
+        "action_id": action_id, "request_id": request.get("request_id"),
+        "tool_id": request.get("tool_id"), "arguments": request.get("arguments"),
+        "context": request.get("context"),
+    }
+    encoded = json.dumps(binding, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _validate_confirmation(request, verifier, now) -> None:
+    confirmation = request["confirmation"]
+    try:
+        issued_at = datetime.fromisoformat(confirmation["issued_at"].replace("Z", "+00:00"))
+        expires_at = datetime.fromisoformat(confirmation["expires_at"].replace("Z", "+00:00"))
+    except (TypeError, ValueError) as exc:
+        raise ContractValidationError("confirmation timestamps are malformed") from exc
+    checked_at = now or datetime.now(timezone.utc)
+    if issued_at.tzinfo is None or expires_at.tzinfo is None or checked_at.tzinfo is None:
+        raise ContractValidationError("confirmation timestamps must include a timezone")
+    if expires_at <= issued_at or checked_at < issued_at or checked_at >= expires_at:
+        raise ContractValidationError("confirmation is stale or outside its validity period")
+    expected = confirmation_request_digest(request, confirmation["action_id"])
+    if not hmac.compare_digest(confirmation["request_digest"], expected):
+        raise ContractValidationError("confirmation does not match the exact request/action")
+    binding = {"action_id": confirmation["action_id"], "request_id": request["request_id"],
+               "tool_id": request["tool_id"], "request_digest": expected}
+    try:
+        verified = verifier is not None and verifier(confirmation, binding) is True
+    except Exception as exc:
+        raise ContractValidationError("confirmation verifier rejected malformed evidence") from exc
+    if not verified:
+        raise ContractValidationError("confirmation could not be verified")
+
+
 def dispatch_tool(
     request: Mapping[str, Any], registry: Mapping[str, Any], handlers: Mapping[str, Callable[[Mapping[str, Any], Mapping[str, Any]], Mapping[str, Any]]],
+    confirmation_verifier: Callable[[Mapping[str, Any], Mapping[str, Any]], bool] | None = None,
+    *, now: datetime | None = None,
 ) -> dict[str, Any]:
     """Validate and call one registered deterministic tool, returning its contract result.
 
@@ -97,6 +138,7 @@ def dispatch_tool(
     """
     _validate(request, "tool-request.schema.json")
     validate_context_envelope(request["context"])
+    _validate_confirmation(request, confirmation_verifier, now)
     tool = next((entry for entry in registry.get("tools", []) if entry.get("tool_id") == request["tool_id"]), None)
     if tool is None or tool.get("deterministic") is not True:
         raise ContractValidationError("request tool_id is not a registered deterministic tool")
