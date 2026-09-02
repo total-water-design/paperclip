@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Board-gated, root-only provisioning for the dedicated recovery principal.
+# The token is accepted only on stdin and is never written to stdout/stderr.
+set -euo pipefail
+umask 077
+
+fail() { printf '%s\n' "paperclip recovery token provisioning failed: $1" >&2; exit 1; }
+[[ "$#" -eq 0 ]] || fail "no arguments are accepted"
+[[ "$(id -u)" -eq 0 ]] || fail "must run as root"
+[[ ! -t 0 ]] || fail "read the token from a protected non-interactive stdin"
+
+IFS= read -r token || fail "token input is unavailable"
+IFS= read -r extra && fail "token input must contain exactly one line"
+[[ ${#token} -ge 32 && "$token" != *[[:space:]]* ]] || fail "token must be a non-whitespace value of at least 32 characters"
+
+token_target="${PAPERCLIP_RECOVERY_TOKEN_FILE:-/etc/paperclip/recovery.token}"
+env_target="${PAPERCLIP_RECOVERY_ENV_FILE:-/etc/paperclip/recovery.env}"
+[[ "$token_target" == /etc/paperclip/recovery.token && "$env_target" == /etc/paperclip/recovery.env ]] || fail "fixed production targets are required"
+
+token_tmp="$(mktemp /etc/paperclip/.recovery.token.XXXXXX)"
+env_tmp="$(mktemp /etc/paperclip/.recovery.env.XXXXXX)"
+trap 'rm -f "$token_tmp" "$env_tmp"' EXIT
+printf '%s\n' "$token" >"$token_tmp"
+printf 'PAPERCLIP_RECOVERY_TOKEN=%s\n' "$token" >"$env_tmp"
+chown root:paperclip "$token_tmp" "$env_tmp"
+chmod 0640 "$token_tmp" "$env_tmp"
+mv -f "$token_tmp" "$token_target"
+mv -f "$env_tmp" "$env_target"
+trap - EXIT
+unset token
+printf '%s\n' "Paperclip recovery token provisioned; value not displayed."
