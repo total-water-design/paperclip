@@ -21,10 +21,22 @@ if [ ! -r "$token_file" ]; then
   exit 78
 fi
 token=$(/bin/cat "$token_file")
-if [ -z "$token" ]; then
-  echo "paperclip recovery token is empty" >&2
+if [ "${#token}" -lt 32 ] || [ "${token#*[[:space:]]}" != "$token" ]; then
+  echo "paperclip recovery token is invalid" >&2
   exit 78
 fi
+
+umask 077
+header_file=$(/usr/bin/mktemp /run/paperclip-recovery-header.XXXXXX) || {
+  echo "paperclip recovery header input could not be created" >&2
+  exit 78
+}
+trap '/bin/rm -f "$header_file"' 0
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+printf 'x-paperclip-recovery-token: %s\n' "$token" >"$header_file"
+unset token
 
 # No caller-supplied service, URL, command, PID, company, or run identifier is
 # accepted. The only privileged action is this exact unit restart.
@@ -49,5 +61,5 @@ fi
 # or mutates PostgreSQL, Paperclip config, backups, or repositories.
 /usr/bin/curl --fail --silent --show-error --max-time 30 \
   --request POST \
-  --header "x-paperclip-recovery-token: $token" \
+  --header "@$header_file" \
   http://127.0.0.1:3100/api/recovery/reconcile
