@@ -30,6 +30,8 @@ import { summarySlotRoutes } from "./routes/summary-slots.js";
 import { statusCardRoutes } from "./routes/status-cards.js";
 import { teamsCatalogRoutes } from "./routes/teams-catalog.js";
 import { agentRoutes } from "./routes/agents.js";
+import { recoveryRoutes } from "./routes/recovery.js";
+import { heartbeatService } from "./services/index.js";
 import type { SetupTokenSessionService } from "./services/setup-token-session.js";
 import {
   buildSetupTokenLoginTransport,
@@ -502,6 +504,10 @@ export async function createApp(
       },
     }),
   );
+  api.use(recoveryRoutes({
+    recoveryToken: process.env.PAPERCLIP_RECOVERY_TOKEN,
+    heartbeat: heartbeatService(db),
+  }));
   api.use(assetRoutes(db, opts.storageService));
   api.use(projectRoutes(db));
   api.use(caseRoutes(db, opts.storageService));
