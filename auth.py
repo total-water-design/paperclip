@@ -15,6 +15,7 @@ from functools import wraps
 from pathlib import Path
 from urllib.parse import urlsplit
 import getpass
+import hashlib
 import json
 import os
 import re
@@ -86,6 +87,81 @@ def _safe_next(value: object) -> str | None:
     if parsed.scheme or parsed.netloc or not target.startswith("/") or target.startswith("//"):
         return None
     return target
+
+
+MOBILE_CONTRACT = "twds.mobile.auth/v1"
+MOBILE_ROUTES = {"mfa", "device_sessions", "privacy", "project", "job", "report"}
+
+
+def _mobile_hash(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _mobile_time(value: datetime | None) -> str | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _mobile_utc(value: datetime) -> datetime:
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+
+
+def _mobile_error(code: str, status: int, message: str = ""):
+    response = jsonify({"contract": MOBILE_CONTRACT, "code": code, "retryable": False,
+                        "request_id": uuid.uuid4().hex, **({"message": message} if message else {})})
+    response.status_code = status
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+def _mobile_contract_error():
+    requested = request.headers.get("Accept-Contract", MOBILE_CONTRACT)
+    if requested != MOBILE_CONTRACT:
+        return _mobile_error("VERSION_UNSUPPORTED", 406)
+    return None
+
+
+def _mobile_bearer_session() -> MobileDeviceSession | None:
+    header = request.headers.get("Authorization", "")
+    if not header.startswith("Bearer "):
+        return None
+    token = header[7:].strip()
+    if not token:
+        return None
+    row = db.session.scalar(select(MobileDeviceSession).where(MobileDeviceSession.access_hash == _mobile_hash(token)))
+    now = _utcnow()
+    if not row or row.state != "active" or _mobile_utc(row.expires_at) <= now or _mobile_utc(row.access_expires_at) <= now:
+        return None
+    return row
+
+
+def _mobile_session_payload(row: MobileDeviceSession, *, current: bool = False) -> dict:
+    result = {"contract": MOBILE_CONTRACT, "session_id": row.id, "device_id": row.device_id,
+              "owner": {"tenant_id": "twds", "user_id": str(row.user_id)},
+              "created_at": _mobile_time(row.created_at), "last_seen_at": _mobile_time(row.last_seen_at),
+              "expires_at": _mobile_time(row.expires_at), "state": row.state,
+              "refresh_generation": row.refresh_generation,
+              "display": {"device_name": row.device_name, "platform": row.platform, "is_current": current}}
+    if row.revoked_at:
+        result["revoked_at"] = _mobile_time(row.revoked_at)
+    return result
+
+
+def _issue_mobile_tokens(row: MobileDeviceSession) -> dict:
+    access = secrets.token_urlsafe(32)
+    refresh = secrets.token_urlsafe(48)
+    now = _utcnow()
+    row.access_hash = _mobile_hash(access)
+    row.refresh_hash = _mobile_hash(refresh)
+    row.access_expires_at = now + timedelta(minutes=int(current_app.config.get("MOBILE_ACCESS_MINUTES", 15)))
+    row.expires_at = now + timedelta(days=int(current_app.config.get("MOBILE_REFRESH_DAYS", 30)))
+    row.last_seen_at = now
+    return {"token_type": "Bearer", "access_token": access, "refresh_token": refresh,
+            "expires_in": int((row.access_expires_at - now).total_seconds()), "session_id": row.id,
+            "refresh_generation": row.refresh_generation}
 
 
 def validate_password(password: str, email: str = "") -> list[str]:
@@ -204,6 +280,36 @@ class User(UserMixin, db.Model):
         if locked.tzinfo is None:
             locked = locked.replace(tzinfo=timezone.utc)
         return locked > _utcnow()
+
+
+class MobileDeviceSession(db.Model):
+    """Opaque, server-side mobile credentials.  Raw tokens are never persisted."""
+
+    __tablename__ = "mobile_device_sessions"
+    id = db.Column(db.String(64), primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    device_id = db.Column(db.String(128), nullable=False, index=True)
+    device_name = db.Column(db.String(128), nullable=False, default="")
+    platform = db.Column(db.String(16), nullable=False, default="unknown")
+    access_hash = db.Column(db.String(64), nullable=False, unique=True, index=True)
+    access_expires_at = db.Column(db.DateTime(timezone=True), nullable=False)
+    refresh_hash = db.Column(db.String(64), nullable=False, unique=True, index=True)
+    refresh_generation = db.Column(db.Integer, nullable=False, default=0)
+    state = db.Column(db.String(16), nullable=False, default="active", index=True)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=_utcnow)
+    last_seen_at = db.Column(db.DateTime(timezone=True), nullable=False, default=_utcnow)
+    expires_at = db.Column(db.DateTime(timezone=True), nullable=False)
+    revoked_at = db.Column(db.DateTime(timezone=True), nullable=True)
+
+
+class MobilePushToken(db.Model):
+    __tablename__ = "mobile_push_tokens"
+    id = db.Column(db.String(64), primary_key=True)
+    session_id = db.Column(db.String(64), db.ForeignKey("mobile_device_sessions.id"), nullable=False, index=True)
+    token_hash = db.Column(db.String(64), nullable=False, unique=True, index=True)
+    provider = db.Column(db.String(16), nullable=False)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=_utcnow)
+    rotated_at = db.Column(db.DateTime(timezone=True), nullable=False, default=_utcnow)
 
 
 class ProductEntitlement(db.Model):
@@ -1001,6 +1107,176 @@ Review and approve or reject the request:
             return render_template("auth/pending.html", email=user.email)
 
     return render_template("auth/register.html")
+
+
+@auth_bp.post("/v1/auth/device-sessions")
+def mobile_register_device():
+    """Register the current authenticated device and return an opaque token envelope."""
+    if (error := _mobile_contract_error()):
+        return error
+    if not current_user.is_authenticated or current_user.status != "active":
+        return _mobile_error("UNAUTHENTICATED", 401)
+    data = request.get_json(silent=True) or {}
+    device_id = str(data.get("device_id") or "")
+    platform = str(data.get("platform") or "unknown")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", device_id) or platform not in {"ios", "android", "unknown"}:
+        return _mobile_error("VALIDATION_FAILED", 400)
+    row = MobileDeviceSession(id=uuid.uuid4().hex, user_id=current_user.id, device_id=device_id,
+                              device_name=str(data.get("device_name") or "")[:128], platform=platform,
+                              access_hash="pending", refresh_hash="pending")
+    envelope = _issue_mobile_tokens(row)
+    db.session.add(row)
+    audit("mobile_device_registered", user=current_user, actor=current_user, detail=f"device={device_id}")
+    db.session.commit()
+    response = jsonify(envelope); response.headers["Cache-Control"] = "no-store"
+    return response, 201
+
+
+@auth_bp.post("/v1/auth/refresh")
+def mobile_refresh():
+    if (error := _mobile_contract_error()):
+        return error
+    data = request.get_json(silent=True) or {}
+    token, device_id = str(data.get("refresh_token") or ""), str(data.get("device_id") or "")
+    if not token or not device_id:
+        return _mobile_error("VALIDATION_FAILED", 400)
+    row = db.session.scalar(select(MobileDeviceSession).where(MobileDeviceSession.device_id == device_id))
+    now = _utcnow()
+    if not row or row.refresh_hash != _mobile_hash(token):
+        if row and row.state == "active":
+            row.state, row.revoked_at = "compromised", now
+            audit("mobile_refresh_reused", user=db.session.get(User, row.user_id), detail=f"session={row.id}")
+            db.session.commit()
+        return _mobile_error("TOKEN_REUSED", 401)
+    if row.state != "active" or _mobile_utc(row.expires_at) <= now:
+        return _mobile_error("SESSION_REVOKED", 401)
+    # A conditional UPDATE makes the consumed refresh hash single-use across workers.
+    old_hash, generation = row.refresh_hash, row.refresh_generation
+    access, refresh = secrets.token_urlsafe(32), secrets.token_urlsafe(48)
+    access_expiry = now + timedelta(minutes=int(current_app.config.get("MOBILE_ACCESS_MINUTES", 15)))
+    changed = db.session.query(MobileDeviceSession).filter_by(id=row.id, refresh_hash=old_hash,
+        refresh_generation=generation, state="active").update({"refresh_hash": _mobile_hash(refresh),
+        "access_hash": _mobile_hash(access), "access_expires_at": access_expiry,
+        "refresh_generation": generation + 1, "last_seen_at": now}, synchronize_session=False)
+    if changed != 1:
+        db.session.rollback()
+        return _mobile_error("TOKEN_REUSED", 401)
+    db.session.commit()
+    response = jsonify({"token_type": "Bearer", "access_token": access, "refresh_token": refresh,
+                        "expires_in": int((access_expiry - now).total_seconds()), "session_id": row.id,
+                        "refresh_generation": generation + 1})
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@auth_bp.get("/v1/auth/device-sessions")
+def mobile_list_sessions():
+    if (error := _mobile_contract_error()): return error
+    current = _mobile_bearer_session()
+    if not current: return _mobile_error("UNAUTHENTICATED", 401)
+    rows = db.session.scalars(select(MobileDeviceSession).where(MobileDeviceSession.user_id == current.user_id).order_by(MobileDeviceSession.last_seen_at.desc())).all()
+    response = jsonify([_mobile_session_payload(row, current=row.id == current.id) for row in rows]); response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@auth_bp.delete("/v1/auth/device-sessions/<session_id>")
+def mobile_revoke_session(session_id: str):
+    if (error := _mobile_contract_error()): return error
+    current = _mobile_bearer_session()
+    if not current: return _mobile_error("UNAUTHENTICATED", 401)
+    row = db.session.get(MobileDeviceSession, session_id)
+    if not row or row.user_id != current.user_id: return _mobile_error("NOT_FOUND", 404)
+    if row.state == "active": row.state, row.revoked_at = "revoked", _utcnow()
+    db.session.commit()
+    return ("", 204, {"Cache-Control": "no-store"})
+
+
+@auth_bp.post("/v1/auth/logout")
+def mobile_logout():
+    if (error := _mobile_contract_error()): return error
+    current = _mobile_bearer_session()
+    if not current: return ("", 204, {"Cache-Control": "no-store"})
+    current.state, current.revoked_at = "revoked", _utcnow()
+    db.session.commit()
+    return ("", 204, {"Cache-Control": "no-store"})
+
+
+@auth_bp.post("/v1/auth/logout-all")
+def mobile_logout_all():
+    if (error := _mobile_contract_error()): return error
+    current = _mobile_bearer_session()
+    if not current: return _mobile_error("UNAUTHENTICATED", 401)
+    db.session.query(MobileDeviceSession).filter_by(user_id=current.user_id, state="active").update({"state": "revoked", "revoked_at": _utcnow()})
+    db.session.commit()
+    return ("", 204, {"Cache-Control": "no-store"})
+
+
+@auth_bp.post("/v1/mobile/navigation")
+def mobile_navigation():
+    if (error := _mobile_contract_error()): return error
+    current = _mobile_bearer_session()
+    if not current: return _mobile_error("UNAUTHENTICATED", 401)
+    data = request.get_json(silent=True) or {}
+    route = data.get("route")
+    if data.get("contract") != MOBILE_CONTRACT or route not in MOBILE_ROUTES or any(key in data for key in ("url", "href", "scheme", "host", "path", "fragment")):
+        return _mobile_error("VALIDATION_FAILED", 400)
+    response = jsonify({"contract": MOBILE_CONTRACT, "route": route,
+                        **{key: data[key] for key in ("resource_id", "project_id", "revision_id", "reauthentication_required") if key in data}})
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@auth_bp.post("/v1/mobile/notification-permission")
+def mobile_notification_permission():
+    if (error := _mobile_contract_error()): return error
+    current = _mobile_bearer_session()
+    data = request.get_json(silent=True) or {}
+    if not current: return _mobile_error("UNAUTHENTICATED", 401)
+    if data.get("status") not in {"granted", "denied", "provisional"}: return _mobile_error("VALIDATION_FAILED", 400)
+    return jsonify({"contract": MOBILE_CONTRACT, "status": data["status"]})
+
+
+@auth_bp.post("/v1/mobile/push-tokens")
+def mobile_push_token():
+    if (error := _mobile_contract_error()): return error
+    current = _mobile_bearer_session(); data = request.get_json(silent=True) or {}
+    token, provider = str(data.get("token") or ""), str(data.get("provider") or "")
+    if not current: return _mobile_error("UNAUTHENTICATED", 401)
+    if not token or len(token) > 4096 or provider not in {"apns", "fcm"}: return _mobile_error("VALIDATION_FAILED", 400)
+    digest = _mobile_hash(token); row = db.session.scalar(select(MobilePushToken).where(MobilePushToken.token_hash == digest))
+    # At most one provider credential is active per device session.  Rotation
+    # deletes the superseded credential before accepting the replacement.
+    if row is None:
+        db.session.query(MobilePushToken).filter_by(session_id=current.id).delete()
+        db.session.add(MobilePushToken(id=uuid.uuid4().hex, session_id=current.id, token_hash=digest, provider=provider))
+    else:
+        db.session.query(MobilePushToken).filter(MobilePushToken.session_id == current.id,
+            MobilePushToken.id != row.id).delete(synchronize_session=False)
+        row.session_id, row.provider, row.rotated_at = current.id, provider, _utcnow()
+    db.session.commit()
+    return ("", 204, {"Cache-Control": "no-store"})
+
+
+@auth_bp.delete("/v1/mobile/push-tokens")
+def mobile_delete_push_token():
+    if (error := _mobile_contract_error()): return error
+    current = _mobile_bearer_session(); data = request.get_json(silent=True) or {}
+    if not current: return _mobile_error("UNAUTHENTICATED", 401)
+    token = str(data.get("token") or "")
+    if token: db.session.query(MobilePushToken).filter_by(session_id=current.id, token_hash=_mobile_hash(token)).delete()
+    db.session.commit()
+    return ("", 204, {"Cache-Control": "no-store"})
+
+
+@auth_bp.post("/v1/mobile/notification-payloads/validate")
+def mobile_validate_notification_payload():
+    if (error := _mobile_contract_error()): return error
+    current = _mobile_bearer_session(); data = request.get_json(silent=True) or {}
+    navigation = data.get("navigationInput")
+    if not current: return _mobile_error("UNAUTHENTICATED", 401)
+    if data.get("version") != 1 or not isinstance(navigation, dict) or navigation.get("contract") != MOBILE_CONTRACT or navigation.get("route") not in MOBILE_ROUTES or any(key in navigation for key in ("url", "href", "scheme", "host", "path", "fragment")):
+        return _mobile_error("VALIDATION_FAILED", 400)
+    return jsonify({"contract": MOBILE_CONTRACT, "valid": True})
 
 
 @auth_bp.post("/logout")
