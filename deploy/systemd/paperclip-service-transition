@@ -23,13 +23,17 @@ record_service() {
 
 canonical_reconcile() {
   local output="$1"
-  local token_file="${PAPERCLIP_RECOVERY_TOKEN_FILE:-/etc/paperclip/recovery.token}" token
+  local token_file="${PAPERCLIP_RECOVERY_TOKEN_FILE:-/etc/paperclip/recovery.token}" token header_file
   [[ "$token_file" == "/etc/paperclip/recovery.token" && -r "$token_file" ]] || fail "dedicated recovery token is unavailable"
   token="$(cat "$token_file")"
   [[ ${#token} -ge 32 && "$token" != *[[:space:]]* ]] || fail "dedicated recovery token is invalid"
-  curl -fsS --request POST --header "x-paperclip-recovery-token: $token" \
-    http://127.0.0.1:3100/api/recovery/reconcile | jq -e . >"$output"
+  umask 077
+  header_file="$(mktemp "${TMPDIR:-/tmp}/paperclip-recovery-header.XXXXXX")" || fail "recovery header input could not be created"
+  trap 'rm -f "$header_file"' RETURN
+  printf 'x-paperclip-recovery-token: %s\n' "$token" >"$header_file"
   unset token
+  curl -fsS --request POST --header "@$header_file" \
+    http://127.0.0.1:3100/api/recovery/reconcile | jq -e . >"$output"
 }
 
 case "$action" in
