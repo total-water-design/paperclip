@@ -1,0 +1,11 @@
+[Unit]
+Description=Poll Paperclip health for database-unhealthy recovery
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+Persistent=true
+Unit=paperclip-health-recovery.service
+
+[Install]
+WantedBy=timers.target

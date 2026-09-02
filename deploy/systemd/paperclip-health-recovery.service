@@ -1,0 +1,24 @@
+[Unit]
+Description=Paperclip database-unhealthy health-aware recovery
+Documentation=https://github.com/total-water-design/paperclip/blob/master/doc/ROOT-SYSTEMD-RUNBOOK.md
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=paperclip
+Group=paperclip
+ExecStart=/usr/lib/paperclip/paperclip-health-recovery
+RuntimeDirectory=paperclip-health-recovery
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/run/paperclip-health-recovery
+RestrictAddressFamilies=AF_UNIX AF_INET
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+StandardOutput=journal
+StandardError=journal

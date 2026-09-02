@@ -7,7 +7,8 @@ fail() { printf '%s\n' "paperclip preflight: $*" >&2; exit 1; }
 required=(
   PAPERCLIP_HOME PAPERCLIP_CONFIG PAPERCLIP_INSTANCE_ID PAPERCLIP_EXECUTABLE
   PAPERCLIP_NODE PAPERCLIP_DATA_DIR PAPERCLIP_BACKUP_DIR PAPERCLIP_STORAGE_DIR
-  PAPERCLIP_SECRETS_KEY_FILE PAPERCLIP_ENV_FILE
+  PAPERCLIP_SECRETS_KEY_FILE PAPERCLIP_ENV_FILE PAPERCLIP_WORKSPACES_DIR
+  PAPERCLIP_RECOVERY_TOKEN
 )
 for name in "${required[@]}"; do
   value="${!name:-}"
@@ -16,10 +17,17 @@ done
 
 [[ "${PAPERCLIP_SERVICE_MANAGED:-}" == "1" ]] || fail "PAPERCLIP_SERVICE_MANAGED must be 1"
 [[ "$PAPERCLIP_INSTANCE_ID" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || fail "unsafe PAPERCLIP_INSTANCE_ID"
-for name in PAPERCLIP_HOME PAPERCLIP_CONFIG PAPERCLIP_EXECUTABLE PAPERCLIP_NODE PAPERCLIP_DATA_DIR PAPERCLIP_BACKUP_DIR PAPERCLIP_STORAGE_DIR PAPERCLIP_SECRETS_KEY_FILE PAPERCLIP_ENV_FILE; do
+system_home="${PAPERCLIP_SYSTEM_HOME:-/home/paperclip}"
+[[ "$system_home" = /* && ! -L "$system_home" ]] || fail "PAPERCLIP_SYSTEM_HOME must be an absolute non-symlink path"
+for name in PAPERCLIP_HOME PAPERCLIP_CONFIG PAPERCLIP_EXECUTABLE PAPERCLIP_NODE PAPERCLIP_DATA_DIR PAPERCLIP_BACKUP_DIR PAPERCLIP_STORAGE_DIR PAPERCLIP_SECRETS_KEY_FILE PAPERCLIP_ENV_FILE PAPERCLIP_WORKSPACES_DIR; do
   [[ "${!name}" = /* ]] || fail "$name must be an absolute path"
   [[ ! -L "${!name}" ]] || fail "$name must not be a symlink"
 done
+
+[[ "$PAPERCLIP_HOME" == "$system_home/.paperclip" ]] || fail "PAPERCLIP_HOME must be $system_home/.paperclip"
+[[ "$PAPERCLIP_WORKSPACES_DIR" == "$system_home/workspaces" ]] || fail "PAPERCLIP_WORKSPACES_DIR must be $system_home/workspaces"
+[[ "$PAPERCLIP_EXECUTABLE" == "$system_home/.local/bin/paperclipai" ]] || fail "PAPERCLIP_EXECUTABLE must be $system_home/.local/bin/paperclipai"
+[[ "$PAPERCLIP_NODE" == "/usr/bin/node" ]] || fail "PAPERCLIP_NODE must be /usr/bin/node"
 
 instance_root="$PAPERCLIP_HOME/instances/$PAPERCLIP_INSTANCE_ID"
 [[ "$PAPERCLIP_CONFIG" == "$instance_root/config.json" ]] || fail "PAPERCLIP_CONFIG must be the selected instance config"
@@ -35,6 +43,7 @@ safe_path() {
   (( (8#$mode & 022) == 0 )) || fail "unsafe permissions on $target (mode $mode)"
 }
 safe_path "$PAPERCLIP_HOME" directory
+safe_path "$PAPERCLIP_WORKSPACES_DIR" directory
 safe_path "$instance_root" directory
 safe_path "$PAPERCLIP_DATA_DIR" directory
 safe_path "$PAPERCLIP_BACKUP_DIR" directory
@@ -48,6 +57,7 @@ secret_mode=$(stat -c '%a' "$PAPERCLIP_SECRETS_KEY_FILE")
 [[ -x "$PAPERCLIP_EXECUTABLE" && -f "$PAPERCLIP_EXECUTABLE" ]] || fail "PAPERCLIP_EXECUTABLE is not an executable regular file"
 [[ -x "$PAPERCLIP_NODE" && -f "$PAPERCLIP_NODE" ]] || fail "PAPERCLIP_NODE is not an executable regular file"
 [[ -z "${PAPERCLIP_SECRETS_MASTER_KEY:-}" ]] || fail "inline PAPERCLIP_SECRETS_MASTER_KEY is forbidden"
+[[ ${#PAPERCLIP_RECOVERY_TOKEN} -ge 32 && "$PAPERCLIP_RECOVERY_TOKEN" != *[[:space:]]* ]] || fail "PAPERCLIP_RECOVERY_TOKEN must be a non-whitespace value of at least 32 characters"
 
 "$PAPERCLIP_NODE" - "$PAPERCLIP_CONFIG" "$PAPERCLIP_DATA_DIR" "$PAPERCLIP_BACKUP_DIR" "$PAPERCLIP_STORAGE_DIR" "$PAPERCLIP_SECRETS_KEY_FILE" <<'NODE'
 const fs = require('node:fs');

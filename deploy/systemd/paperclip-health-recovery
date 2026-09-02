@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# Timer-driven recovery for a live Paperclip process whose embedded PostgreSQL
+# is unreachable.  This never initializes, deletes, migrates, or replaces data.
+set -euo pipefail
+umask 077
+
+log() { printf '%s\n' "paperclip health recovery: $*"; }
+fail() { log "$*"; exit 1; }
+
+health_url="${PAPERCLIP_HEALTH_URL:-http://127.0.0.1:3100/api/health}"
+health_timeout="${PAPERCLIP_HEALTH_TIMEOUT_SECONDS:-5}"
+failure_threshold="${PAPERCLIP_HEALTH_FAILURE_THRESHOLD:-3}"
+readiness_timeout="${PAPERCLIP_RECOVERY_READINESS_TIMEOUT_SECONDS:-180}"
+cooldown_seconds="${PAPERCLIP_RECOVERY_COOLDOWN_SECONDS:-300}"
+state_dir="${PAPERCLIP_RECOVERY_STATE_DIR:-/run/paperclip-health-recovery}"
+recovery_helper="${PAPERCLIP_RECOVERY_HELPER:-/usr/local/lib/paperclip/paperclip-recovery}"
+
+[[ "$health_url" == "http://127.0.0.1:3100/api/health" ]] || fail "health URL must be the fixed loopback /api/health endpoint"
+[[ "$recovery_helper" == "/usr/local/lib/paperclip/paperclip-recovery" ]] || fail "recovery helper must be the fixed privileged helper"
+for value in "$health_timeout" "$failure_threshold" "$readiness_timeout" "$cooldown_seconds"; do
+  [[ "$value" =~ ^[1-9][0-9]*$ ]] || fail "timeouts and thresholds must be positive integers"
+done
+[[ "$state_dir" = /* && ! -L "$state_dir" ]] || fail "state directory must be an absolute non-symlink path"
+mkdir -p -m 0700 "$state_dir"
+
+exec 9>"$state_dir/recovery.lock"
+if ! flock -n 9; then
+  log "recovery suppressed: another invocation is active"
+  exit 0
+fi
+
+healthy() {
+  local response
+  response="$(curl --fail --silent --show-error --max-time "$health_timeout" "$health_url" 2>/dev/null)" || return 1
+  jq -e '.status == "ok"' >/dev/null 2>/dev/null <<<"$response"
+}
+
+failure_file="$state_dir/consecutive-failures"
+last_recovery_file="$state_dir/last-recovery-epoch"
+read_count() { [[ -r "$failure_file" ]] && cat "$failure_file" || printf '0\n'; }
+write_count() { printf '%s\n' "$1" >"$failure_file"; }
+
+if healthy; then
+  write_count 0
+  log "health status=ok; no recovery required"
+  exit 0
+fi
+
+failures="$(read_count)"
+[[ "$failures" =~ ^[0-9]+$ ]] || failures=0
+failures=$((failures + 1))
+write_count "$failures"
+log "health failure recorded: consecutive_failures=$failures threshold=$failure_threshold"
+if (( failures < failure_threshold )); then
+  exit 0
+fi
+
+now="$(date +%s)"
+last_recovery=0
+if [[ -r "$last_recovery_file" ]]; then read -r last_recovery <"$last_recovery_file" || true; fi
+[[ "$last_recovery" =~ ^[0-9]+$ ]] || last_recovery=0
+if (( now - last_recovery < cooldown_seconds )); then
+  log "recovery suppressed: threshold reached but cooldown_seconds=$cooldown_seconds remains"
+  exit 0
+fi
+
+printf '%s\n' "$now" >"$last_recovery_file"
+log "recovery threshold reached: invoking fixed no-argument privileged helper"
+if ! sudo -n -- "$recovery_helper"; then
+  log "recovery result=failed: fixed privileged helper failed"
+  exit 1
+fi
+
+deadline=$((SECONDS + readiness_timeout))
+while (( SECONDS < deadline )); do
+  if healthy; then
+    write_count 0
+    log "readiness: embedded PostgreSQL and Paperclip ready; health status=ok"
+    log "recovery result=success"
+    exit 0
+  fi
+  sleep 1
+done
+
+log "recovery result=failed: readiness timeout_seconds=$readiness_timeout"
+exit 1

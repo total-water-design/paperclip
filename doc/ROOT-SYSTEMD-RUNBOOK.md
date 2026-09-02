@@ -20,6 +20,13 @@ host gate is approved.
   state, a disabled backup, or mismatched config references.
 - Do not put secret values in the unit or environment file. The secrets key is
   a file reference only; inline `PAPERCLIP_SECRETS_MASTER_KEY` is rejected.
+- The separate recovery principal is provisioned only through
+  `paperclip-recovery-token-provision`. It reads one protected stdin line,
+  writes root-owned `0640` token/environment files, and never displays the
+  value. Until this is complete the unit and preflight fail closed.
+- Health recovery runs as `paperclip` and can elevate only the exact
+  no-argument `/usr/local/lib/paperclip/paperclip-recovery` helper through the
+  shipped sudoers entry. The health script never invokes `systemctl` directly.
 - The bounded abnormal-restart policy is five starts in 60 seconds, followed by
   a five-second delay. Deliberate operator stops do not restart the service.
 
@@ -47,30 +54,20 @@ process has a different bind, deployment mode, path layout, database, or
 secret provider, stop here and obtain a separately approved migration; do not
 silently rewrite it.
 
-Create the unit and environment file using the recorded existing paths (the
-values below are examples and must match the running instance exactly):
+Review `deploy/systemd/paperclip.env` against the recorded instance. The
+approved layout is fixed at `/home/paperclip`; a mismatch requires a separate
+migration decision. Stage the complete restorable artifact set only through:
 
 ```sh
-install -d -o root -g root -m 0755 /etc/paperclip
-install -o root -g root -m 0644 deploy/systemd/paperclip.service /etc/systemd/system/paperclip.service
-install -d -o root -g root -m 0755 /usr/lib/paperclip
-install -o root -g root -m 0755 deploy/systemd/paperclip-preflight /usr/lib/paperclip/paperclip-preflight
-install -o root -g paperclip -m 0640 /dev/null /etc/paperclip/paperclip.env
-cat >/etc/paperclip/paperclip.env <<'EOF'
-PAPERCLIP_HOME=/var/lib/paperclip
-PAPERCLIP_CONFIG=/var/lib/paperclip/instances/default/config.json
-PAPERCLIP_INSTANCE_ID=default
-PAPERCLIP_EXECUTABLE=/opt/paperclip/current/bin/paperclipai
-PAPERCLIP_NODE=/usr/bin/node
-PAPERCLIP_DATA_DIR=/var/lib/paperclip/instances/default/db
-PAPERCLIP_BACKUP_DIR=/var/lib/paperclip/instances/default/data/backups
-PAPERCLIP_STORAGE_DIR=/var/lib/paperclip/instances/default/data/storage
-PAPERCLIP_SECRETS_KEY_FILE=/var/lib/paperclip/instances/default/secrets/master.key
-PAPERCLIP_SERVICE_MANAGED=1
-EOF
-chown root:paperclip /etc/paperclip/paperclip.env
-chmod 0640 /etc/paperclip/paperclip.env
-systemd-analyze verify /etc/systemd/system/paperclip.service
+PAPERCLIP_ROLLBACK_ROOT=/root/paperclip-service-rollback \
+  deploy/systemd/paperclip-service-install install
+# A Board-approved operator supplies the high-entropy token on protected stdin.
+read -rsp 'Recovery token: ' token; printf '\n' >&2
+printf '%s\n' "$token" | /usr/lib/paperclip/paperclip-recovery-token-provision
+unset token
+systemd-analyze verify /etc/systemd/system/paperclip.service \
+  /etc/systemd/system/paperclip-health-recovery.service \
+  /etc/systemd/system/paperclip-health-recovery.timer
 /usr/lib/paperclip/paperclip-preflight
 ```
 
@@ -128,21 +125,17 @@ systemctl show paperclip.service -p ActiveState -p NRestarts -p ExecMainStatus -
 
 ## Orphan and heartbeat reconciliation verification
 
-Before the destructive test, record any active heartbeat run IDs through the
-Board API. After recovery, inspect the startup reconciliation log and require
-each recorded run to be either still running, safely finalized, or explicitly
-requeued/recovered; no run may disappear silently.
+Use the fixed, loopback-only authenticated recovery endpoint for authoritative
+run inventory and canonical reconciliation. Do not use an operator API key or
+the obsolete heartbeat-run routes.
 
 ```sh
-journalctl -u paperclip.service --since '-5 min' --no-pager | \
-  grep -Ei 'startup heartbeat recovery|orphan|reconc|lost|requeued|adopted'
-curl -fsS http://127.0.0.1:3100/api/health | jq -e '.status == "ok"'
+/usr/lib/paperclip/paperclip-service-transition reconcile
+jq . "$PAPERCLIP_TRANSITION_EVIDENCE_DIR/reconciliation.json"
 ```
 
-For each recorded run, use the authenticated Board API to retrieve
-`/api/heartbeat-runs/<run-id>` and retain the status evidence with the change
-record. If any run is lost without a recorded recovery disposition, stop and
-open a recovery issue before declaring the change successful.
+Retain the endpoint's non-secret before/after inventory and reconciliation IDs
+with the change record. If it fails, stop and open a recovery issue.
 
 ## Rollback
 
@@ -151,13 +144,10 @@ environment file, reload systemd, and restart only under an approved production
 gate. The instance state is intentionally left untouched.
 
 ```sh
-cp -a /root/paperclip-service-rollback/paperclip.service.previous /etc/systemd/system/paperclip.service
-cp -a /root/paperclip-service-rollback/paperclip.env.previous /etc/paperclip/paperclip.env
-cp -a /root/paperclip-service-rollback/paperclip-preflight.previous /usr/lib/paperclip/paperclip-preflight
-systemctl daemon-reload
-systemctl restart paperclip.service
+PAPERCLIP_ROLLBACK_ROOT=/root/paperclip-service-rollback \
+  /usr/lib/paperclip/paperclip-service-install rollback
 curl -fsS http://127.0.0.1:3100/api/health | jq -e '.status == "ok"'
 ```
 
-Do not delete `/var/lib/paperclip`, instance configuration, embedded PostgreSQL
+Do not delete `/home/paperclip/.paperclip`, instance configuration, embedded PostgreSQL
 data, backups, storage, or secrets as part of rollback.
