@@ -1,9 +1,13 @@
 import { randomUUID } from "node:crypto";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { and, eq } from "drizzle-orm";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { and, eq, sql } from "drizzle-orm";
 import { agents, companies, createDb, heartbeatRuns, issueComments, issueThreadInteractions, issues, validationExecutionGrants } from "@paperclipai/db";
 import { getEmbeddedPostgresTestSupport, startEmbeddedPostgresTestDatabase } from "../__tests__/helpers/embedded-postgres.js";
 import { TWDS_VALIDATION_GRANT, bindTwdsValidationGrantSuccessor, consumeTwdsValidationGrant, createTwdsValidationGrant, invalidateTwdsValidationGrants, isValidationExecutionOnlyAction } from "./validation-execution-grants.js";
+import { evaluateIssueThreadInteractionResolverAudience } from "./issue-thread-interaction-resolution.js";
+import { heartbeatService } from "./heartbeat.js";
+import { issueService } from "./issues.js";
+import { registerServerAdapter, unregisterServerAdapter, type ServerAdapterModule } from "../adapters/index.js";
 
 const support = await getEmbeddedPostgresTestSupport();
 const describePostgres = support.supported ? describe : describe.skip;
@@ -163,6 +167,18 @@ describePostgres("TWDS validation execution grant lifecycle (Postgres)", () => {
     expect(grant).toMatchObject({ status: "invalidated", invalidationReason: "terminal_issue", consumerRunId: sourceRunId });
   });
 
+  it("invalidates through the terminal issue-service transition", async () => {
+    await seedGrant();
+
+    await expect(issueService(db).update(TWDS_VALIDATION_GRANT.issueId, { status: "done" })).resolves.toMatchObject({
+      id: TWDS_VALIDATION_GRANT.issueId,
+      status: "done",
+    });
+
+    const [grant] = await db.select().from(validationExecutionGrants);
+    expect(grant).toMatchObject({ status: "invalidated", invalidationReason: "terminal_issue" });
+  });
+
   it("denies mutation capabilities without consuming the grant", async () => {
     await seedGrant();
     for (const action of ["merge", "deployment", "repository_mutation", "tolerance_change"]) {
@@ -170,5 +186,110 @@ describePostgres("TWDS validation execution grant lifecycle (Postgres)", () => {
     }
     const [grant] = await db.select().from(validationExecutionGrants);
     expect(grant).toMatchObject({ status: "issued", consumerRunId: null });
+  });
+
+  it("does not issue a grant when the confirmation is not human_only or has no authenticated user", async () => {
+    const interactionId = await seedGrant({ createGrant: false });
+    const base = {
+      companyId,
+      approvalIssueId: TWDS_VALIDATION_GRANT.approvalIssueId,
+      interaction: {
+        id: interactionId,
+        kind: "request_confirmation",
+        sourceCommentId: TWDS_VALIDATION_GRANT.approvalCommentId,
+        sourceRunId,
+        effectiveResolverPolicy: "human_only",
+      },
+      now: new Date(),
+    } as const;
+    await expect(createTwdsValidationGrant(db, { ...base, userId: null })).resolves.toBeNull();
+    await expect(createTwdsValidationGrant(db, {
+      ...base,
+      userId: randomUUID(),
+      interaction: { ...base.interaction, effectiveResolverPolicy: "anyone" },
+    })).resolves.toBeNull();
+    expect(await db.select().from(validationExecutionGrants)).toHaveLength(0);
+  });
+});
+
+describe("unrelated human_only resolver enforcement", () => {
+  it("continues to deny an agent for a separate human_only confirmation", () => {
+    expect(evaluateIssueThreadInteractionResolverAudience({
+      actor: { type: "agent", agentId: randomUUID(), companyId: randomUUID(), runId: randomUUID() },
+      interaction: {
+        id: randomUUID(),
+        companyId: randomUUID(),
+        issueId: randomUUID(),
+        kind: "request_confirmation",
+        effectiveResolverPolicy: "human_only",
+        createdByAgentId: null,
+        createdByUserId: randomUUID(),
+        sourceRunId: null,
+      },
+      additionalRestriction: "anyone",
+    })).toMatchObject({ allowed: false, code: "interaction_human_only" });
+  });
+});
+
+describePostgres("TWDS validation grant heartbeat boundary (Postgres)", () => {
+  const adapterType = "twds_validation_grant_test";
+  const execute = vi.fn<ServerAdapterModule["execute"]>();
+  let db: ReturnType<typeof createDb>;
+  let temp: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>>;
+
+  beforeAll(async () => {
+    temp = await startEmbeddedPostgresTestDatabase("paperclip-validation-grant-heartbeat-");
+    db = createDb(temp.connectionString);
+    registerServerAdapter({
+      type: adapterType,
+      execute,
+      testEnvironment: async () => ({ adapterType, status: "pass", checks: [], testedAt: new Date().toISOString() }),
+    });
+  }, 30_000);
+  afterEach(async () => {
+    await db.execute(sql.raw('TRUNCATE TABLE "companies" RESTART IDENTITY CASCADE'));
+    vi.clearAllMocks();
+  });
+  afterAll(async () => { unregisterServerAdapter(adapterType); await db.$client.end(); await temp.cleanup(); });
+
+  async function seedQueuedValidationRun({ grant }: { grant: boolean }) {
+    const companyId = randomUUID();
+    const agentId = randomUUID();
+    const runId = randomUUID();
+    const interactionId = randomUUID();
+    await db.insert(companies).values({ id: companyId, name: "Heartbeat boundary", issuePrefix: "VGH", requireBoardApprovalForNewAgents: false, defaultResponsibleUserId: "reviewer" });
+    await db.insert(agents).values({ id: agentId, companyId, name: "Validation runner", role: "engineer", status: "idle", adapterType, adapterConfig: {}, runtimeConfig: {}, permissions: {} });
+    await db.insert(issues).values([
+      { id: TWDS_VALIDATION_GRANT.approvalIssueId, companyId, title: "Approval", status: "open" },
+      { id: TWDS_VALIDATION_GRANT.issueId, companyId, title: "Validation", status: "in_progress", assigneeAgentId: agentId },
+    ]);
+    await db.insert(issueComments).values({ id: TWDS_VALIDATION_GRANT.approvalCommentId, companyId, issueId: TWDS_VALIDATION_GRANT.approvalIssueId, body: "Approved" });
+    await db.insert(heartbeatRuns).values({ id: runId, companyId, agentId, status: "queued", responsibleUserId: "reviewer", contextSnapshot: { issueId: TWDS_VALIDATION_GRANT.issueId } });
+    if (grant) {
+      await db.insert(issueThreadInteractions).values({ id: interactionId, companyId, issueId: TWDS_VALIDATION_GRANT.approvalIssueId, kind: "request_confirmation", status: "accepted", effectiveResolverPolicy: "human_only", requestedResolverPolicy: "human_only", resolverPolicyProvenance: "explicit", effectiveResolverPolicySource: "requested", continuationPolicy: "wake_assignee", sourceCommentId: TWDS_VALIDATION_GRANT.approvalCommentId, sourceRunId: runId, payload: {} });
+      await db.insert(validationExecutionGrants).values({ companyId, approvalIssueId: TWDS_VALIDATION_GRANT.approvalIssueId, approvalInteractionId: interactionId, approvalCommentId: TWDS_VALIDATION_GRANT.approvalCommentId, approvalSourceRunId: runId, issueId: TWDS_VALIDATION_GRANT.issueId, candidateSha: TWDS_VALIDATION_GRANT.candidateSha, contractSha: TWDS_VALIDATION_GRANT.contractSha, oracleSha: TWDS_VALIDATION_GRANT.oracleSha, expiresAt: new Date(Date.now() + 60_000) });
+    }
+    return { companyId, runId };
+  }
+
+  it("blocks adapter dispatch without a grant at the concrete pre-adapter boundary", async () => {
+    const { runId } = await seedQueuedValidationRun({ grant: false });
+    const heartbeat = heartbeatService(db);
+    await heartbeat.resumeQueuedRuns();
+    await heartbeat.drainActiveRunExecutions();
+    expect(execute).not.toHaveBeenCalled();
+    expect(await heartbeat.getRun(runId)).toMatchObject({ status: "failed" });
+  });
+
+  it("consumes before dispatch and invalidates immutable audit linkage after completion", async () => {
+    execute.mockResolvedValue({ exitCode: 0, signal: null, timedOut: false, resultJson: {} });
+    const { companyId, runId } = await seedQueuedValidationRun({ grant: true });
+    const heartbeat = heartbeatService(db);
+    await heartbeat.resumeQueuedRuns();
+    await heartbeat.drainActiveRunExecutions();
+    expect(execute).toHaveBeenCalledOnce();
+    expect(await heartbeat.getRun(runId)).toMatchObject({ status: "succeeded" });
+    const [grant] = await db.select().from(validationExecutionGrants).where(eq(validationExecutionGrants.companyId, companyId));
+    expect(grant).toMatchObject({ status: "invalidated", invalidationReason: "validation_completed", approvalSourceRunId: runId, consumerRunId: runId });
   });
 });

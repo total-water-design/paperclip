@@ -16648,13 +16648,6 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
 
       const finalizedRun = persistedRun ?? (await getRun(run.id));
       if (finalizedRun) {
-        if (issueId === TWDS_VALIDATION_GRANT.issueId) {
-          await invalidateTwdsValidationGrants(db, {
-            companyId: agent.companyId,
-            issueId,
-            reason: "validation_completed",
-          });
-        }
         await appendRunEvent(finalizedRun, seq++, {
           eventType: "lifecycle",
           stream: "system",
@@ -17093,6 +17086,25 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
               );
               return latestRun;
             });
+            // This is the one terminalization funnel shared by successful
+            // dispatches, adapter failures, cancellation, and pre-dispatch
+            // failures. A consumed validation authority cannot outlive any
+            // terminal outcome of its target run.
+            if (
+              isHeartbeatRunTerminalStatus(latestRun.status)
+              && readNonEmptyString(parseObject(latestRun.contextSnapshot).issueId) === TWDS_VALIDATION_GRANT.issueId
+            ) {
+              await invalidateTwdsValidationGrants(db, {
+                companyId: latestRun.companyId,
+                issueId: TWDS_VALIDATION_GRANT.issueId,
+                reason: "validation_completed",
+              }).catch((invalidationErr) => {
+                logger.error(
+                  { err: invalidationErr, runId: latestRun.id },
+                  "failed to invalidate TWDS validation grants after heartbeat terminalization",
+                );
+              });
+            }
           }
           await releaseEnvironmentLeasesForRun({
             runId: run.id,
