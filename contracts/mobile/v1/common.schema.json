@@ -7,10 +7,26 @@
     "sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
     "version": {"const": "twds.mobile/v1"},
     "scope": {"type": "string", "enum": ["jobs:read", "jobs:write", "reports:read", "activity:read", "notifications:read", "projects:read"]},
+    "principalIdentity": {
+      "type": "object",
+      "required": ["tenant_id", "user_id"],
+      "properties": {"tenant_id": {"$ref": "#/$defs/id"}, "user_id": {"$ref": "#/$defs/id"}}
+    },
     "principal": {
       "type": "object", "additionalProperties": false,
-      "required": ["tenant_id", "user_id", "scopes"],
-      "properties": {"tenant_id": {"$ref": "#/$defs/id"}, "user_id": {"$ref": "#/$defs/id"}, "scopes": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/scope"}}}
+      "allOf": [{"$ref": "#/$defs/principalIdentity"}],
+      "required": ["scopes"],
+      "properties": {"tenant_id": true, "user_id": true, "scopes": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/scope"}}}
+    },
+    "errorEnvelope": {
+      "type": "object", "required": ["code", "message", "retryable", "request_id"],
+      "properties": {
+        "code": {"type": "string", "minLength": 1},
+        "message": {"type": "string", "minLength": 1, "maxLength": 512, "pattern": "^(?!.*(?:access_token|refresh_token|authorization|Bearer\\s|recovery_code|enrollment_secret|\\bproof\\b)).+$"},
+        "retryable": {"type": "boolean"},
+        "request_id": {"$ref": "#/$defs/id"},
+        "retry_after_seconds": {"type": "integer", "minimum": 1}
+      }
     },
     "provenance": {
       "type": "object", "additionalProperties": false,

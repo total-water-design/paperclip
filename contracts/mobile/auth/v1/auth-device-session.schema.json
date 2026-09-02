@@ -4,19 +4,14 @@
   "title": "TWDS Mobile Authentication and Device Session Contract v1",
   "$defs": {
     "contract": {"const": "twds.mobile.auth/v1"},
-    "id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
-    "timestamp": {"type": "string", "format": "date-time"},
-    "owner": {
-      "type": "object", "additionalProperties": false,
-      "required": ["tenant_id", "user_id"],
-      "properties": {"tenant_id": {"$ref": "#/$defs/id"}, "user_id": {"$ref": "#/$defs/id"}}
-    },
+    "id": {"$ref": "../../v1/common.schema.json#/$defs/id"},
+    "timestamp": {"$ref": "../../v1/common.schema.json#/$defs/timestamp"},
     "deviceSession": {
       "type": "object", "additionalProperties": false,
-      "required": ["contract", "session_id", "device_id", "owner", "created_at", "last_seen_at", "state", "refresh_generation"],
+      "required": ["contract", "session_id", "device_id", "principal", "created_at", "last_seen_at", "state", "refresh_generation"],
       "properties": {
         "contract": {"$ref": "#/$defs/contract"}, "session_id": {"$ref": "#/$defs/id"}, "device_id": {"$ref": "#/$defs/id"},
-        "owner": {"$ref": "#/$defs/owner"}, "created_at": {"$ref": "#/$defs/timestamp"}, "last_seen_at": {"$ref": "#/$defs/timestamp"},
+        "principal": {"type": "object", "additionalProperties": false, "allOf": [{"$ref": "../../v1/common.schema.json#/$defs/principalIdentity"}], "properties": {"tenant_id": true, "user_id": true}}, "created_at": {"$ref": "#/$defs/timestamp"}, "last_seen_at": {"$ref": "#/$defs/timestamp"},
         "expires_at": {"$ref": "#/$defs/timestamp"}, "revoked_at": {"$ref": "#/$defs/timestamp"},
         "state": {"enum": ["active", "expired", "revoked", "compromised"]}, "refresh_generation": {"type": "integer", "minimum": 0},
         "display": {"type": "object", "additionalProperties": false, "properties": {"device_name": {"type": "string", "maxLength": 128}, "platform": {"enum": ["ios", "android", "unknown"]}, "is_current": {"type": "boolean"}}}
@@ -35,29 +30,28 @@
     },
     "privacyRequest": {
       "type": "object", "additionalProperties": false,
-      "required": ["contract", "request_id", "owner", "kind", "state", "requested_at"],
+      "required": ["contract", "request_id", "principal", "kind", "state", "requested_at"],
       "properties": {
-        "contract": {"$ref": "#/$defs/contract"}, "request_id": {"$ref": "#/$defs/id"}, "owner": {"$ref": "#/$defs/owner"},
+        "contract": {"$ref": "#/$defs/contract"}, "request_id": {"$ref": "#/$defs/id"}, "principal": {"type": "object", "additionalProperties": false, "allOf": [{"$ref": "../../v1/common.schema.json#/$defs/principalIdentity"}], "properties": {"tenant_id": true, "user_id": true}},
         "kind": {"enum": ["export", "deletion"]}, "state": {"enum": ["requested", "identity_verification_required", "queued", "processing", "ready", "completed", "cancelled", "failed"]},
         "requested_at": {"$ref": "#/$defs/timestamp"}, "updated_at": {"$ref": "#/$defs/timestamp"}, "download_expires_at": {"$ref": "#/$defs/timestamp"}
       }
     },
     "navigationInput": {
       "type": "object", "additionalProperties": false,
-      "required": ["contract", "route"],
-      "properties": {
-        "contract": {"$ref": "#/$defs/contract"}, "route": {"enum": ["mfa", "device_sessions", "privacy", "project", "job", "report"]},
-        "resource_id": {"$ref": "#/$defs/id"}, "project_id": {"$ref": "#/$defs/id"}, "revision_id": {"$ref": "#/$defs/id"},
-        "reauthentication_required": {"type": "boolean"}
-      }
+      "properties": {"contract": {"$ref": "#/$defs/contract"}, "route": {"type": "string"}, "resource_id": {"$ref": "#/$defs/id"}, "project_id": {"$ref": "#/$defs/id"}, "revision_id": {"$ref": "#/$defs/id"}, "reauthentication_required": {"type": "boolean"}},
+      "oneOf": [
+        {"required": ["contract", "route"], "properties": {"contract": {"$ref": "#/$defs/contract"}, "route": {"enum": ["mfa", "device_sessions", "privacy"]}, "reauthentication_required": {"type": "boolean"}}, "not": {"anyOf": [{"required": ["resource_id"]}, {"required": ["project_id"]}, {"required": ["revision_id"]}]}},
+        {"required": ["contract", "route", "project_id"], "properties": {"contract": {"$ref": "#/$defs/contract"}, "route": {"const": "project"}, "project_id": {"$ref": "#/$defs/id"}, "reauthentication_required": {"type": "boolean"}}, "not": {"anyOf": [{"required": ["resource_id"]}, {"required": ["revision_id"]}]}},
+        {"required": ["contract", "route", "resource_id"], "properties": {"contract": {"$ref": "#/$defs/contract"}, "route": {"enum": ["job", "report"]}, "resource_id": {"$ref": "#/$defs/id"}, "reauthentication_required": {"type": "boolean"}}, "not": {"anyOf": [{"required": ["project_id"]}, {"required": ["revision_id"]}]}}
+      ]
     },
     "error": {
-      "type": "object", "additionalProperties": false,
-      "required": ["contract", "code", "retryable", "request_id"],
-      "properties": {
-        "contract": {"$ref": "#/$defs/contract"}, "code": {"enum": ["OFFLINE", "NETWORK_UNAVAILABLE", "TIMEOUT", "SERVICE_DEGRADED", "UNAUTHENTICATED", "MFA_REQUIRED", "MFA_INVALID", "MFA_LOCKED", "TOKEN_REUSED", "SESSION_REVOKED", "FORBIDDEN", "NOT_FOUND", "CONFLICT", "VALIDATION_FAILED", "RATE_LIMITED", "VERSION_UNSUPPORTED", "SERVER_ERROR"]},
-        "retryable": {"type": "boolean"}, "request_id": {"$ref": "#/$defs/id"}, "retry_after_seconds": {"type": "integer", "minimum": 1}, "message": {"type": "string", "maxLength": 512}
-      }
+      "allOf": [
+        {"$ref": "../../v1/common.schema.json#/$defs/errorEnvelope"},
+        {"type": "object", "required": ["contract"], "properties": {"contract": {"$ref": "#/$defs/contract"}, "code": {"enum": ["OFFLINE", "NETWORK_UNAVAILABLE", "TIMEOUT", "SERVICE_DEGRADED", "UNAUTHENTICATED", "MFA_REQUIRED", "MFA_INVALID", "MFA_LOCKED", "TOKEN_REUSED", "SESSION_REVOKED", "FORBIDDEN", "NOT_FOUND", "CONFLICT", "VALIDATION_FAILED", "RATE_LIMITED", "VERSION_UNSUPPORTED", "SERVER_ERROR"]}}}
+      ],
+      "unevaluatedProperties": false
     }
   },
   "oneOf": [

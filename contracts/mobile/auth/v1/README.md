@@ -10,9 +10,9 @@ Implementation owner: Suite/Core (authentication, authorization, persistence, to
 
 ## Transport and security invariants
 
-All endpoints use TLS, UTF-8 JSON, RFC 3339 UTC timestamps, `Cache-Control: no-store`, and `Accept-Contract: twds.mobile.auth/v1`. Tokens, MFA secrets, recovery codes, privacy archives, and raw deep-link URLs must never appear in logs, analytics, notifications, crash reports, or URL query strings. Access tokens are short-lived bearer tokens; refresh tokens are opaque, single-use, stored only in OS secure storage, and bound server-side to the tenant, user, device, session, and generation.
+All endpoints use TLS, UTF-8 JSON, RFC 3339 UTC timestamps, `Cache-Control: no-store`, and the domain-specific `Accept-Contract` value. Auth/session/privacy endpoints negotiate `twds.mobile.auth/v1`; resource navigation and refetch endpoints negotiate `twds.mobile/v1`. A client that performs both flows negotiates each value on its corresponding request—these are complementary contracts, not aliases or a combined version string. Tokens, MFA secrets, recovery codes, privacy archives, and raw deep-link URLs must never appear in logs, analytics, notifications, crash reports, or URL query strings. Access tokens are short-lived bearer tokens; refresh tokens are opaque, single-use, stored only in OS secure storage, and bound server-side to the tenant, user, device, session, and generation.
 
-The server derives tenant/user ownership from the authenticated principal. A client cannot submit or widen `owner`, scopes, roles, `session_id`, or `refresh_generation`. Every list/read/revoke/export/delete operation rechecks tenant and user ownership. Cross-owner identifiers return `404 NOT_FOUND` where existence would leak; administrative action requires a separate explicit administrative contract and is outside v1.
+The server derives the canonical `principalIdentity` (`tenant_id`, `user_id`) from the authenticated principal. Auth records serialize it as `principal`, using the shared definition in `mobile/v1/common.schema.json`; resource contracts compose that identity with least-privilege `scopes` as canonical `principal`. A client cannot submit or widen the principal identity, scopes, roles, `session_id`, or `refresh_generation`. Every list/read/revoke/export/delete operation rechecks tenant and user ownership. Cross-owner identifiers return `404 NOT_FOUND` where existence would leak; administrative action requires a separate explicit administrative contract and is outside v1.
 
 ## Endpoint contract
 
@@ -35,11 +35,26 @@ Token envelopes are intentionally not represented by the shared JSON Schema: Sui
 
 ## Deep-link and navigation inputs
 
-Only the structured `navigationInput` object is accepted. The allowlist is `mfa`, `device_sessions`, `privacy`, `project`, `job`, and `report`. Clients reject absolute URLs, custom schemes, hosts, paths, fragments, JavaScript, and unknown routes. A navigation request never conveys authorization: the app reauthenticates when `reauthentication_required` is true and always refetches the resource through its authorized API before rendering it. Sensitive routes (`mfa`, `device_sessions`, `privacy`) require an authenticated foreground session and cannot be opened from notification payload data alone.
+Only the structured `navigationInput` object is accepted. The allowlist is `mfa`, `device_sessions`, `privacy`, `project`, `job`, and `report`. `project` carries exactly `project_id`; `job` and `report` each carry exactly `resource_id`; no project/revision/resource combination is accepted for these routes. Sensitive routes carry no resource identifier. Clients reject absolute URLs, custom schemes, hosts, paths, fragments, JavaScript, unknown routes, and irrelevant identifier combinations. A navigation request never conveys authorization: the app reauthenticates when `reauthentication_required` is true and always refetches the resource through its authorized API before rendering it. Sensitive routes (`mfa`, `device_sessions`, `privacy`) are separate from resource navigation, require an authenticated foreground session and recent reauthentication where the endpoint says so, and cannot be opened from notification payload data alone.
 
 ## Error and degraded/offline behavior
 
-The schema error codes are stable. `OFFLINE` is client-synthesized when the OS reports no connectivity; `NETWORK_UNAVAILABLE` covers connection failure; `TIMEOUT` means outcome unknown; `SERVICE_DEGRADED` is a server response. Automatic retry is allowed only when `retryable=true`, honors `retry_after_seconds`, and must not retry MFA proofs, recovery codes, deletion confirmations, or non-idempotent mutations. Refresh timeout is outcome-unknown: retry the same refresh token once through a serialized refresh coordinator; `TOKEN_REUSED` or `SESSION_REVOKED` then requires credential purge and interactive sign-in. Offline mode exposes previously cached non-sensitive UI only and never treats cached authentication state as authorization.
+Auth errors compose the canonical shared error envelope in `mobile/v1/common.schema.json`: every error has a non-empty, redacted `message`, `retryable`, `request_id`, and optional `retry_after_seconds`. Messages must not include bearer credentials, token fields, proofs, recovery codes, or enrollment secrets. `OFFLINE` is client-synthesized when the OS reports no connectivity; `NETWORK_UNAVAILABLE` covers connection failure; `TIMEOUT` means outcome unknown; `SERVICE_DEGRADED` is a server response. Automatic retry is allowed only when `retryable=true`, honors `retry_after_seconds`, and must not retry MFA proofs, recovery codes, deletion confirmations, or non-idempotent mutations. Refresh timeout is outcome-unknown: retry the same refresh token once through a serialized refresh coordinator; `TOKEN_REUSED` or `SESSION_REVOKED` then requires credential purge and interactive sign-in. Offline mode exposes previously cached non-sensitive UI only and never treats cached authentication state as authorization.
+
+| HTTP status | Auth error code(s) |
+|---|---|
+| 400 | `VALIDATION_FAILED` |
+| 401 | `UNAUTHENTICATED`, `MFA_REQUIRED`, `MFA_INVALID`, `SESSION_REVOKED` |
+| 403 | `FORBIDDEN` |
+| 404 | `NOT_FOUND` |
+| 409 | `TOKEN_REUSED`, `CONFLICT` |
+| 423 | `MFA_LOCKED` |
+| 429 | `RATE_LIMITED` |
+| 503 | `SERVICE_DEGRADED` |
+| 5xx | `SERVER_ERROR` |
+| 406 | `VERSION_UNSUPPORTED` |
+
+Transport failures (`OFFLINE`, `NETWORK_UNAVAILABLE`, and `TIMEOUT`) have no HTTP response. Implementations retain the server `request_id` and `retry_after_seconds` unchanged when present.
 
 Expected negative paths include expired/consumed/locked MFA transactions, wrong proof without account enumeration, cross-owner session and privacy IDs, refresh reuse and concurrent refresh, revoked/expired sessions, cancellation after privacy processing begins, export URL expiry, unknown contract major, and malformed or non-allowlisted navigation. No error response contains secrets, submitted proofs, valid-method hints beyond the transaction, or resource-owner metadata.
 
@@ -47,6 +62,6 @@ Expected negative paths include expired/consumed/locked MFA transactions, wrong 
 
 Suite/Core persists opaque token hashes/family identifiers, refresh generation and consumption, session state/reason/timestamps, MFA transaction expiry and attempt counters, hashed recovery codes, and privacy transitions as atomic auditable records. Security audit records are append-only and redact credential material. Device display metadata is user-editable presentation data, not an authorization signal.
 
-Within v1, optional fields may be added and consumers ignore unknown optional fields after contract negotiation. Removing/renaming fields, changing types or meanings, adding enum values to an exhaustively consumed enum, weakening ownership, or changing refresh-reuse consequences requires `twds.mobile.auth/v2`. Unknown majors return `406 VERSION_UNSUPPORTED`. Persist the contract major with durable session/privacy records so migrations remain explicit; v1 readers must continue to deserialize existing v1 records during a supported migration window.
+Within v1, optional fields may be added and consumers ignore unknown optional fields after contract negotiation. Removing/renaming fields, changing types or meanings, adding enum values to an exhaustively consumed enum, weakening ownership, or changing refresh-reuse consequences requires `twds.mobile.auth/v2`. Unknown majors for either negotiated contract return `406 VERSION_UNSUPPORTED` with the corresponding contract identifier in the response. Persist both negotiated contract majors with durable session/privacy records so migrations remain explicit. The migration window is the release that first serves v2 plus the following two production releases; during that window v1 readers and v1 durable records remain supported, and removal requires a separately announced major-version release.
 
 Limitations: this contract does not choose an identity provider, MFA factor policy, access-token format, cryptographic algorithms, OS keychain implementation, administrative session controls, legal retention policy, notification provider, or independent certification criteria. Those remain with Suite/Core, Security/Privacy governance, application owners, or Independent Validation & Release as applicable.

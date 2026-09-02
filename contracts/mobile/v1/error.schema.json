@@ -1,5 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema", "$id": "https://contracts.totalwater.design/mobile/v1/error.schema.json",
-  "type": "object", "additionalProperties": false, "required": ["contract", "code", "message", "retryable", "request_id"],
-  "properties": {"contract": {"$ref": "common.schema.json#/$defs/version"}, "code": {"enum": ["UNAUTHENTICATED", "FORBIDDEN", "NOT_FOUND", "CONFLICT", "VALIDATION_FAILED", "VERSION_UNSUPPORTED", "RATE_LIMITED", "SERVER_ERROR"]}, "message": {"type": "string", "minLength": 1}, "retryable": {"type": "boolean"}, "request_id": {"$ref": "common.schema.json#/$defs/id"}, "retry_after_seconds": {"type": "integer", "minimum": 1}, "details": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["path", "reason"], "properties": {"path": {"type": "string"}, "reason": {"type": "string"}}}}}
+  "allOf": [
+    {"$ref": "common.schema.json#/$defs/errorEnvelope"},
+    {"type": "object", "required": ["contract"], "properties": {"contract": {"$ref": "common.schema.json#/$defs/version"}, "code": {"enum": ["UNAUTHENTICATED", "FORBIDDEN", "NOT_FOUND", "CONFLICT", "VALIDATION_FAILED", "VERSION_UNSUPPORTED", "RATE_LIMITED", "SERVER_ERROR"]}, "details": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["path", "reason"], "properties": {"path": {"type": "string"}, "reason": {"type": "string"}}}}}}
+  ],
+  "unevaluatedProperties": false
 }
