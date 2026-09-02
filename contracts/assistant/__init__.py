@@ -1,0 +1,1 @@
+"""Shared assistant contract packages."""
