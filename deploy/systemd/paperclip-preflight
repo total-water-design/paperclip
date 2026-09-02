@@ -61,7 +61,7 @@ const storage = config.storage ?? {};
 const secrets = config.secrets ?? {};
 const reject = (message) => { throw new Error(message); };
 if (server.host !== '127.0.0.1' || server.port !== 3100 || server.deploymentMode !== 'local_trusted' || server.exposure !== 'private' || (server.bind !== undefined && server.bind !== 'loopback')) reject('server must be loopback-only local_trusted private on 127.0.0.1:3100');
-if (database.mode !== 'embedded-postgres' || database.embeddedPostgresDataDir !== dataDir) reject('embedded PostgreSQL data directory does not match PAPERCLIP_DATA_DIR');
+if (database.mode !== 'embedded-postgres' || database.embeddedPostgresDataDir !== dataDir || database.embeddedPostgresPort !== 54329) reject('embedded PostgreSQL must use PAPERCLIP_DATA_DIR and 127.0.0.1:54329');
 if (database.backup?.enabled !== true || database.backup?.dir !== backupDir) reject('enabled backup directory does not match PAPERCLIP_BACKUP_DIR');
 if (storage.provider !== 'local_disk' || storage.localDisk?.baseDir !== storageDir) reject('local storage directory does not match PAPERCLIP_STORAGE_DIR');
 if (secrets.provider !== 'local_encrypted' || secrets.localEncrypted?.keyFilePath !== keyPath) reject('local encrypted secret key reference does not match PAPERCLIP_SECRETS_KEY_FILE');
