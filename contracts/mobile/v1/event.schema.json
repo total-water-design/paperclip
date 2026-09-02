@@ -1,0 +1,5 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema", "$id": "https://contracts.totalwater.design/mobile/v1/event.schema.json",
+  "type": "object", "additionalProperties": false, "required": ["contract", "event_id", "sequence", "kind", "occurred_at", "owner", "resource"],
+  "properties": {"contract": {"$ref": "common.schema.json#/$defs/version"}, "event_id": {"$ref": "common.schema.json#/$defs/id"}, "sequence": {"type": "integer", "minimum": 1}, "kind": {"enum": ["job.updated", "report.ready", "project.revised", "notification.created"]}, "occurred_at": {"$ref": "common.schema.json#/$defs/timestamp"}, "owner": {"$ref": "common.schema.json#/$defs/principal"}, "resource": {"type": "object", "additionalProperties": false, "required": ["type", "id"], "properties": {"type": {"enum": ["job", "report", "project", "notification"]}, "id": {"$ref": "common.schema.json#/$defs/id"}}}, "cursor": {"type": "string", "minLength": 1}}
+}

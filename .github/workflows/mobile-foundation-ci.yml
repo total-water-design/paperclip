@@ -21,7 +21,10 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Install mobile contract validation dependencies
+        run: python -m pip install -r requirements.txt pytest
+
       - name: Validate mobile/PWA and enforcement isolation
         run: |
-          python -m unittest discover -s tests -p 'test_mobile*.py' -v
+          python -m pytest -q tests/test_mobile*.py
           python -m py_compile mobile_access.py

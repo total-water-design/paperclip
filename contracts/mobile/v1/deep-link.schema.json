@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema", "$id": "https://contracts.totalwater.design/mobile/v1/deep-link.schema.json",
+  "type": "object", "additionalProperties": false,
+  "properties": {"contract": {"$ref": "common.schema.json#/$defs/version"}, "route": {"type": "string"}, "resource_id": {"$ref": "common.schema.json#/$defs/id"}, "project_id": {"$ref": "common.schema.json#/$defs/id"}},
+  "oneOf": [
+    {"required": ["contract", "route", "project_id"], "properties": {"contract": {"$ref": "common.schema.json#/$defs/version"}, "route": {"const": "project"}, "project_id": {"$ref": "common.schema.json#/$defs/id"}}, "not": {"required": ["resource_id"]}},
+    {"required": ["contract", "route", "resource_id"], "properties": {"contract": {"$ref": "common.schema.json#/$defs/version"}, "route": {"enum": ["job", "report", "revision", "activity"]}, "resource_id": {"$ref": "common.schema.json#/$defs/id"}}, "not": {"required": ["project_id"]}}
+  ]
+}

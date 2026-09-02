@@ -7,6 +7,10 @@ on:
         description: Exact 40-character commit SHA already present on alpha
         required: true
         type: string
+      resolverPolicy:
+        description: Fresh per-run human confirmation; must be human_only
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -18,6 +22,12 @@ concurrency:
 jobs:
   deploy-alpha:
     name: Deploy approved alpha SHA to EC2
+    # Job-level conditions are evaluated before GitHub assigns a self-hosted runner.
+    # This blocks pull-request runs and workflow-dispatch runs without a fresh
+    # per-run human_only resolver-policy confirmation.
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.resolverPolicy == 'human_only'
     runs-on:
       - self-hosted
       - Linux

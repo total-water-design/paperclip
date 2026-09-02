@@ -1,0 +1,5 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema", "$id": "https://contracts.totalwater.design/mobile/v1/session.schema.json",
+  "type": "object", "additionalProperties": false, "required": ["contract", "session_id", "device_id", "principal", "created_at", "expires_at"],
+  "properties": {"contract": {"$ref": "common.schema.json#/$defs/version"}, "session_id": {"$ref": "common.schema.json#/$defs/id"}, "device_id": {"$ref": "common.schema.json#/$defs/id"}, "principal": {"$ref": "common.schema.json#/$defs/principal"}, "created_at": {"$ref": "common.schema.json#/$defs/timestamp"}, "expires_at": {"$ref": "common.schema.json#/$defs/timestamp"}, "refresh_generation": {"type": "integer", "minimum": 0}}
+}

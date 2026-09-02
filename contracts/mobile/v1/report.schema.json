@@ -1,0 +1,5 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema", "$id": "https://contracts.totalwater.design/mobile/v1/report.schema.json",
+  "type": "object", "additionalProperties": false, "required": ["contract", "report_id", "job_id", "owner", "continuity", "provenance", "media_type", "download_url", "expires_at"],
+  "properties": {"contract": {"$ref": "common.schema.json#/$defs/version"}, "report_id": {"$ref": "common.schema.json#/$defs/id"}, "job_id": {"$ref": "common.schema.json#/$defs/id"}, "owner": {"$ref": "common.schema.json#/$defs/principal"}, "continuity": {"$ref": "common.schema.json#/$defs/continuity"}, "provenance": {"$ref": "common.schema.json#/$defs/provenance"}, "media_type": {"enum": ["application/pdf", "application/json"]}, "download_url": {"type": "string", "pattern": "^https://"}, "expires_at": {"$ref": "common.schema.json#/$defs/timestamp"}}
+}

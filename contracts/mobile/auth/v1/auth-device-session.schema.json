@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.totalwater.design/mobile/auth/v1/auth-device-session.schema.json",
+  "title": "TWDS Mobile Authentication and Device Session Contract v1",
+  "$defs": {
+    "contract": {"const": "twds.mobile.auth/v1"},
+    "id": {"$ref": "../../v1/common.schema.json#/$defs/id"},
+    "timestamp": {"$ref": "../../v1/common.schema.json#/$defs/timestamp"},
+    "deviceSession": {
+      "type": "object", "additionalProperties": false,
+      "required": ["contract", "session_id", "device_id", "principal", "created_at", "last_seen_at", "state", "refresh_generation"],
+      "properties": {
+        "contract": {"$ref": "#/$defs/contract"}, "session_id": {"$ref": "#/$defs/id"}, "device_id": {"$ref": "#/$defs/id"},
+        "principal": {"allOf": [{"$ref": "../../v1/common.schema.json#/$defs/principalIdentity"}], "unevaluatedProperties": false}, "created_at": {"$ref": "#/$defs/timestamp"}, "last_seen_at": {"$ref": "#/$defs/timestamp"},
+        "expires_at": {"$ref": "#/$defs/timestamp"}, "revoked_at": {"$ref": "#/$defs/timestamp"},
+        "state": {"enum": ["active", "expired", "revoked", "compromised"]}, "refresh_generation": {"type": "integer", "minimum": 0},
+        "display": {"type": "object", "additionalProperties": false, "properties": {"device_name": {"type": "string", "maxLength": 128}, "platform": {"enum": ["ios", "android", "unknown"]}, "is_current": {"type": "boolean"}}}
+      }
+    },
+    "mfaTransaction": {
+      "type": "object", "additionalProperties": false,
+      "required": ["contract", "transaction_id", "purpose", "state", "expires_at", "allowed_methods"],
+      "properties": {
+        "contract": {"$ref": "#/$defs/contract"}, "transaction_id": {"$ref": "#/$defs/id"},
+        "purpose": {"enum": ["enrollment", "authentication", "recovery"]},
+        "state": {"enum": ["pending", "verified", "consumed", "expired", "locked"]},
+        "expires_at": {"$ref": "#/$defs/timestamp"}, "allowed_methods": {"type": "array", "uniqueItems": true, "minItems": 1, "items": {"enum": ["totp", "webauthn", "recovery_code"]}},
+        "enrollment_secret": {"type": "string", "minLength": 1}, "recovery_codes": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 8}}
+      }
+    },
+    "privacyRequest": {
+      "type": "object", "additionalProperties": false,
+      "required": ["contract", "request_id", "principal", "kind", "state", "requested_at"],
+      "properties": {
+        "contract": {"$ref": "#/$defs/contract"}, "request_id": {"$ref": "#/$defs/id"}, "principal": {"allOf": [{"$ref": "../../v1/common.schema.json#/$defs/principalIdentity"}], "unevaluatedProperties": false},
+        "kind": {"enum": ["export", "deletion"]}, "state": {"enum": ["requested", "identity_verification_required", "queued", "processing", "ready", "completed", "cancelled", "failed"]},
+        "requested_at": {"$ref": "#/$defs/timestamp"}, "updated_at": {"$ref": "#/$defs/timestamp"}, "download_expires_at": {"$ref": "#/$defs/timestamp"}
+      }
+    },
+    "navigationInput": {
+      "type": "object", "additionalProperties": false,
+      "properties": {"contract": {"$ref": "#/$defs/contract"}, "route": {"type": "string"}, "resource_id": {"$ref": "#/$defs/id"}, "project_id": {"$ref": "#/$defs/id"}, "revision_id": {"$ref": "#/$defs/id"}, "reauthentication_required": {"type": "boolean"}},
+      "oneOf": [
+        {"required": ["contract", "route", "reauthentication_required"], "properties": {"contract": {"$ref": "#/$defs/contract"}, "route": {"enum": ["mfa", "device_sessions", "privacy"]}, "reauthentication_required": {"const": true}}, "not": {"anyOf": [{"required": ["resource_id"]}, {"required": ["project_id"]}, {"required": ["revision_id"]}]}},
+        {"required": ["contract", "route", "project_id"], "properties": {"contract": {"$ref": "#/$defs/contract"}, "route": {"const": "project"}, "project_id": {"$ref": "#/$defs/id"}, "reauthentication_required": {"type": "boolean"}}, "not": {"anyOf": [{"required": ["resource_id"]}, {"required": ["revision_id"]}]}},
+        {"required": ["contract", "route", "resource_id"], "properties": {"contract": {"$ref": "#/$defs/contract"}, "route": {"enum": ["job", "report"]}, "resource_id": {"$ref": "#/$defs/id"}, "reauthentication_required": {"type": "boolean"}}, "not": {"anyOf": [{"required": ["project_id"]}, {"required": ["revision_id"]}]}}
+      ]
+    },
+    "error": {
+      "allOf": [
+        {"$ref": "../../v1/common.schema.json#/$defs/errorEnvelope"},
+        {"type": "object", "required": ["contract"], "properties": {"contract": {"$ref": "#/$defs/contract"}, "code": {"enum": ["OFFLINE", "NETWORK_UNAVAILABLE", "TIMEOUT", "SERVICE_DEGRADED", "UNAUTHENTICATED", "MFA_REQUIRED", "MFA_INVALID", "MFA_LOCKED", "TOKEN_REUSED", "SESSION_REVOKED", "FORBIDDEN", "NOT_FOUND", "CONFLICT", "VALIDATION_FAILED", "RATE_LIMITED", "VERSION_UNSUPPORTED", "SERVER_ERROR"]}}}
+      ],
+      "unevaluatedProperties": false
+    }
+  },
+  "oneOf": [
+    {"$ref": "#/$defs/deviceSession"}, {"$ref": "#/$defs/mfaTransaction"}, {"$ref": "#/$defs/privacyRequest"}, {"$ref": "#/$defs/navigationInput"}, {"$ref": "#/$defs/error"}
+  ]
+}
