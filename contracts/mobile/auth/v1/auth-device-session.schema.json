@@ -11,7 +11,7 @@
       "required": ["contract", "session_id", "device_id", "principal", "created_at", "last_seen_at", "state", "refresh_generation"],
       "properties": {
         "contract": {"$ref": "#/$defs/contract"}, "session_id": {"$ref": "#/$defs/id"}, "device_id": {"$ref": "#/$defs/id"},
-        "principal": {"type": "object", "additionalProperties": false, "allOf": [{"$ref": "../../v1/common.schema.json#/$defs/principalIdentity"}], "properties": {"tenant_id": true, "user_id": true}}, "created_at": {"$ref": "#/$defs/timestamp"}, "last_seen_at": {"$ref": "#/$defs/timestamp"},
+        "principal": {"allOf": [{"$ref": "../../v1/common.schema.json#/$defs/principalIdentity"}], "unevaluatedProperties": false}, "created_at": {"$ref": "#/$defs/timestamp"}, "last_seen_at": {"$ref": "#/$defs/timestamp"},
         "expires_at": {"$ref": "#/$defs/timestamp"}, "revoked_at": {"$ref": "#/$defs/timestamp"},
         "state": {"enum": ["active", "expired", "revoked", "compromised"]}, "refresh_generation": {"type": "integer", "minimum": 0},
         "display": {"type": "object", "additionalProperties": false, "properties": {"device_name": {"type": "string", "maxLength": 128}, "platform": {"enum": ["ios", "android", "unknown"]}, "is_current": {"type": "boolean"}}}
@@ -32,7 +32,7 @@
       "type": "object", "additionalProperties": false,
       "required": ["contract", "request_id", "principal", "kind", "state", "requested_at"],
       "properties": {
-        "contract": {"$ref": "#/$defs/contract"}, "request_id": {"$ref": "#/$defs/id"}, "principal": {"type": "object", "additionalProperties": false, "allOf": [{"$ref": "../../v1/common.schema.json#/$defs/principalIdentity"}], "properties": {"tenant_id": true, "user_id": true}},
+        "contract": {"$ref": "#/$defs/contract"}, "request_id": {"$ref": "#/$defs/id"}, "principal": {"allOf": [{"$ref": "../../v1/common.schema.json#/$defs/principalIdentity"}], "unevaluatedProperties": false},
         "kind": {"enum": ["export", "deletion"]}, "state": {"enum": ["requested", "identity_verification_required", "queued", "processing", "ready", "completed", "cancelled", "failed"]},
         "requested_at": {"$ref": "#/$defs/timestamp"}, "updated_at": {"$ref": "#/$defs/timestamp"}, "download_expires_at": {"$ref": "#/$defs/timestamp"}
       }
@@ -41,7 +41,7 @@
       "type": "object", "additionalProperties": false,
       "properties": {"contract": {"$ref": "#/$defs/contract"}, "route": {"type": "string"}, "resource_id": {"$ref": "#/$defs/id"}, "project_id": {"$ref": "#/$defs/id"}, "revision_id": {"$ref": "#/$defs/id"}, "reauthentication_required": {"type": "boolean"}},
       "oneOf": [
-        {"required": ["contract", "route"], "properties": {"contract": {"$ref": "#/$defs/contract"}, "route": {"enum": ["mfa", "device_sessions", "privacy"]}, "reauthentication_required": {"type": "boolean"}}, "not": {"anyOf": [{"required": ["resource_id"]}, {"required": ["project_id"]}, {"required": ["revision_id"]}]}},
+        {"required": ["contract", "route", "reauthentication_required"], "properties": {"contract": {"$ref": "#/$defs/contract"}, "route": {"enum": ["mfa", "device_sessions", "privacy"]}, "reauthentication_required": {"const": true}}, "not": {"anyOf": [{"required": ["resource_id"]}, {"required": ["project_id"]}, {"required": ["revision_id"]}]}},
         {"required": ["contract", "route", "project_id"], "properties": {"contract": {"$ref": "#/$defs/contract"}, "route": {"const": "project"}, "project_id": {"$ref": "#/$defs/id"}, "reauthentication_required": {"type": "boolean"}}, "not": {"anyOf": [{"required": ["resource_id"]}, {"required": ["revision_id"]}]}},
         {"required": ["contract", "route", "resource_id"], "properties": {"contract": {"$ref": "#/$defs/contract"}, "route": {"enum": ["job", "report"]}, "resource_id": {"$ref": "#/$defs/id"}, "reauthentication_required": {"type": "boolean"}}, "not": {"anyOf": [{"required": ["project_id"]}, {"required": ["revision_id"]}]}}
       ]

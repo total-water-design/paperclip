@@ -49,10 +49,27 @@ def test_session_rejects_unknown_major_invalid_generation_privilege_and_tokens(m
         VALIDATOR.validate(value)
 
 
+def test_auth_records_directly_compose_the_shared_principal_identity():
+    VALIDATOR.validate(valid_session())
+    with pytest.raises(jsonschema.ValidationError):
+        VALIDATOR.validate({**valid_session(), "principal": {"tenant_id": "tenant-1", "user_id": "user-1", "scopes": ["jobs:read"]}})
+    with pytest.raises(jsonschema.ValidationError):
+        VALIDATOR.validate({"contract": "twds.mobile.auth/v1", "request_id": "privacy-1", "principal": {"tenant_id": "tenant-1", "user_id": "user-1", "role": "admin"}, "kind": "export", "state": "queued", "requested_at": "2026-09-02T00:00:00Z"})
+
+
 @pytest.mark.parametrize("route", ["https://evil.example", "javascript:alert(1)", "admin", "/privacy"])
 def test_navigation_rejects_non_allowlisted_targets(route):
     with pytest.raises(jsonschema.ValidationError):
         VALIDATOR.validate({"contract": "twds.mobile.auth/v1", "route": route})
+
+
+@pytest.mark.parametrize("value", [
+    {"contract": "twds.mobile.auth/v1", "route": "mfa"},
+    {"contract": "twds.mobile.auth/v1", "route": "privacy", "reauthentication_required": False},
+])
+def test_sensitive_navigation_requires_reauthentication(value):
+    with pytest.raises(jsonschema.ValidationError):
+        VALIDATOR.validate(value)
 
 
 @pytest.mark.parametrize("value", [
