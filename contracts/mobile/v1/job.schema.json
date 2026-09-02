@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema", "$id": "https://contracts.totalwater.design/mobile/v1/job.schema.json",
+  "type": "object", "additionalProperties": false,
+  "required": ["contract", "job_id", "operation", "status", "owner", "continuity", "provenance", "idempotency_key", "created_at"],
+  "properties": {
+    "contract": {"$ref": "common.schema.json#/$defs/version"}, "job_id": {"$ref": "common.schema.json#/$defs/id"},
+    "operation": {"type": "string", "enum": ["calculate", "generate_report"]},
+    "status": {"type": "string", "enum": ["queued", "running", "succeeded", "failed", "cancelled"]},
+    "owner": {"$ref": "common.schema.json#/$defs/principal"}, "continuity": {"$ref": "common.schema.json#/$defs/continuity"}, "provenance": {"$ref": "common.schema.json#/$defs/provenance"},
+    "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 128}, "created_at": {"$ref": "common.schema.json#/$defs/timestamp"}, "updated_at": {"$ref": "common.schema.json#/$defs/timestamp"},
+    "result": {"type": "object", "additionalProperties": false, "required": ["report_id"], "properties": {"report_id": {"$ref": "common.schema.json#/$defs/id"}}},
+    "error": {"$ref": "error.schema.json"}
+  },
+  "allOf": [
+    {"if": {"properties": {"status": {"const": "succeeded"}}}, "then": {"required": ["result"]}},
+    {"if": {"properties": {"status": {"const": "failed"}}}, "then": {"required": ["error"]}}
+  ]
+}

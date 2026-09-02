@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.totalwater.design/mobile/v1/common.schema.json",
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+    "timestamp": {"type": "string", "format": "date-time"},
+    "sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "version": {"const": "twds.mobile/v1"},
+    "scope": {"type": "string", "enum": ["jobs:read", "jobs:write", "reports:read", "activity:read", "notifications:read", "projects:read"]},
+    "principal": {
+      "type": "object", "additionalProperties": false,
+      "required": ["tenant_id", "user_id", "scopes"],
+      "properties": {"tenant_id": {"$ref": "#/$defs/id"}, "user_id": {"$ref": "#/$defs/id"}, "scopes": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/scope"}}}
+    },
+    "provenance": {
+      "type": "object", "additionalProperties": false,
+      "required": ["candidate_sha", "engine", "submitted_at"],
+      "properties": {"candidate_sha": {"$ref": "#/$defs/sha"}, "engine": {"type": "string", "minLength": 1}, "submitted_at": {"$ref": "#/$defs/timestamp"}, "completed_at": {"$ref": "#/$defs/timestamp"}, "input_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}}
+    },
+    "continuity": {
+      "type": "object", "additionalProperties": false,
+      "required": ["project_id", "revision_id"],
+      "properties": {"project_id": {"$ref": "#/$defs/id"}, "revision_id": {"$ref": "#/$defs/id"}, "parent_revision_id": {"$ref": "#/$defs/id"}}
+    }
+  }
+}

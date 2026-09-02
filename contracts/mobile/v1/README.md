@@ -1,0 +1,13 @@
+# TWDS authenticated mobile API contract v1
+
+This directory owns the cross-application mobile boundary. Suite/Core owns authentication, authorization, persistence, and delivery; RO owns its application workflow. Mobile clients submit inputs and render authoritative server results—they never run or fork calculation algorithms.
+
+Every request uses TLS and a bearer access token bound to a `session_id`, `device_id`, tenant, user, and least-privilege scopes. The server derives `owner`; clients cannot choose or widen it. Reads must enforce the same tenant/user ownership and return `NOT_FOUND` (not `FORBIDDEN`) where resource existence must not leak. Refresh-token rotation increments `refresh_generation`; reuse revokes the device session.
+
+`POST /v1/jobs` requires `Idempotency-Key` (16–128 opaque characters). Reuse with the same authenticated principal and byte-equivalent canonical request returns the original job; reuse with different content returns `CONFLICT`. A job pins project/revision continuity, input digest, authoritative engine, and exact server candidate SHA. `GET /v1/jobs/{job_id}` supports reconnection. `GET /v1/activity?after=<cursor>` returns strictly increasing `sequence` values; cursors are opaque and replay is harmless. Notifications contain identifiers only, never protected calculation data.
+
+Reports use short-lived HTTPS download URLs and repeat job, ownership, continuity, and provenance. Deep links are structured identifiers validated by `deep-link.schema.json`; clients map only the allowlisted routes locally, reauthenticate when necessary, refetch the authorized resource, and must never accept arbitrary URLs, schemes, hosts, or executable navigation targets.
+
+Compatibility: clients send `Accept-Contract: twds.mobile/v1`. Additive optional fields and new error `details` are compatible; consumers must ignore unknown optional fields at the transport boundary after schema-version negotiation. Removing/renaming fields, changing meaning/type, adding enum values consumed exhaustively, or weakening ownership/provenance requires `/v2`. Unknown majors return HTTP 406 with `VERSION_UNSUPPORTED`. Error mapping is stable: 401 `UNAUTHENTICATED`; 403 `FORBIDDEN`; 404 `NOT_FOUND`; 409 `CONFLICT`; 422 `VALIDATION_FAILED`; 429 `RATE_LIMITED`; 5xx `SERVER_ERROR`. Only `RATE_LIMITED` and `SERVER_ERROR` are normally retryable; retries retain the idempotency key.
+
+Serialization is UTF-8 JSON, RFC 3339 UTC timestamps, decimal JSON numbers (no NaN/Infinity), and opaque case-sensitive identifiers. Canonical request digests use RFC 8785 JSON Canonicalization then SHA-256. API responses are `Cache-Control: no-store`; logs and notifications exclude tokens and report bodies.
