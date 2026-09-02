@@ -99,7 +99,7 @@ def request(state="converged"):
 
 REGISTRY = {"tools": [{"tool_id": "ro.evaluate-boron", "deterministic": True, "input_schema": {
     "type": "object", "additionalProperties": False, "required": ["report"], "properties": {"report": {"const": True}}
-}}]}
+}, "output_schema": {"type": "object"}}]}
 
 
 def test_context_envelope_serializes_cross_domain_state_and_requires_failure_details():
@@ -139,6 +139,17 @@ def test_dispatch_is_deterministic_and_requires_boron_provenance():
 
     with pytest.raises(ContractValidationError, match="boron_tool"):
         dispatch_tool(request(), REGISTRY, {"ro.evaluate-boron": missing_boron})
+
+
+def test_dispatch_rejects_handler_output_that_violates_registered_schema():
+    def invalid_output_handler(arguments, envelope):
+        return {"output": ["not-an-object"], "provenance": {
+            "candidate_sha": "a" * 40, "context_id": envelope["context_id"], "tool_run_id": "tool-invalid",
+            "boron_tool": {"status": "evaluated", "method": "speciation"},
+        }}
+
+    with pytest.raises(ContractValidationError, match="tool output:.*not of type 'object'"):
+        dispatch_tool(request(), REGISTRY, {"ro.evaluate-boron": invalid_output_handler})
 
 
 def test_nonconverged_tool_result_is_propagated_and_semantic_actions_must_resolve():

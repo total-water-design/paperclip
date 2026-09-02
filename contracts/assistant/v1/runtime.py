@@ -108,6 +108,10 @@ def dispatch_tool(
     if handler is None:
         raise ContractValidationError("no deterministic handler is registered for tool_id")
     payload = dict(handler(request["arguments"], request["context"]))
+    try:
+        jsonschema.Draft202012Validator(tool["output_schema"]).validate(payload.get("output", {}))
+    except jsonschema.ValidationError as exc:
+        raise ContractValidationError("tool output: " + exc.message) from exc
     result = {
         "contract": "twds.assistant.tool-result/v1", "request_id": request["request_id"],
         "tool_id": request["tool_id"], "status": payload.get("status", "succeeded"),
