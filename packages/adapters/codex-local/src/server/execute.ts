@@ -136,6 +136,18 @@ function firstNonEmptyLine(text: string): string {
   );
 }
 
+export function resolveCodexLocalProcessNetworkAllowlist(
+  config: Record<string, unknown>,
+  context: Record<string, unknown>,
+): string[] {
+  const executionPolicy = parseObject(context.paperclipExecutionPolicy);
+  if (executionPolicy.networkEgress && typeof executionPolicy.networkEgress === "object") {
+    const networkEgress = parseObject(executionPolicy.networkEgress);
+    return parseLocalProcessNetworkAllowlist(networkEgress.allowFqdns);
+  }
+  return parseLocalProcessNetworkAllowlist(config.networkAllowlist);
+}
+
 // Benign stderr lines that never explain a nonzero exit and must not be
 // surfaced as the run error: Codex always prints the YOLO approvals warning
 // because this adapter passes the approvals-bypass flag itself, and
@@ -994,7 +1006,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
             outboundRestorePaths: targetWorkspaceRealization?.outboundRestorePaths ?? [],
             homeDir: filesystemScope ? effectiveCodexHome : null,
             networkScope,
-            networkAllowlist: parseLocalProcessNetworkAllowlist(config.networkAllowlist),
+            networkAllowlist: resolveCodexLocalProcessNetworkAllowlist(config, context),
             networkTrustedUrls: [
               paperclipBaseEnv.PAPERCLIP_API_URL,
               ...runtimeMcpGateways.map((gateway) => gateway.endpointPath),
