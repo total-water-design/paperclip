@@ -21,6 +21,7 @@ import {
   formatRuntimeWorkspaceWarningLog,
   mergeExecutionWorkspaceMetadataForPersistence,
   mergeCoalescedContextSnapshot,
+  normalizeGitRemoteUrl,
   preflightLowTrustWorkspaceIsolation,
   prioritizeProjectWorkspaceCandidatesForRun,
   parseSessionCompactionPolicy,
@@ -51,6 +52,18 @@ import {
 import type { TrustPresetResolution } from "../services/trust-preset-resolver.ts";
 
 const execFile = promisify(execFileCallback);
+
+describe("normalizeGitRemoteUrl", () => {
+  it.each(["\n", "\r\n"])("ignores shell line endings (%j)", (lineEnding) => {
+    expect(normalizeGitRemoteUrl(`https://github.com/total-water-design/paperclip.git${lineEnding}`))
+      .toBe("https://github.com/total-water-design/paperclip");
+  });
+
+  it("preserves genuine repository differences", () => {
+    expect(normalizeGitRemoteUrl("https://github.com/total-water-design/paperclip.git\n"))
+      .not.toBe(normalizeGitRemoteUrl("https://github.com/total-water-design/other.git"));
+  });
+});
 
 function buildResolvedWorkspace(overrides: Partial<ResolvedWorkspaceForRun> = {}): ResolvedWorkspaceForRun {
   return {
