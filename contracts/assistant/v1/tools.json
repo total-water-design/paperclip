@@ -1,0 +1,6 @@
+{
+  "$schema": "./tool-registration.schema.json",
+  "contract": "twds.assistant.tools/v1",
+  "registry_id": "twds.suite.deterministic-tools",
+  "tools": []
+}

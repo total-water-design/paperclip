@@ -1,0 +1,14 @@
+{
+  "$schema": "./assistant-manifest.schema.json",
+  "contract": "twds.assistant/v1",
+  "assistant_id": "twds.example.read-only",
+  "display_name": "Example read-only assistant",
+  "description": "Contract fixture; applications publish their own manifests.",
+  "response_contract": "./assistant-response.schema.json",
+  "semantic_target_registry": "./semantic-targets.json",
+  "tool_registry": "./tools.json",
+  "context_contract": "./context-envelope.schema.json",
+  "tool_request_contract": "./tool-request.schema.json",
+  "tool_result_contract": "./tool-result.schema.json",
+  "capabilities": ["explain", "navigate", "highlight"]
+}

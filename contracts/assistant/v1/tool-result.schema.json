@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.totalwater.design/assistant/v1/tool-result.schema.json",
+  "title": "TWDS Deterministic Tool Result v1",
+  "type": "object", "additionalProperties": false,
+  "required": ["contract", "request_id", "tool_id", "status", "output", "provenance"],
+  "properties": {
+    "contract": {"const": "twds.assistant.tool-result/v1"}, "request_id": {"type": "string", "minLength": 1},
+    "tool_id": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$"}, "status": {"enum": ["succeeded", "non_converged", "failed", "rejected"]}, "output": {"type": "object"},
+    "failure": {"type": "object", "additionalProperties": false, "required": ["code", "message"], "properties": {"code": {"type": "string", "minLength": 1}, "message": {"type": "string", "minLength": 1}}},
+    "provenance": {"type": "object", "additionalProperties": false, "required": ["candidate_sha", "context_id", "tool_run_id", "boron_tool"], "properties": {"candidate_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"}, "context_id": {"type": "string", "minLength": 1}, "tool_run_id": {"type": "string", "minLength": 1}, "boron_tool": {"type": "object", "additionalProperties": false, "required": ["status"], "properties": {"status": {"enum": ["evaluated", "not_applicable", "unavailable"]}, "method": {"type": "string"}, "input_ref": {"type": "string"}, "output_ref": {"type": "string"}}}}}
+  },
+  "allOf": [{"if": {"properties": {"status": {"enum": ["non_converged", "failed"]}}}, "then": {"required": ["failure"]}}]
+}

@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.totalwater.design/assistant/v1/tool-registration.schema.json",
+  "title": "TWDS Deterministic Tool Registry v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract", "registry_id", "tools"],
+  "properties": {
+    "$schema": {"type": "string", "format": "uri-reference"},
+    "contract": {"const": "twds.assistant.tools/v1"},
+    "registry_id": {"$ref": "#/$defs/id"},
+    "tools": {"type": "array", "items": {"$ref": "#/$defs/tool"}}
+  },
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$"},
+    "tool": {
+      "type": "object", "additionalProperties": false,
+      "required": ["tool_id", "owner", "description", "deterministic", "side_effect", "input_schema", "output_schema"],
+      "properties": {
+        "tool_id": {"$ref": "#/$defs/id"},
+        "owner": {"$ref": "#/$defs/id"},
+        "description": {"type": "string", "minLength": 1},
+        "deterministic": {"const": true},
+        "side_effect": {"enum": ["none", "draft", "mutation"]},
+        "input_schema": {"$ref": "https://json-schema.org/draft/2020-12/schema"},
+        "output_schema": {"$ref": "https://json-schema.org/draft/2020-12/schema"}
+      }
+    }
+  }
+}
