@@ -1999,8 +1999,8 @@ function sameResolvedPath(left: string | null | undefined, right: string | null 
   return path.resolve(leftPath) === path.resolve(rightPath);
 }
 
-function normalizeGitRemoteUrl(value: string | null | undefined) {
-  const trimmed = readNonEmptyString(value);
+export function normalizeGitRemoteUrl(value: string | null | undefined) {
+  const trimmed = readNonEmptyString(value)?.trim();
   if (!trimmed) return null;
   // Credentials are not repository provenance. Normalizing them away lets a
   // host credential helper and an agent checkout compare the same repository.
