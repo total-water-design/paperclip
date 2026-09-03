@@ -14,6 +14,7 @@ Group=paperclip
 Environment=PAPERCLIP_ENV_FILE=/etc/paperclip/paperclip.env
 EnvironmentFile=/etc/paperclip/paperclip.env
 ExecStartPre=/usr/lib/paperclip/paperclip-preflight
+ExecStartPre=/usr/lib/paperclip/paperclip-activation-preflight
 ExecStart=/bin/sh -ec 'exec "$PAPERCLIP_EXECUTABLE" run --instance "$PAPERCLIP_INSTANCE_ID"'
 WorkingDirectory=/
 Restart=on-failure
