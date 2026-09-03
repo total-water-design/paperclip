@@ -40,5 +40,49 @@ archive. Its sidecar certification binds the archive and installed CLI entry.
 rejects a live PID with absent or stale runtime identity. The systemd unit
 invokes the gate before start. No host activation is performed.
 
-Final raw checks, reproducibility hashes, changed-file scope, candidate SHA,
-and local/remote equality are appended after verification.
+## Verification record
+
+The functional candidate at `93ba1976a` was clean before both package runs.
+The second run used the same command, toolchain, checkout, and lockfile.
+
+```text
+$ corepack pnpm test:artifact-identity
+✔ identity is byte reproducible and rejects a false source label
+✔ identity rejects an untracked source file
+✔ activation rejects stale runtime and changed installed executable
+tests 3; pass 3; fail 0
+
+$ corepack pnpm --filter paperclipai test -- root-systemd-preflight
+$ corepack pnpm --filter @paperclipai/server test -- heartbeat-workspace-session
+exit 0
+
+$ PAPERCLIP_ARTIFACT_DIR="$PAPERCLIP_RUN_SCRATCH_DIR/build-a" corepack pnpm build:npm:certified --skip-typecheck
+certified archive: .../build-a/paperclipai-0.3.1.tgz
+$ PAPERCLIP_ARTIFACT_DIR="$PAPERCLIP_RUN_SCRATCH_DIR/build-b" corepack pnpm build:npm:certified --skip-typecheck
+certified archive: .../build-b/paperclipai-0.3.1.tgz
+$ sha256sum build-{a,b}/paperclipai-0.3.1.tgz
+1c7dc396a6e726c3badedb129f1313d410f718e7b48a455f2d1e0ce4d04f0df9  build-a/paperclipai-0.3.1.tgz
+1c7dc396a6e726c3badedb129f1313d410f718e7b48a455f2d1e0ce4d04f0df9  build-b/paperclipai-0.3.1.tgz
+$ cmp build-a/paperclipai-0.3.1.tgz build-b/paperclipai-0.3.1.tgz
+exit 0
+$ tar -tzf build-a/paperclipai-0.3.1.tgz | rg 'paperclip-artifact-identity.json|dist/index.js$'
+package/dist/index.js
+package/dist/paperclip-artifact-identity.json
+```
+
+The first full build also completed the 34-project recursive TypeScript/Rust
+typecheck, bundle, and syntax checks before its wrapper correctly failed closed
+on a tracked README lifecycle defect. The wrapper was fixed to restore tracked
+package inputs before certification; the two successful package runs above
+then used `--skip-typecheck` rather than repeating that unchanged full check.
+
+Expected negative errors asserted by the focused suite are `source label
+mismatch`, `source tree is dirty`, `stale runtime identity`, and `installed
+executable digest differs from certification manifest`.
+
+Changed-file scope is limited to the artifact identity/build/preflight scripts,
+their focused tests, the systemd gate and runbook, package command registration,
+the preserved strict Git-origin normalization/test from
+`task/tot-1589-git-origin-normalization`, and this evidence document. Final
+candidate SHA and local/remote equality are recorded on the issue after the
+evidence-only commit and push.
