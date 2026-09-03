@@ -173,17 +173,17 @@ describe("codex_local stderr fallback error derivation", () => {
         onLog: (stream: "stdout" | "stderr", chunk: string) => Promise<void>;
       };
       await options.onSpawn({ pid: 2_147_483_647, processGroupId: null, startedAt: new Date().toISOString() });
-      await options.onLog("stdout", '{"type":"error","message":"fatal MCP HTTP transport failure"}\n');
-      await options.onLog("stderr", "WebSocket failed: proxy CONNECT response 403 after retry 5/5\n");
+      await options.onLog("stderr", "rmcp::transport::worker: worker quit with fatal: Transport channel closed\n");
+      await options.onLog("stderr", "WebSocket Proxy connection failed: HTTP CONNECT failed with status 403\n");
       for (let i = 0; i < 3; i += 1) {
-        await options.onLog("stderr", "Reconnecting... waiting for network\n");
+        await options.onLog("stdout", `{"type":"error","message":"Reconnecting... waiting for network (attempt ${i + 3}/5)"}\n`);
       }
       return {
         exitCode: null,
         signal: "SIGTERM",
         timedOut: false,
-        stdout: '{"type":"error","message":"fatal MCP HTTP transport failure"}\n',
-        stderr: "WebSocket failed: proxy CONNECT response 403 after retry 5/5\n",
+        stdout: '{"type":"error","message":"Reconnecting... waiting for network (attempt 5/5)"}\n',
+        stderr: "rmcp fatal transport and WebSocket proxy CONNECT 403\n",
         pid: 2_147_483_647,
         startedAt: new Date().toISOString(),
       };
@@ -200,6 +200,15 @@ describe("codex_local stderr fallback error derivation", () => {
       errorFamily: "transient_upstream",
     });
     expect(result.errorMessage).toContain("3 reconnects");
+    expect(result.resultJson).toMatchObject({
+      fatalTransportMonitor: {
+        armed: true,
+        fired: true,
+        reconnectCount: 3,
+        reason: "reconnect_limit",
+        terminationSignal: null,
+      },
+    });
   });
 });
 
