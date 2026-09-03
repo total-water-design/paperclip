@@ -42,6 +42,13 @@ from entitlements import (
 app = Flask(__name__)
 init_auth(app)
 APP_NAME = "Total RO Design"
+PUBLIC_SITE_SEO = {
+    'platform': {'title': 'Connected Water Engineering Platform | Total Water Design Suite', 'description': 'Learn how Total Water Design Suite connects specialist applications through shared project context, water streams, chemistry, assumptions, reports and economic lineage.'},
+    'applications': {'title': 'Water and Wastewater Design Applications | Total Water Design Suite', 'description': 'Explore specialist applications for pretreatment, biological treatment, reverse osmosis, ZLD, water balance, economics and whole-system integration.'},
+    'sample-reports': {'title': 'Water Treatment Engineering Sample Reports | Total Water Design Suite', 'description': 'See version-identified sample engineering reports with design basis, results, warnings and limitations.'},
+    'engineering-time-savings': {'title': 'Engineering Time Savings Assumptions | Total Water Design Suite', 'description': 'Review illustrative engineering-capacity assumptions and disclosures for water-treatment design workflows.'},
+    'engineering-trust': {'title': 'Engineering Trust | Total Water Design Suite', 'description': 'Learn how assumptions, maturity, warnings and traceable report snapshots support engineering review.'},
+}
 APP_VERSION = "0.2"
 SUITE_RELEASE = f"{SUITE_NAME} v{SUITE_VERSION}"
 app.config["SUITE_VERSION"] = SUITE_VERSION
@@ -375,12 +382,12 @@ def index():
 
 @app.get('/platform')
 def platform_page():
-    return render_template('website_page.html', page='platform', products=public_product_catalog())
+    return render_template('website_page.html', page='platform', products=public_product_catalog(), seo=PUBLIC_SITE_SEO)
 
 
 @app.get('/applications')
 def applications_page():
-    return render_template('website_page.html', page='applications', products=public_product_catalog())
+    return render_template('website_page.html', page='applications', products=public_product_catalog(), seo=PUBLIC_SITE_SEO, status_label=status_label)
 
 
 @app.get('/applications/<product_id>')
@@ -388,7 +395,7 @@ def public_product_page(product_id):
     product = next((item for item in public_product_catalog() if item['product_id'] == product_id), None)
     if product is None:
         abort(404)
-    return render_template('website_page.html', page='product', product=product, products=public_product_catalog(), status_label=status_label)
+    return render_template('website_page.html', page='product', product=product, products=public_product_catalog(), status_label=status_label, seo=PUBLIC_SITE_SEO)
 
 
 @app.get('/sample-reports')
@@ -404,7 +411,7 @@ def public_product_page(product_id):
 @app.get('/contact')
 def public_information_page():
     page = request.path.lstrip('/')
-    return render_template('website_page.html', page=page, products=public_product_catalog())
+    return render_template('website_page.html', page=page, products=public_product_catalog(), seo=PUBLIC_SITE_SEO)
 
 
 @app.get('/api/suite/catalog')
