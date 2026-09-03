@@ -186,6 +186,14 @@ describe("openapi routes", () => {
     expect(res.body.paths["/mcp/gateways/{gatewayPublicId}"].post.security).toEqual([]);
     expect(res.body.paths["/api/mcp/gateways/{gatewayPublicId}"]).toBeUndefined();
     expect(res.body.paths["/api/companies"].post.responses["201"]).toBeDefined();
+    expect(res.body.paths["/api/companies/{companyId}/grant_agent_capability"].post).toMatchObject({
+      summary: "Grant an issue- or run-scoped agent capability",
+      security: [{ BoardSessionAuth: [] }, { BoardApiKeyAuth: [] }],
+    });
+    expect(res.body.paths["/api/companies/{companyId}/agent-capability-grants/{grantId}/revoke"].post).toMatchObject({
+      summary: "Revoke an agent capability grant",
+      security: [{ BoardSessionAuth: [] }, { BoardApiKeyAuth: [] }],
+    });
     expect(res.body.paths["/api/companies"].post.requestBody.content["application/json"].schema).toMatchObject({
       type: "object",
       properties: {
