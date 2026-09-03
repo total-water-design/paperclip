@@ -7,7 +7,10 @@ host gate is approved.
 
 ## Invariants
 
-- The unit runs `/usr/lib/paperclip/paperclip-preflight` before every start.
+- The unit runs `/usr/lib/paperclip/paperclip-preflight` and
+  `/usr/lib/paperclip/paperclip-activation-preflight` before every start. The
+  second gate binds the installed CLI to its certified source and rejects a live
+  runtime carrying a different identity.
   It fails closed unless the selected config is exactly `local_trusted`,
   `private`, `127.0.0.1`, and port `3100`; public/LAN/custom binding and
   weakened deployment modes are rejected.
@@ -55,6 +58,7 @@ install -d -o root -g root -m 0755 /etc/paperclip
 install -o root -g root -m 0644 deploy/systemd/paperclip.service /etc/systemd/system/paperclip.service
 install -d -o root -g root -m 0755 /usr/lib/paperclip
 install -o root -g root -m 0755 deploy/systemd/paperclip-preflight /usr/lib/paperclip/paperclip-preflight
+install -o root -g root -m 0755 scripts/paperclip-activation-preflight.sh /usr/lib/paperclip/paperclip-activation-preflight
 install -o root -g paperclip -m 0640 /dev/null /etc/paperclip/paperclip.env
 cat >/etc/paperclip/paperclip.env <<'EOF'
 PAPERCLIP_HOME=/var/lib/paperclip
@@ -66,12 +70,18 @@ PAPERCLIP_DATA_DIR=/var/lib/paperclip/instances/default/db
 PAPERCLIP_BACKUP_DIR=/var/lib/paperclip/instances/default/data/backups
 PAPERCLIP_STORAGE_DIR=/var/lib/paperclip/instances/default/data/storage
 PAPERCLIP_SECRETS_KEY_FILE=/var/lib/paperclip/instances/default/secrets/master.key
+PAPERCLIP_ARTIFACT_MANIFEST=/opt/paperclip/current/paperclipai.certification.json
+PAPERCLIP_ARTIFACT_IDENTITY=/opt/paperclip/current/node_modules/paperclipai/dist/paperclip-artifact-identity.json
+PAPERCLIP_ARTIFACT_ARCHIVE=/opt/paperclip/current/artifacts/paperclipai.tgz
+PAPERCLIP_RUNTIME_PID_FILE=/run/paperclip/paperclip.pid
+PAPERCLIP_RUNTIME_IDENTITY=/run/paperclip/paperclip-runtime-identity.json
 PAPERCLIP_SERVICE_MANAGED=1
 EOF
 chown root:paperclip /etc/paperclip/paperclip.env
 chmod 0640 /etc/paperclip/paperclip.env
 systemd-analyze verify /etc/systemd/system/paperclip.service
 /usr/lib/paperclip/paperclip-preflight
+/usr/lib/paperclip/paperclip-activation-preflight
 ```
 
 Before this preflight can pass, `config.json` must contain absolute paths equal
@@ -81,6 +91,16 @@ storage, and `secrets.provider="local_encrypted"`. All paths must be inside
 `$PAPERCLIP_HOME/instances/$PAPERCLIP_INSTANCE_ID`, exist before activation,
 and not be group/other writable. Do not include `DATABASE_URL`, API keys, or
 other secret values in shell history or the environment file.
+
+Create release artifacts only from a clean checkout with
+`PAPERCLIP_SOURCE_SHA=$(git rev-parse HEAD) corepack pnpm build:npm:certified`.
+The command rejects abbreviated or false labels and tracked dirty state. It
+uses the commit timestamp, sorted entries, and zero numeric ownership for the
+archive and emits its certification manifest alongside it. If the PID file
+names a live process, activation additionally requires a runtime identity with
+the certified `sourceSha` and `executableSha256`; an absent or stale identity
+fails closed. Keep the archive, installed identity, and certification sidecar
+together as one release unit.
 
 ## Production-host gate: install and health verification
 

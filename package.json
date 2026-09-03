@@ -32,6 +32,8 @@
     "db:backup": "./scripts/backup-db.sh",
     "paperclipai": "node cli/node_modules/tsx/dist/cli.mjs cli/src/index.ts",
     "build:npm": "./scripts/build-npm.sh",
+    "build:npm:certified": "./scripts/build-certified-npm.sh",
+    "test:artifact-identity": "node --test scripts/paperclip-artifact-identity.test.mjs",
     "release": "./scripts/release.sh",
     "release:canary": "./scripts/release.sh canary",
     "release:stable": "./scripts/release.sh stable",
