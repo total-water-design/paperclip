@@ -173,16 +173,16 @@ describe("codex_local stderr fallback error derivation", () => {
         onLog: (stream: "stdout" | "stderr", chunk: string) => Promise<void>;
       };
       await options.onSpawn({ pid: 2_147_483_647, processGroupId: null, startedAt: new Date().toISOString() });
-      await options.onLog("stderr", "rmcp::transport::worker: worker quit with fatal: Transport channel closed\n");
-      await options.onLog("stderr", "WebSocket Proxy connection failed: HTTP CONNECT failed with status 403\n");
+      await options.onLog("stderr", '2026-09-03T00:22:40.013524Z ERROR rmcp::transport::worker: worker quit with fatal: Transport channel closed, when Client(HttpRequest(HttpRequest("http/request failed: error sending request for url (https://chatgpt.com/backend-api/ps/mcp)")))\n');
+      await options.onLog("stderr", "2026-09-03T00:22:40.127178Z ERROR codex_api::endpoint::responses_websocket: failed to connect to websocket: URL error: Proxy connection failed: HTTP CONNECT failed with status 403, url: wss://chatgpt.com/backend-api/codex/responses\n");
       for (let i = 0; i < 3; i += 1) {
-        await options.onLog("stdout", `{"type":"error","message":"Reconnecting... waiting for network (attempt ${i + 3}/5)"}\n`);
+        await options.onLog("stdout", '{"type":"error","message":"Reconnecting... waiting for network (Connection failed: error sending request)"}\n');
       }
       return {
         exitCode: null,
         signal: "SIGTERM",
         timedOut: false,
-        stdout: '{"type":"error","message":"Reconnecting... waiting for network (attempt 5/5)"}\n',
+        stdout: '{"type":"error","message":"Reconnecting... waiting for network (Connection failed: error sending request)"}\n',
         stderr: "rmcp fatal transport and WebSocket proxy CONNECT 403\n",
         pid: 2_147_483_647,
         startedAt: new Date().toISOString(),

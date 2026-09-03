@@ -59,7 +59,7 @@ function isStructuredReconnectWaitingError(line: string): boolean {
 const RMCP_FATAL_CHANNEL_CLOSED_RE =
   /rmcp::transport::worker:\s*worker quit with fatal:\s*Transport channel closed\b/i;
 const WEBSOCKET_PROXY_CONNECT_403_RE =
-  /WebSocket\s+Proxy connection failed:\s*HTTP CONNECT failed with status 403\b/i;
+  /responses_websocket:\s*failed to connect to websocket:\s*URL error:\s*Proxy connection failed:\s*HTTP CONNECT failed with status 403\b/i;
 
 export function createCodexFatalTransportMonitor(
   options: CodexFatalTransportMonitorOptions,

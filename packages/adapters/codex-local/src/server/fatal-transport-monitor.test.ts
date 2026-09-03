@@ -13,10 +13,17 @@ class Clock {
   advance(ms: number) { this.nowMs += ms; const cb = this.callback; if (cb) { this.callback = null; cb(); } }
 }
 
+const RETAINED_RMCP_LINE = '2026-09-03T00:22:40.013524Z ERROR rmcp::transport::worker: worker quit with fatal: Transport channel closed, when Client(HttpRequest(HttpRequest("http/request failed: error sending request for url (https://chatgpt.com/backend-api/ps/mcp)")))';
+const RETAINED_WEBSOCKET_LINE = "2026-09-03T00:22:40.127178Z ERROR codex_api::endpoint::responses_websocket: failed to connect to websocket: URL error: Proxy connection failed: HTTP CONNECT failed with status 403, url: wss://chatgpt.com/backend-api/codex/responses";
+const RETAINED_RECONNECT_RECORD = '{"type":"error","message":"Reconnecting... waiting for network (Connection failed: error sending request)"}';
+
 function retainedIncidentPair(monitor: ReturnType<typeof createCodexFatalTransportMonitor>) {
-  monitor.noteOutputChunk("stderr", "2026-08-31T04:18:22Z ERROR rmcp::transport::wor");
-  monitor.noteOutputChunk("stderr", "ker: worker quit with fatal: Transport channel closed while polling\nWebSocket Proxy con");
-  monitor.noteOutputChunk("stderr", "nection failed: HTTP CONNECT failed with status 403\n");
+  const stderr = `${RETAINED_RMCP_LINE}\n${RETAINED_WEBSOCKET_LINE}\n`;
+  const rmcpSplit = RETAINED_RMCP_LINE.indexOf("transport::worker") + 11;
+  const websocketSplit = stderr.indexOf("responses_websocket") + 14;
+  monitor.noteOutputChunk("stderr", stderr.slice(0, rmcpSplit));
+  monitor.noteOutputChunk("stderr", stderr.slice(rmcpSplit, websocketSplit));
+  monitor.noteOutputChunk("stderr", stderr.slice(websocketSplit));
 }
 
 describe("Codex fatal transport monitor", () => {
@@ -29,10 +36,10 @@ describe("Codex fatal transport monitor", () => {
     });
     retainedIncidentPair(monitor);
     monitor.noteOutputChunk("stdout", "Reconnecting 2/5\nReconnecting 3/5\nUsing HTTPS fallback\n");
-    monitor.noteOutputChunk("stdout", '{"type":"error","message":"Reconnecting... waiting for net');
-    monitor.noteOutputChunk("stdout", 'work (attempt 3/5)"}\n{"type":"error","message":"Reconnecting... waiting for network (attempt 4/5)"}\n');
+    monitor.noteOutputChunk("stdout", RETAINED_RECONNECT_RECORD.slice(0, 55));
+    monitor.noteOutputChunk("stdout", `${RETAINED_RECONNECT_RECORD.slice(55)}\n${RETAINED_RECONNECT_RECORD}\n`);
     expect(fired).toEqual([]);
-    monitor.noteOutputChunk("stdout", '{"type":"error","message":"Reconnecting... waiting for network (attempt 5/5)"}\n');
+    monitor.noteOutputChunk("stdout", `${RETAINED_RECONNECT_RECORD}\n`);
     expect(fired).toEqual(["reconnect_limit"]);
     expect(monitor.state()).toMatchObject({ armed: true, fired: true, reconnectCount: 3 });
   });
@@ -75,16 +82,17 @@ describe("Codex fatal transport monitor", () => {
       onFire: () => { fireCount += 1; },
     });
     retainedIncidentPair(firedMonitor);
-    firedMonitor.noteOutputChunk("stdout", '{"type":"error","message":"Reconnecting... waiting for network (attempt 5/5)"}\n');
-    firedMonitor.noteOutputChunk("stdout", '{"type":"error","message":"Reconnecting... waiting for network (attempt 5/5)"}\n');
+    firedMonitor.noteOutputChunk("stdout", `${RETAINED_RECONNECT_RECORD}\n`);
+    firedMonitor.noteOutputChunk("stdout", `${RETAINED_RECONNECT_RECORD}\n`);
     expect(fireCount).toBe(1);
     expect(firedMonitor.state()).toMatchObject({ fired: true, reason: "reconnect_limit", reconnectCount: 1 });
     firedMonitor.stop();
   });
 
   it.each([
-    ["only the RMCP fatal signature", "rmcp::transport::worker: worker quit with fatal: Transport channel closed\n"],
-    ["only the proxy signature", "WebSocket Proxy connection failed: HTTP CONNECT failed with status 403\n"],
+    ["only the RMCP fatal signature", `${RETAINED_RMCP_LINE}\n`],
+    ["only the proxy signature", `${RETAINED_WEBSOCKET_LINE}\n`],
+    ["an unrelated WebSocket 403", "WebSocket request failed: HTTP CONNECT failed with status 403\n"],
     ["a generic HTTP 403", "request failed with HTTP status 403\n"],
   ])("does not arm for %s", (_label, stderr) => {
     let fired = false;
