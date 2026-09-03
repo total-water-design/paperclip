@@ -15568,6 +15568,9 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         return home;
       })(),
     };
+    context.paperclipExecutionPolicy = {
+      networkEgress: issueExecutionWorkspaceSettings?.networkEgress ?? null,
+    };
     context.paperclipWorkspaces = buildRunWorkspaceHints(resolvedWorkspace);
     // Emit exactly one requested-vs-synced observability line for the referenced-project set. A run
     // with no referenced project stays silent, so this adds no noise to the anchor-only default. The
