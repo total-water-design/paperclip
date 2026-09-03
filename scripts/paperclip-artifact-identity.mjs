@@ -17,6 +17,24 @@ export function sha256File(path) {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
 }
 
+function processStartTime(pid) {
+  const readStart = (procPid) => {
+    try {
+      const stat = readFileSync(`/proc/${procPid}/stat`, "utf8");
+      return stat.slice(stat.lastIndexOf(") ") + 2).split(" ")[19] ?? null;
+    } catch { return null; }
+  };
+  const direct = readStart(pid);
+  if (direct) return direct;
+  try {
+    for (const procPid of readdirSync("/proc").filter((entry) => /^\d+$/.test(entry))) {
+      const namespacePids = readFileSync(`/proc/${procPid}/status`, "utf8").match(/^NSpid:\s+(.+)$/m)?.[1]?.trim().split(/\s+/).map(Number) ?? [];
+      if (namespacePids.includes(Number(pid))) return readStart(procPid);
+    }
+  } catch {}
+  return null;
+}
+
 function git(repo, args) {
   return execFileSync("git", ["-C", repo, ...args], { encoding: "utf8" }).trim();
 }
@@ -110,7 +128,7 @@ export function verifyActivation({ manifestPath, identityPath, executablePath, a
   if (archivePath && sha256File(archivePath) !== certified.archive.sha256) fail("archive digest differs from certification manifest");
   if (runtimeIdentityPath) {
     const runtime = JSON.parse(readFileSync(runtimeIdentityPath, "utf8"));
-    if (runtimePid && (runtime.pid !== Number(runtimePid) || runtime.processStartTime !== readFileSync(`/proc/${runtimePid}/stat`, "utf8").split(" ")[21])) {
+    if (runtimePid && (runtime.pid !== Number(runtimePid) || runtime.processStartTime !== processStartTime(runtimePid))) {
       fail("runtime PID identity does not match the live process");
     }
     if (runtime.sourceSha !== certified.source.sha || runtime.executableSha256 !== certified.installedExecutable.sha256) {

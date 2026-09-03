@@ -2,7 +2,7 @@
 
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
-import { readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
 function required(name) {
@@ -11,7 +11,29 @@ function required(name) {
   return resolve(value);
 }
 function processStartTime(pid) {
-  try { return readFileSync(`/proc/${pid}/stat`, "utf8").split(" ")[21] ?? null; } catch { return null; }
+  const readStart = (procPid) => {
+    try {
+      const stat = readFileSync(`/proc/${procPid}/stat`, "utf8");
+      return stat.slice(stat.lastIndexOf(") ") + 2).split(" ")[19] ?? null;
+    } catch { return null; }
+  };
+  const direct = readStart(pid);
+  if (direct) return direct;
+  try {
+    for (const procPid of readdirSync("/proc").filter((entry) => /^\d+$/.test(entry))) {
+      const namespacePids = readFileSync(`/proc/${procPid}/status`, "utf8").match(/^NSpid:\s+(.+)$/m)?.[1]?.trim().split(/\s+/).map(Number) ?? [];
+      if (namespacePids.includes(Number(pid))) return readStart(procPid);
+    }
+  } catch {}
+  return null;
+}
+async function waitForProcessStartTime(pid) {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const start = processStartTime(pid);
+    if (start) return start;
+    await new Promise((resolveWait) => setTimeout(resolveWait, 10));
+  }
+  return null;
 }
 function atomicWrite(file, contents) {
   const temporary = `${file}.${process.pid}.${Date.now()}.tmp`;
@@ -35,8 +57,8 @@ if (active) throw new Error(`paperclip runtime wrapper: runtime PID ${active} is
 for (const file of [pidFile, identityFile]) { try { unlinkSync(file); } catch (error) { if (error.code !== "ENOENT") throw error; } }
 
 const child = spawn(executable, ["run", "--instance", process.env.PAPERCLIP_INSTANCE_ID], { stdio: "inherit", env: process.env });
-child.once("spawn", () => {
-  const start = processStartTime(child.pid);
+child.once("spawn", async () => {
+  const start = await waitForProcessStartTime(child.pid);
   if (!start) { child.kill("SIGTERM"); throw new Error("paperclip runtime wrapper: cannot read child process identity"); }
   const executableSha256 = createHash("sha256").update(readFileSync(executable)).digest("hex");
   atomicWrite(identityFile, `${JSON.stringify({ pid: child.pid, processStartTime: start, sourceSha: artifactIdentity.source.sha, executableSha256 })}\n`);
