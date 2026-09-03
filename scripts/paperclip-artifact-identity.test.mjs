@@ -13,6 +13,7 @@ function fixture() {
   execFileSync("git", ["-C", root, "config", "user.name", "Test"]);
   writeFileSync(path.join(root, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
   writeFileSync(path.join(root, "source"), "source\n");
+  writeFileSync(path.join(root, ".gitignore"), "out/\n");
   execFileSync("git", ["-C", root, "add", "."]); execFileSync("git", ["-C", root, "commit", "-qm", "fixture"]);
   const sha = execFileSync("git", ["-C", root, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
   return { root, sha };
@@ -25,6 +26,12 @@ test("identity is byte reproducible and rejects a false source label", () => {
   createIdentity({ repo: root, outputDir: out, sourceSha: sha, canonicalBuildCommand: "pnpm certified" });
   assert.deepEqual(readFileSync(path.join(out, "paperclip-artifact-identity.json")), first);
   assert.throws(() => createIdentity({ repo: root, outputDir: out, sourceSha: "0".repeat(40), canonicalBuildCommand: "pnpm certified" }), /source label mismatch/);
+});
+
+test("identity rejects an untracked source file", () => {
+  const { root, sha } = fixture(); const out = path.join(root, "out"); mkdirSync(out); writeFileSync(path.join(out, "index.js"), "ok\n");
+  writeFileSync(path.join(root, "untracked-source.ts"), "export {};\n");
+  assert.throws(() => createIdentity({ repo: root, outputDir: out, sourceSha: sha, canonicalBuildCommand: "pnpm certified" }), /source tree is dirty/);
 });
 
 test("activation rejects stale runtime and changed installed executable", () => {

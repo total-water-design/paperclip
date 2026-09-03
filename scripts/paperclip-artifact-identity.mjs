@@ -25,7 +25,7 @@ export function assertCertifiedSource(repo, claimedSourceSha) {
   const sourceSha = git(repo, ["rev-parse", "HEAD"]);
   if (!/^[0-9a-f]{40}$/.test(claimedSourceSha ?? "")) fail("source label must be an exact full Git SHA");
   if (claimedSourceSha !== sourceSha) fail(`source label mismatch: claimed ${claimedSourceSha}, checkout ${sourceSha}`);
-  const dirty = git(repo, ["status", "--porcelain", "--untracked-files=no"]);
+  const dirty = git(repo, ["status", "--porcelain", "--untracked-files=normal"]);
   if (dirty) fail(`source tree is dirty:\n${dirty}`);
   return sourceSha;
 }
