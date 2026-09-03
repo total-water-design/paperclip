@@ -3,6 +3,7 @@ import http from "node:http";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   buildLocalProcessSandboxSpawnTarget,
@@ -14,6 +15,7 @@ import {
 import { runChildProcess } from "./server-utils.js";
 
 const cleanup: string[] = [];
+const fixtureDir = path.dirname(fileURLToPath(import.meta.url));
 
 async function withTmpDir<T>(tmpDir: string, run: () => Promise<T>): Promise<T> {
   const previousTmpDir = process.env.TMPDIR;
@@ -93,7 +95,72 @@ describe("local process sandbox", () => {
     expect(target.args).toContain("--tmpfs");
     expect(target.args).toContain(workspace);
     expect(target.args).toContain(managedHome);
-    expect(target.args.slice(-3)).toEqual([process.execPath, "-e", "console.log('ok')"]);
+    expect(target.args.slice(-6)).toEqual([
+      process.execPath,
+      "-e",
+      expect.stringContaining('stdio: "inherit"'),
+      process.execPath,
+      "-e",
+      "console.log('ok')",
+    ]);
+  });
+
+  it("preserves every byte under confined high-volume stdout backpressure", async () => {
+    const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-confined-stdio-"));
+    cleanup.push(workspace);
+    const fakeBubblewrap = path.join(fixtureDir, "test-fixtures", "nonblocking-bwrap.mjs");
+    const chunk = "0123456789abcdef".repeat(256);
+    const repetitions = 128;
+    const expected = chunk.repeat(repetitions);
+    const writerScript = `const fs=require("node:fs");const chunk=${JSON.stringify(chunk)};` +
+      `try { for(let i=0;i<${repetitions};i++) fs.writeSync(1,chunk); } ` +
+      `catch(error) { fs.writeSync(2,"failed printing to stdout: Resource temporarily unavailable (os error 11)\\n"); process.exit(101); }`;
+    let reproductionStderr = "";
+    const reproduction = await runChildProcess(
+      "nonblocking-intermediate-reproduction",
+      fakeBubblewrap,
+      ["--", process.execPath, "-e", writerScript],
+      {
+        cwd: workspace,
+        env: {},
+        timeoutSec: 10,
+        graceSec: 1,
+        onLog: async (stream, text) => {
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          if (stream === "stderr") reproductionStderr += text;
+        },
+      },
+    );
+    expect(reproduction.exitCode).toBe(101);
+    expect(reproductionStderr).toContain("failed printing to stdout: Resource temporarily unavailable (os error 11)");
+
+    let captured = "";
+
+    const result = await runChildProcess(
+      "confined-high-volume-stdio",
+      process.execPath,
+      ["-e", writerScript],
+      {
+        cwd: workspace,
+        env: {},
+        timeoutSec: 10,
+        graceSec: 1,
+        localProcessSandbox: {
+          workspaceDir: workspace,
+          networkScope: "deny",
+          command: fakeBubblewrap,
+        },
+        onLog: async (stream, text) => {
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          if (stream === "stdout") captured += text;
+        },
+      },
+    );
+
+    expect(Buffer.byteLength(expected)).toBeGreaterThan(64 * 1024);
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(result.stderr).not.toContain("failed printing to stdout");
+    expect(captured).toBe(expected);
   });
 
   it("binds a confined absolute alias to the synchronized workspace", async () => {
@@ -174,8 +241,8 @@ describe("local process sandbox", () => {
         },
       }),
     );
-    const delimiterIndex = target.args.indexOf("--");
-    const socketPath = target.args[delimiterIndex + 3];
+    const bridgeIndex = target.args.findIndex((value) => value.endsWith("/bridge.cjs"));
+    const socketPath = target.args[bridgeIndex + 1];
     expect(Buffer.byteLength(path.join(deepTmpDir, "paperclip-network-sandbox-XXXXXX", "proxy.sock"))).toBeGreaterThan(107);
     expect(Buffer.byteLength(socketPath)).toBeLessThanOrEqual(107);
     expect(socketPath).toMatch(/^\/tmp\/paperclip-network-sandbox-/);
@@ -246,8 +313,8 @@ describe("local process sandbox", () => {
         networkTrustedUrls: [`http://127.0.0.1:${address.port}/api/issues/issue-1`],
       },
     });
-    const delimiterIndex = target.args.indexOf("--");
-    const socketPath = target.args[delimiterIndex + 3];
+    const bridgeIndex = target.args.findIndex((value) => value.endsWith("/bridge.cjs"));
+    const socketPath = target.args[bridgeIndex + 1];
 
     try {
       const response = await new Promise<{ status: number; body: string }>((resolve, reject) => {

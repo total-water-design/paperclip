@@ -71,6 +71,28 @@ const SANDBOX_PROXY_PORT = 31_337;
 const UNIX_SOCKET_PATH_MAX_BYTES = 107;
 const NETWORK_PROXY_TEMP_PREFIX = "paperclip-network-sandbox-";
 
+// Node/libuv makes the pipe ends passed to an intermediate child non-blocking.
+// Bubblewrap is such an intermediate child: unlike a direct spawn, the final
+// sandboxed command can therefore inherit O_NONBLOCK on fd 1/2 and infallible
+// Rust stdout/stderr printing panics with EAGAIN when Paperclip applies log
+// backpressure. A final Node/libuv spawn restores blocking semantics on the
+// descriptors it maps into the actual child. The launcher is inline so it
+// remains available inside a fresh-root sandbox.
+const BLOCKING_STDIO_LAUNCHER = `
+const { spawn } = require("node:child_process");
+const [command, ...args] = process.argv.slice(1);
+if (!command) process.exit(126);
+const child = spawn(command, args, { env: process.env, stdio: "inherit" });
+child.on("error", (error) => {
+  process.stderr.write("[paperclip] unable to start confined command: " + error.message + "\\n");
+  process.exit(126);
+});
+child.on("exit", (code, signal) => {
+  if (signal) process.kill(process.pid, signal);
+  else process.exit(code == null ? 1 : code);
+});
+`.trim();
+
 function normalizeAbsolutePath(candidate: string, label: string): string {
   const trimmed = candidate.trim();
   if (!trimmed || !path.isAbsolute(trimmed)) {
@@ -404,6 +426,7 @@ export async function buildLocalProcessSandboxSpawnTarget(input: {
     };
     for (const systemPath of SYSTEM_READ_PATHS) await mount(systemPath, "ro");
     for (const executablePath of await executableReadPaths(input.executable)) await mount(executablePath, "ro");
+    for (const nodePath of await executableReadPaths(process.execPath)) await mount(nodePath, "ro");
     if (networkScope === "allowlist") {
       for (const nodePath of await executableReadPaths(process.execPath)) await mount(nodePath, "ro");
     }
@@ -486,7 +509,13 @@ export async function buildLocalProcessSandboxSpawnTarget(input: {
     env.https_proxy = proxyUrl;
   }
 
-  args.push("--chdir", cwd, "--", executable, ...executableArgs);
+  // This wrapper is intentionally inside Bubblewrap. It observes the exact fd
+  // flags that the eventual Codex process would inherit; its final libuv spawn
+  // maps blocking descriptors into Codex. Direct runChildProcess calls bypass it.
+  args.push(
+    "--chdir", cwd, "--", process.execPath, "-e", BLOCKING_STDIO_LAUNCHER,
+    executable, ...executableArgs,
+  );
   return { command: bwrapCommand, args, cwd: "/", env, cleanup };
 }
 
