@@ -868,6 +868,8 @@ const BOARD_ONLY_OPERATIONS = new Set([
   "POST /api/companies/{companyId}/secret-provider-configs",
   "GET /api/companies/{companyId}/secret-providers/health",
   "POST /api/companies/{companyId}/secret-provider-configs/discovery/preview",
+  "POST /api/companies/{companyId}/grant_agent_capability",
+  "POST /api/companies/{companyId}/agent-capability-grants/{grantId}/revoke",
   "GET /api/secret-provider-configs/{id}",
   "PATCH /api/secret-provider-configs/{id}",
   "DELETE /api/secret-provider-configs/{id}",
@@ -3055,6 +3057,38 @@ registry.registerPath({
   summary: "List secrets in a company",
   request: { params: z.object({ companyId: z.string() }) },
   responses: { 200: r.ok(), 401: r.unauthorized },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/companies/{companyId}/grant_agent_capability",
+  tags: ["secrets"],
+  summary: "Grant an issue- or run-scoped agent capability",
+  request: {
+    params: z.object({ companyId: z.string().guid() }),
+    body: jsonBody(z.object({
+      agentId: z.string().guid(),
+      targetType: z.enum(["issue", "run"]),
+      targetId: z.string().guid(),
+      bindingId: z.string().guid().optional(),
+      secretId: z.string().guid().optional(),
+      configPath: z.string().optional(),
+      expiresAt: z.string().datetime(),
+    })),
+  },
+  responses: { 201: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 422: r.unprocessable },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/companies/{companyId}/agent-capability-grants/{grantId}/revoke",
+  tags: ["secrets"],
+  summary: "Revoke an agent capability grant",
+  request: {
+    params: z.object({ companyId: z.string().guid(), grantId: z.string().guid() }),
+    body: jsonBody(z.object({ reason: z.string().optional() })),
+  },
+  responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden, 404: r.notFound },
 });
 
 registry.registerPath({
