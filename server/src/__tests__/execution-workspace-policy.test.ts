@@ -424,6 +424,47 @@ describe("execution workspace policy helpers", () => {
     expect(selectEnvironmentExecutionWorkspaceSettings({ mode: "isolated_workspace" }, false)).toBeNull();
   });
 
+  it("binds an FQDN-only issue grant to the local runner proxy exactly", () => {
+    const result = buildExecutionWorkspaceAdapterConfig({
+      agentConfig: {
+        networkScope: "allowlist",
+        networkAllowlist: ["example.com", "*.example.net"],
+      },
+      projectPolicy: null,
+      issueSettings: {
+        mode: "isolated_workspace",
+        networkEgress: {
+          allowFqdns: ["totalwaterdesign.com"],
+          allowCidrs: [],
+        },
+      },
+      mode: "isolated_workspace",
+      legacyUseProjectWorkspace: null,
+    });
+
+    expect(result.networkScope).toBe("allowlist");
+    expect(result.networkAllowlist).toEqual(["totalwaterdesign.com"]);
+  });
+
+  it("does not approximate a CIDR-bearing issue grant in the local runner proxy", () => {
+    const result = buildExecutionWorkspaceAdapterConfig({
+      agentConfig: {},
+      projectPolicy: null,
+      issueSettings: {
+        mode: "isolated_workspace",
+        networkEgress: {
+          allowFqdns: ["totalwaterdesign.com"],
+          allowCidrs: ["203.0.113.0/24"],
+        },
+      },
+      mode: "isolated_workspace",
+      legacyUseProjectWorkspace: null,
+    });
+
+    expect(result.networkScope).toBeUndefined();
+    expect(result.networkAllowlist).toBeUndefined();
+  });
+
   it("prefers the agent default environment", () => {
     expect(
       resolveExecutionWorkspaceEnvironmentId({

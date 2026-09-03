@@ -398,5 +398,21 @@ export function buildExecutionWorkspaceAdapterConfig(input: {
     }
   }
 
+  // Local runner confinement is configured through the adapter's HTTP(S)
+  // allow-list proxy, while managed environments consume networkEgress from
+  // the environment lease. Projecting an issue's FQDN-only grant here keeps
+  // both execution paths bound to the same task-scoped authorization. Do not
+  // project CIDR grants: the local proxy has no equivalent CIDR primitive and
+  // silently approximating one would broaden or misrepresent the grant.
+  const networkEgress = input.issueSettings?.networkEgress;
+  if (
+    networkEgress &&
+    networkEgress.allowFqdns.length > 0 &&
+    networkEgress.allowCidrs.length === 0
+  ) {
+    nextConfig.networkScope = "allowlist";
+    nextConfig.networkAllowlist = [...networkEgress.allowFqdns];
+  }
+
   return nextConfig;
 }
