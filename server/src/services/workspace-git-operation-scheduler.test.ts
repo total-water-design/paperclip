@@ -375,7 +375,9 @@ describe("WorkspaceGitOperationScheduler", () => {
     expect(() => process.kill(killedPid, 0)).toThrow();
     const outputScheduler = createWorkspaceGitOperationScheduler({
       concurrency: 1,
-      timeoutMs: 1_000,
+      // Keep the output-limit assertion independent of process startup jitter.
+      // The dedicated hung-process assertion above owns timeout coverage.
+      timeoutMs: 5_000,
       killGraceMs: 50,
       gitBinary: process.execPath,
       gitArgsPrefix: ["-e", 'process.stdout.write("x".repeat(65536)); setInterval(() => {}, 1000);'],
