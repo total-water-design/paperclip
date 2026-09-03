@@ -70,6 +70,13 @@ export interface WorkspaceGitScanInput {
   env?: NodeJS.ProcessEnv;
   maxStdoutBytes?: number;
   maxStderrBytes?: number;
+  context?: {
+    workspaceId?: string;
+    issueIdentifiers?: readonly string[];
+    agentId?: string | null;
+    runId?: string | null;
+    untrackedFilesMode?: string;
+  };
 }
 
 export interface WorkspaceGitSchedulerSnapshot {
@@ -153,6 +160,7 @@ interface PendingScan {
   controller: AbortController;
   waiters: Map<symbol, Waiter>;
   joinCount: number;
+  context?: WorkspaceGitScanInput["context"];
 }
 
 interface CacheEntry {
@@ -169,11 +177,11 @@ interface WarningBucket {
   suppressed: number;
 }
 
-const DEFAULT_CONCURRENCY = 2;
-const DEFAULT_QUEUE_CAPACITY = 32;
-const DEFAULT_TIMEOUT_MS = 8_000;
+const DEFAULT_CONCURRENCY = 1;
+const DEFAULT_QUEUE_CAPACITY = 4;
+const DEFAULT_TIMEOUT_MS = 5_000;
 const DEFAULT_KILL_GRACE_MS = 250;
-const DEFAULT_CACHE_TTL_MS = 10_000;
+const DEFAULT_CACHE_TTL_MS = 60_000;
 const DEFAULT_CACHE_ENTRIES = 64;
 const DEFAULT_CACHE_BYTES = 8 * 1024 * 1024;
 const DEFAULT_OUTPUT_BYTES = 1024 * 1024;
@@ -499,6 +507,13 @@ export class WorkspaceGitOperationScheduler {
         event: "workspace_git_scan",
         operation: input.operation,
         workspaceHash,
+        workspaceId: input.context?.workspaceId,
+        issueIdentifiers: input.context?.issueIdentifiers,
+        agentId: input.context?.agentId,
+        runId: input.context?.runId,
+        repositoryRootHash: workspaceHash,
+        gitOperation: input.args[0] ?? null,
+        untrackedFilesMode: input.context?.untrackedFilesMode,
         cacheHit: true,
         singleFlightJoined: false,
         activeCount: this.activeCount,
@@ -566,6 +581,7 @@ export class WorkspaceGitOperationScheduler {
       controller: new AbortController(),
       waiters: new Map(),
       joinCount: 0,
+      context: input.context,
     };
     this.inFlight.set(key, scan);
     this.queue.push(scan);
@@ -712,14 +728,28 @@ export class WorkspaceGitOperationScheduler {
       event: "workspace_git_scan",
       operation: scan.operation,
       workspaceHash: scan.workspaceHash,
+      workspaceId: scan.context?.workspaceId,
+      issueIdentifiers: scan.context?.issueIdentifiers,
+      agentId: scan.context?.agentId,
+      runId: scan.context?.runId,
+      repositoryRootHash: scan.workspaceHash,
+      gitOperation: scan.args[0] ?? null,
+      untrackedFilesMode: scan.context?.untrackedFilesMode,
       outcome: "success",
+      queueEnteredAtMs: scan.enqueuedAt,
       queueWaitMs,
       executionMs: Math.max(0, this.now() - startedAt),
+      totalMs: Math.max(0, this.now() - scan.enqueuedAt),
+      timeoutMs: scan.timeoutMs,
       activeCount: this.activeCount,
       queuedCount: this.queue.length,
       cacheHit: false,
       singleFlightJoinCount: scan.joinCount,
+      filesystemEntriesInspected: scan.operation === "execution_workspaces.close_readiness_status"
+        ? result.stdout.split(/\r?\n/).filter(Boolean).length
+        : undefined,
       exitOutcome: "zero",
+      exitCode: 0,
     }, "workspace Git scan completed");
     this.release(scan);
   }
@@ -763,14 +793,27 @@ export class WorkspaceGitOperationScheduler {
       event: "workspace_git_scan",
       operation: scan.operation,
       workspaceHash: scan.workspaceHash,
+      workspaceId: scan.context?.workspaceId,
+      issueIdentifiers: scan.context?.issueIdentifiers,
+      agentId: scan.context?.agentId,
+      runId: scan.context?.runId,
+      repositoryRootHash: scan.workspaceHash,
+      gitOperation: scan.args[0] ?? null,
+      untrackedFilesMode: scan.context?.untrackedFilesMode,
       outcome: normalized.code,
+      queueEnteredAtMs: scan.enqueuedAt,
       queueWaitMs,
       executionMs: Math.max(0, this.now() - startedAt),
+      totalMs: Math.max(0, this.now() - scan.enqueuedAt),
+      timeoutMs: scan.timeoutMs,
       activeCount: this.activeCount,
       queuedCount: this.queue.length,
       cacheHit: false,
       singleFlightJoinCount: scan.joinCount,
       exitOutcome: normalized.code,
+      exitCode: typeof (normalized.details as Record<string, unknown>)?.exitCode === "number"
+        ? (normalized.details as Record<string, unknown>).exitCode
+        : null,
     }, "workspace Git scan finished without a result");
     this.release(scan);
   }

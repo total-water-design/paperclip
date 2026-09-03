@@ -166,7 +166,7 @@ export function executionWorkspaceRoutes(db: Db, opts: { pluginWorkerManager?: P
     const workspace = await getAccessibleResource(req, res, svc.getById(id), "Execution workspace not found");
     if (!workspace) return;
     if (!(await assertExecutionWorkspaceReadAllowed(req, res, workspace.companyId))) return;
-    const readiness = await svc.getCloseReadiness(id);
+    const readiness = await svc.getCloseReadiness(id, getActorInfo(req));
     if (!readiness) {
       res.status(404).json({ error: "Execution workspace not found" });
       return;

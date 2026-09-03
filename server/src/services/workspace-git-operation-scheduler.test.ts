@@ -49,10 +49,10 @@ afterEach(async () => {
 describe("WorkspaceGitOperationScheduler", () => {
   it("loads bounded process defaults and overrides from the environment", () => {
     expect(workspaceGitSchedulerOptionsFromEnv({})).toEqual({
-      concurrency: 2,
-      queueCapacity: 32,
-      timeoutMs: 8_000,
-      defaultCacheTtlMs: 10_000,
+      concurrency: 1,
+      queueCapacity: 4,
+      timeoutMs: 5_000,
+      defaultCacheTtlMs: 60_000,
     });
     expect(workspaceGitSchedulerOptionsFromEnv({
       PAPERCLIP_WORKSPACE_GIT_SCAN_CONCURRENCY: "4",
