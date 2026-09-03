@@ -165,6 +165,42 @@ describe("codex_local stderr fallback error derivation", () => {
 
     expect(result.errorMessage).toBe("Codex exited with code 1");
   });
+
+  it("returns a bounded monitor failure for a confirmed fatal proxy reconnect loop", async () => {
+    runAdapterExecutionTargetProcess.mockImplementation(async (...args: unknown[]) => {
+      const options = args[4] as {
+        onSpawn: (meta: { pid: number; processGroupId: number | null; startedAt: string }) => Promise<void>;
+        onLog: (stream: "stdout" | "stderr", chunk: string) => Promise<void>;
+      };
+      await options.onSpawn({ pid: 2_147_483_647, processGroupId: null, startedAt: new Date().toISOString() });
+      await options.onLog("stdout", '{"type":"error","message":"fatal MCP HTTP transport failure"}\n');
+      await options.onLog("stderr", "WebSocket failed: proxy CONNECT response 403 after retry 5/5\n");
+      for (let i = 0; i < 3; i += 1) {
+        await options.onLog("stderr", "Reconnecting... waiting for network\n");
+      }
+      return {
+        exitCode: null,
+        signal: "SIGTERM",
+        timedOut: false,
+        stdout: '{"type":"error","message":"fatal MCP HTTP transport failure"}\n',
+        stderr: "WebSocket failed: proxy CONNECT response 403 after retry 5/5\n",
+        pid: 2_147_483_647,
+        startedAt: new Date().toISOString(),
+      };
+    });
+
+    const result = await execute(buildContext({
+      fatalTransportMaxReconnects: 3,
+      fatalTransportWindowMs: 300_000,
+    }) as never);
+
+    expect(result).toMatchObject({
+      timedOut: false,
+      errorCode: "codex_fatal_transport_monitor",
+      errorFamily: "transient_upstream",
+    });
+    expect(result.errorMessage).toContain("3 reconnects");
+  });
 });
 
 describe("firstMeaningfulStderrLine", () => {

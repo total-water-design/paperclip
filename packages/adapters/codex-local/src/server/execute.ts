@@ -97,6 +97,12 @@ import {
   resolveCodexInactivityTimeout,
 } from "./output-inactivity-monitor.js";
 import {
+  createCodexFatalTransportMonitor,
+  formatCodexFatalTransportError,
+  resolveCodexFatalTransportBounds,
+  type CodexFatalTransportMonitorState,
+} from "./fatal-transport-monitor.js";
+import {
   CODEX_PROCESS_ACTIVITY_POLL_INTERVAL_MS,
   createCodexProcessActivityMonitor,
   type CodexProcessActivityMonitorHandle,
@@ -1237,6 +1243,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       let killTarget: { pid: number | null; processGroupId: number | null } | null = null;
       let sigkillTimer: ReturnType<typeof setTimeout> | null = null;
       let monitorLogPromise: Promise<unknown> | null = null;
+      const fatalTransportState: { current: CodexFatalTransportMonitorState | null } = { current: null };
       const processActivityMonitor: { current: CodexProcessActivityMonitorHandle | null } = { current: null };
       const resolvedMonitorTimeoutMs = monitorResolution.mode === "disabled" ? null : monitorResolution.timeoutMs;
 
@@ -1281,6 +1288,33 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
               },
             });
 
+      const fatalTransportBounds = resolveCodexFatalTransportBounds(config);
+      const fatalTransportMonitor = fatalTransportBounds
+        ? createCodexFatalTransportMonitor({
+            ...fatalTransportBounds,
+            onFire: (state) => {
+              fatalTransportState.current = state;
+              const message = formatCodexFatalTransportError(state);
+              monitorLogPromise = Promise.resolve(onLog(
+                "stderr",
+                `[paperclip] adapter.invoke ${message}; terminating codex child via SIGTERM (5s grace, then SIGKILL).\n`,
+              )).catch(() => {});
+              const target = killTarget;
+              if (!target || (target.pid == null && target.processGroupId == null)) return;
+              const sentSig = signalCodexChild(target, "SIGTERM");
+              if (sentSig) monitorTerminationSignal = "SIGTERM";
+              sigkillTimer = setTimeout(() => {
+                sigkillTimer = null;
+                const stillSent = signalCodexChild(target, "SIGKILL");
+                if (stillSent) monitorTerminationSignal = "SIGKILL";
+              }, CODEX_OUTPUT_INACTIVITY_MONITOR_SIGTERM_GRACE_MS);
+              if (typeof (sigkillTimer as { unref?: () => void }).unref === "function") {
+                (sigkillTimer as { unref: () => void }).unref();
+              }
+            },
+          })
+        : null;
+
       const wrappedOnSpawn = async (meta: { pid: number; processGroupId: number | null; startedAt: string }) => {
         killTarget = { pid: meta.pid ?? null, processGroupId: meta.processGroupId };
         if (monitor && resolvedMonitorTimeoutMs !== null && !executionTargetIsRemote) {
@@ -1310,6 +1344,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
           onRuntimeProgress: ctx.onRuntimeProgress,
           onLog: async (stream, chunk) => {
             monitor?.noteOutputChunk(stream, chunk);
+            fatalTransportMonitor?.noteOutputChunk(stream, chunk);
             if (stream === "stdout") {
               await onLog(stream, chunk);
               return;
@@ -1338,10 +1373,17 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
                 timeoutMs: monitorTimeoutMs,
               }
             : { fired: false as const },
+          fatalTransport: fatalTransportState.current
+            ? {
+                ...fatalTransportState.current,
+                terminationSignal: monitorTerminationSignal,
+              }
+            : null,
         };
       } finally {
         processActivityMonitor.current?.stop();
         monitor?.stop();
+        fatalTransportMonitor?.stop();
         if (sigkillTimer) {
           clearTimeout(sigkillTimer);
           sigkillTimer = null;
@@ -1361,10 +1403,28 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         monitor?:
           | { fired: false }
           | { fired: true; terminationSignal: NodeJS.Signals | null; elapsedMsSinceLastEvent: number; timeoutMs: number };
+        fatalTransport?: (CodexFatalTransportMonitorState & { terminationSignal: NodeJS.Signals | null }) | null;
       },
       clearSessionOnMissingSession = false,
       isRetry = false,
     ): AdapterExecutionResult => {
+      if (attempt.fatalTransport?.fired) {
+        const errorMessage = formatCodexFatalTransportError(attempt.fatalTransport);
+        return {
+          exitCode: null,
+          signal: attempt.fatalTransport.terminationSignal ?? attempt.proc.signal,
+          timedOut: false,
+          errorMessage,
+          errorCode: "codex_fatal_transport_monitor",
+          errorFamily: "transient_upstream",
+          clearSession: clearSessionOnMissingSession,
+          resultJson: {
+            stdout: attempt.proc.stdout,
+            stderr: attempt.proc.stderr,
+            fatalTransportMonitor: attempt.fatalTransport,
+          },
+        };
+      }
       if (attempt.monitor?.fired) {
         const errorMessage = formatOutputInactivityMonitorErrorMessage(attempt.monitor.elapsedMsSinceLastEvent);
         return {

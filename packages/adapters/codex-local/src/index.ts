@@ -113,6 +113,8 @@ Operational fields:
 - timeoutSec (number, optional): run timeout in seconds
 - graceSec (number, optional): SIGTERM grace period in seconds
 - outputInactivityTimeoutMs (number | null, optional): inactivity monitor around the codex child. Resets whenever the child emits stdout/stderr bytes or, on Linux, its process group shows meaningful CPU, disk I/O, or child-process churn during a silent build. Defaults to 30 * 60_000 ms when unset or non-positive. Set to \`null\` to disable the monitor entirely (only do this for known-slow tasks; the platform-level 1h silent-run safety net still applies). On fire, the adapter sends SIGTERM to the process group, waits 5s, then SIGKILL, and surfaces the run as failed with errorMessage "monitor: no codex activity (output or process) for {N}m {S}s".
+- fatalTransportMaxReconnects (number | null, optional): after both a structured fatal transport error and a WebSocket proxy CONNECT 403 are observed, terminate after this many "waiting for network" reconnects. Defaults to 3. Set to \`null\` to disable this monitor.
+- fatalTransportWindowMs (number | null, optional): maximum time a confirmed fatal proxy/transport loop may remain alive, even if reconnect wording changes. Defaults to 5 * 60_000 ms. Set to \`null\` to disable this monitor.
 - agentCommand (string, optional): ACP server command override used only when engine="acp"; defaults to the package-local codex-acp binary
 - mode (string, optional): ACP session mode when engine="acp"; persistent or oneshot
 - nonInteractivePermissions (string, optional): ACP non-interactive permission fallback when engine="acp"; deny or fail
