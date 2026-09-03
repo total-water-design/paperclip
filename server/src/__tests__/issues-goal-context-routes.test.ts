@@ -287,6 +287,32 @@ describe.sequential("issue goal context routes", () => {
     expect(mockGoalService.getDefaultCompanyGoal).not.toHaveBeenCalled();
   });
 
+  it("returns persisted blockedByIssueIds from relation summaries on GET /issues/:id", async () => {
+    const blockerId = "55555555-5555-4555-8555-555555555555";
+    mockIssueService.getRelationSummaries.mockResolvedValue({
+      blockedBy: [
+        {
+          id: blockerId,
+          identifier: "PAP-580",
+          title: "Finish wakeup plumbing",
+          status: "todo",
+          priority: "high",
+          assigneeAgentId: null,
+          assigneeUserId: null,
+        },
+      ],
+      blocks: [],
+    });
+
+    const res = await request(createApp()).get("/api/issues/11111111-1111-4111-8111-111111111111");
+
+    expect(res.status).toBe(200);
+    expect(res.body.blockedByIssueIds).toEqual([blockerId]);
+    expect(res.body.blockedBy).toEqual([
+      expect.objectContaining({ id: blockerId, identifier: "PAP-580" }),
+    ]);
+  });
+
   it("keeps GET /issues/:id project and workspace embeds compact for fast detail loads", async () => {
     const workspaceId = "55555555-5555-4555-8555-555555555555";
     const runtimeServiceBase = {
