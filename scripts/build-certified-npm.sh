@@ -16,15 +16,17 @@ git -C "$repo_root" diff --cached --quiet --exit-code
 [[ "$source_sha" == "$(git -C "$repo_root" rev-parse HEAD)" ]] || { echo "certified build: source label mismatch" >&2; exit 1; }
 
 mkdir -p "$artifact_dir"
-trap 'if [[ -f "$repo_root/cli/package.dev.json" ]]; then mv "$repo_root/cli/package.dev.json" "$repo_root/cli/package.json"; fi; rm -f "$repo_root/cli/README.md"' EXIT
+readme_backup="$(mktemp "${PAPERCLIP_TMPDIR:-/tmp}/paperclip-readme.XXXXXX")"
+cp "$repo_root/cli/README.md" "$readme_backup"
+trap 'if [[ -f "$repo_root/cli/package.dev.json" ]]; then mv "$repo_root/cli/package.dev.json" "$repo_root/cli/package.json"; fi; cp "$readme_backup" "$repo_root/cli/README.md"; rm -f "$readme_backup"' EXIT
 "$repo_root/scripts/build-npm.sh" "$@"
 stage="$(mktemp -d "${PAPERCLIP_TMPDIR:-/tmp}/paperclip-package.XXXXXX")"
-trap 'rm -rf "$stage"; if [[ -f "$repo_root/cli/package.dev.json" ]]; then mv "$repo_root/cli/package.dev.json" "$repo_root/cli/package.json"; fi; rm -f "$repo_root/cli/README.md"' EXIT
+trap 'rm -rf "$stage"; if [[ -f "$repo_root/cli/package.dev.json" ]]; then mv "$repo_root/cli/package.dev.json" "$repo_root/cli/package.json"; fi; cp "$readme_backup" "$repo_root/cli/README.md"; rm -f "$readme_backup"' EXIT
 mkdir -p "$stage/package"
 cp "$repo_root/cli/package.json" "$stage/package/package.json"
 cp "$repo_root/cli/README.md" "$stage/package/README.md"
 mv "$repo_root/cli/package.dev.json" "$repo_root/cli/package.json"
-rm -f "$repo_root/cli/README.md"
+cp "$readme_backup" "$repo_root/cli/README.md"
 node "$repo_root/scripts/paperclip-artifact-identity.mjs" identity --repo "$repo_root" --output-dir "$repo_root/cli/dist" --source-sha "$source_sha" --build-command "$canonical_command"
 cp -R "$repo_root/cli/dist" "$stage/package/"
 
