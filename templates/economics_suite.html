@@ -21,12 +21,12 @@
 
 {% block application_navigation %}
 <span class="ted-nav-label">ECONOMIC WORKFLOW</span>
-<button type="button" class="ted-nav-btn active" data-panel="sources"><b>01</b><span>Connected Data</span></button>
-<button type="button" class="ted-nav-btn" data-panel="overview"><b>02</b><span>Project Estimate</span></button>
-<button type="button" class="ted-nav-btn" data-panel="operating"><b>03</b><span>Lifecycle Cost</span></button>
-<button type="button" class="ted-nav-btn" data-panel="finance"><b>04</b><span>Project Finance</span></button>
-<button type="button" class="ted-nav-btn" data-panel="maturity"><b>05</b><span>Delivery & Maturity</span></button>
-<button type="button" class="ted-nav-btn" data-panel="results"><b>06</b><span>Results</span></button>
+<button type="button" class="ted-nav-btn active" data-panel="overview"><b>01</b><span>Model Setup</span></button>
+<button type="button" class="ted-nav-btn" data-panel="costs"><b>02</b><span>CAPEX &amp; Construction</span></button>
+<button type="button" class="ted-nav-btn" data-panel="operating"><b>03</b><span>Operations &amp; Revenue</span></button>
+<button type="button" class="ted-nav-btn" data-panel="finance"><b>04</b><span>Financing</span></button>
+<button type="button" class="ted-nav-btn" data-panel="scenarios"><b>05</b><span>Scenarios &amp; Sensitivities</span></button>
+<button type="button" class="ted-nav-btn" data-panel="results"><b>06</b><span>Results &amp; Reports</span></button>
 {% endblock %}
 
 {% block project_bar %}
@@ -75,6 +75,14 @@
 </div>
 
 <div class="ted-panels">
+  <section class="twds-panel ted-mode-panel" aria-labelledby="modelModeTitle">
+    <div class="twds-panel__title"><div><span>MODEL MODE</span><h2 id="modelModeTitle">Choose the detail appropriate to this decision</h2></div><span id="activeModeStatus" class="ted-mode-status" role="status" aria-live="polite">Quick Economics active</span></div>
+    <div class="ted-model-modes" role="radiogroup" aria-labelledby="modelModeTitle">
+      <button type="button" class="ted-model-mode active" role="radio" aria-checked="true" data-model-mode="quick"><strong>Quick Economics</strong><span>CAPEX, OPEX, lifecycle cost and LCOW</span></button>
+      <button type="button" class="ted-model-mode" role="radio" aria-checked="false" data-model-mode="financial"><strong>Financial Model</strong><span>Revenue, tax, cash flow, returns and tariff</span></button>
+      <button type="button" class="ted-model-mode" role="radio" aria-checked="false" data-model-mode="project-finance"><strong>Project Finance</strong><span>Debt, IDC, reserves, coverage and lender cases</span></button>
+    </div>
+  </section>
   <section class="ted-panel active" data-panel-content="sources">
     <div class="ted-section-grid">
       <article class="twds-panel">
@@ -193,6 +201,13 @@
     <article class="twds-panel"><div class="twds-panel__title"><div><span>PROGRESSIVE DESIGN-BUILD</span><h2>Combined cost development workflow</h2></div>{{ ui.status_chip('Workflow', 'information') }}</div><p class="ted-copy">As specialist app designs mature, refreshed economic summaries move the common project estimate forward.</p><div class="ted-pdb-flow"><div><span>01</span><strong>Owner Budget</strong></div><div><span>02</span><strong>Validation Estimate</strong></div><div><span>03</span><strong>Open-Book Development</strong></div><div><span>04</span><strong>Risk Reconciliation</strong></div><div><span>05</span><strong>Target / GMP / Agreed Price</strong></div></div></article>
   </section>
 
+  <section class="ted-panel" data-panel-content="scenarios">
+    <article class="twds-panel"><div class="twds-panel__title"><div><span>SCENARIO MANAGER</span><h2>Compare base, upside, downside and lender cases</h2></div>{{ ui.status_chip('Model checks required', 'review') }}</div><p class="ted-copy">Scenario values inherit from the active model until intentionally overridden. Every override remains visible and reversible.</p>
+      <div class="twds-engineering-table-wrap" tabindex="0" aria-label="Scenario comparison table"><table class="twds-engineering-table ted-scenario-table"><thead><tr><th>Case</th><th>CAPEX</th><th>OPEX</th><th>Production</th><th>Tariff</th><th>Debt terms</th><th>Provenance</th></tr></thead><tbody><tr><th scope="row">Base</th><td>Inherited</td><td>Inherited</td><td>Inherited</td><td>Inherited</td><td>Inherited</td><td><span class="ted-origin ted-origin--inherited">Inherited</span></td></tr><tr><th scope="row">Downside</th><td>+10%</td><td>+8%</td><td>−5%</td><td>Inherited</td><td>Inherited</td><td><span class="ted-origin ted-origin--override">Overridden</span></td></tr><tr><th scope="row">Lender case</th><td>+15%</td><td>+10%</td><td>−8%</td><td>Inherited</td><td>Review</td><td><span class="ted-origin ted-origin--override">Overridden</span></td></tr></tbody></table></div>
+      <div class="ted-sensitivity-layout"><div class="ted-chart-placeholder" role="img" aria-label="Sensitivity chart placeholder; CAPEX and OPEX increases reduce project returns"><strong>Sensitivity analysis</strong><span>Run the calculation to populate one-way and two-way sensitivity results.</span></div><table class="ted-chart-data"><caption>Data-table alternative</caption><thead><tr><th>Driver</th><th>Low</th><th>Base</th><th>High</th></tr></thead><tbody><tr><th scope="row">CAPEX</th><td>−10%</td><td>0%</td><td>+10%</td></tr><tr><th scope="row">OPEX</th><td>−10%</td><td>0%</td><td>+10%</td></tr></tbody></table></div>
+    </article>
+  </section>
+
   <section class="ted-panel" data-panel-content="results">
     <div class="twds-results-stack">
       <section class="twds-results-section" id="systemSummarySection"><header><div><span class="ted-section-label">SYSTEM SUMMARY</span><h2>Project economic KPIs</h2></div>{{ ui.status_chip('Calculated', 'information') }}</header>
@@ -228,6 +243,12 @@
     </div>
   </section>
 </div>
+
+<dialog id="firstRunDialog" class="ted-dialog ted-first-run" aria-labelledby="firstRunTitle" aria-describedby="firstRunDescription">
+  <div class="ted-dialog-head"><div><span class="ted-section-label">NEW ECONOMICS MODEL</span><h2 id="firstRunTitle">How would you like to begin?</h2></div></div>
+  <p id="firstRunDescription" class="ted-dialog-message">All choices create one traceable Total Water Economics model. You can change model mode as the project develops.</p>
+  <div class="ted-start-choices"><button type="button" data-start-choice="blank"><strong>Start Blank</strong><span>Create a new editable model.</span></button><button type="button" data-start-choice="template"><strong>Start From Template</strong><span>Use visible assumptions for owner-funded, debt/equity, desalination BOOT, wastewater reuse, industrial water service, or pipeline projects.</span></button><button type="button" data-start-choice="twds"><strong>Build From TWDS Project</strong><span>Connect traceable Pretreatment, Bio, RO, ZLD, Water Balance, System Integration, or manual scopes.</span></button></div>
+</dialog>
 
 <dialog id="projectLibraryDialog" class="ted-dialog" aria-labelledby="projectLibraryTitle">
   <div class="ted-dialog-head"><div><span class="ted-section-label">PROJECT LIBRARY</span><h2 id="projectLibraryTitle">Total Water Economics projects</h2></div><button type="button" class="twds-button twds-button--quiet" data-dialog-close>Close</button></div>

@@ -52,8 +52,19 @@
         ${field("Debt tenor", "project_finance.debt_tenor_years", 'type="number" min="1" step="1"', "years", "20")}
         ${selectField("Repayment profile", "project_finance.repayment_profile", [["equal_principal", "Equal principal"], ["annuity", "Level debt service / annuity"]], "equal_principal")}
         ${field("DSRA requirement", "project_finance.dsra_months", 'type="number" min="0" step="0.5"', "months", "3")}
+        ${selectField("Covenant DSCR basis", "project_finance.covenant_dscr_basis", [["reserve_aware", "Reserve-aware (default)"], ["raw", "Raw CFADS"]], "reserve_aware")}
+        ${field("Sculpting scenario ID", "project_finance.sculpting_scenario_id", 'type="text"', "", "base")}
         ${field("Target minimum DSCR", "project_finance.target_min_dscr", 'type="number" min="0" step="0.01"', "×", "1.30")}
         ${field("Cost of equity", "project_finance.cost_of_equity", 'type="number" step="0.001"', "fraction", "0.15")}
+      </div></details>
+      <details class="ted-finance-disclosure"><summary>Equity cure (disabled by default)</summary><div class="ted-grid ted-finance-grid">
+        ${selectField("Enable equity cure", "project_finance.equity_cure.enabled", [["", "Disabled"], ["1", "Enabled"]], "")}
+        ${selectField("Cure amount basis", "project_finance.equity_cure.amount_basis", [["dscr_shortfall", "DSCR shortfall"], ["fixed_amount", "Fixed amount"]], "dscr_shortfall")}
+        ${field("Fixed cure amount", "project_finance.equity_cure.amount", 'type="number" min="0" step="1000"', "", "0")}
+        ${selectField("Cure frequency", "project_finance.equity_cure.frequency", [["per_period", "Per annual period"], ["once", "Once only"]], "per_period")}
+        ${field("Consecutive-use cap (0 = unlimited)", "project_finance.equity_cure.consecutive_use_cap", 'type="number" min="0" step="1"', "uses", "0")}
+        ${field("Total-use cap (0 = unlimited)", "project_finance.equity_cure.total_use_cap", 'type="number" min="0" step="1"', "uses", "0")}
+        ${selectField("Cure treatment", "project_finance.equity_cure.treatment", [["cfads_addition", "CFADS addition"], ["debt_prepayment", "Debt prepayment"]], "cfads_addition")}
       </div></details>
       <details class="ted-finance-disclosure"><summary>Tax, OPEX escalation & working capital</summary><div class="ted-grid ted-finance-grid">
         ${field("Corporate tax rate", "project_finance.corporate_tax_rate", 'type="number" min="0" max="1" step="0.001"', "fraction", "0")}
@@ -92,7 +103,8 @@
         <article class="twds-kpi"><span>Debt at COD</span><strong id="pfDebt">—</strong></article>
         <article class="twds-kpi"><span>Initial DSRA</span><strong id="pfDsra">—</strong></article>
         <article class="twds-kpi"><span>WACC</span><strong id="pfWacc">—</strong></article>
-        <article class="twds-kpi"><span>Project IRR</span><strong id="pfProjectIrr">—</strong></article>
+        <article class="twds-kpi"><span>Project IRR (unlevered tax)</span><strong id="pfProjectIrr">—</strong></article>
+        <article class="twds-kpi"><span>Project IRR (levered-tax variant)</span><strong id="pfLeveredTaxProjectIrr">—</strong></article>
         <article class="twds-kpi"><span>Equity IRR</span><strong id="pfEquityIrr">—</strong></article>
         <article class="twds-kpi"><span>Minimum DSCR</span><strong id="pfMinDscr">—</strong></article>
         <article class="twds-kpi"><span>Average DSCR</span><strong id="pfAvgDscr">—</strong></article>
@@ -100,18 +112,19 @@
         <article class="twds-kpi"><span>PLCR</span><strong id="pfPlcr">—</strong></article>
         <article class="twds-kpi"><span>Required Tariff</span><strong id="pfSolvedTariff">—</strong></article>
       </div>
-      <div class="twds-engineering-table-wrap ted-panel-gap"><table class="twds-engineering-table ted-pf-table"><thead><tr><th>Year</th><th>Tariff</th><th>Revenue</th><th>OPEX</th><th>CFADS</th><th>Principal</th><th>Interest</th><th>Debt Service</th><th>DSCR</th><th>DSRA</th><th>Closing Debt</th></tr></thead><tbody id="pfScheduleRows"></tbody></table></div>
+      <div class="ted-guidance-inline">Project IRR uses unlevered tax and excludes the interest shield. Raw and reserve-aware DSCR are both shown; the selected covenant basis is used for testing. Annual periods do not model seasonality, and VAT/GST is unsupported in v1.</div>
+      <div class="twds-engineering-table-wrap ted-panel-gap"><table class="twds-engineering-table ted-pf-table"><thead><tr><th>Year</th><th>Tariff</th><th>Revenue</th><th>OPEX</th><th>CFADS</th><th>Principal</th><th>Interest</th><th>Debt Service</th><th>Raw DSCR</th><th>Reserve-aware DSCR</th><th>Tested DSCR</th><th>Reserve deficiency</th><th>DSRA</th><th>Closing Debt</th></tr></thead><tbody id="pfScheduleRows"></tbody></table></div>
       <div id="pfLimitations" class="ted-warning-list ted-panel-gap"></div>`;
     stack.appendChild(section);
   }
 
-  const financeValueIds = ["pfFunding", "pfIdc", "pfDebt", "pfDsra", "pfWacc", "pfProjectIrr", "pfEquityIrr", "pfMinDscr", "pfAvgDscr", "pfLlcr", "pfPlcr", "pfSolvedTariff"];
+  const financeValueIds = ["pfFunding", "pfIdc", "pfDebt", "pfDsra", "pfWacc", "pfProjectIrr", "pfLeveredTaxProjectIrr", "pfEquityIrr", "pfMinDscr", "pfAvgDscr", "pfLlcr", "pfPlcr", "pfSolvedTariff"];
   function clearProjectFinance(message = "Enable the time-phased model in Project Finance to calculate BOOT/DBOOM metrics.") {
     const status = document.getElementById("pfStatus");
     if (status) status.textContent = "Disabled";
     financeValueIds.forEach(id => { const el = document.getElementById(id); if (el) el.textContent = "—"; });
     const rows = document.getElementById("pfScheduleRows");
-    if (rows) rows.innerHTML = `<tr><td colspan="11">${escapeHtml(message)}</td></tr>`;
+    if (rows) rows.innerHTML = `<tr><td colspan="14">${escapeHtml(message)}</td></tr>`;
     const limits = document.getElementById("pfLimitations");
     if (limits) limits.innerHTML = "";
   }
@@ -130,13 +143,14 @@
     document.getElementById("pfDsra").textContent = money(c.initial_dsra ?? d.initial_dsra);
     document.getElementById("pfWacc").textContent = pct(r.wacc);
     document.getElementById("pfProjectIrr").textContent = pct(r.project_irr);
+    document.getElementById("pfLeveredTaxProjectIrr").textContent = pct(r.levered_tax_project_irr);
     document.getElementById("pfEquityIrr").textContent = pct(r.equity_irr);
     document.getElementById("pfMinDscr").textContent = ratio(d.min_dscr);
     document.getElementById("pfAvgDscr").textContent = ratio(d.average_dscr);
     document.getElementById("pfLlcr").textContent = ratio(d.llcr);
     document.getElementById("pfPlcr").textContent = ratio(d.plcr);
     document.getElementById("pfSolvedTariff").textContent = solver.solved ? unitMoney(solver.required_tariff_m3) : "—";
-    document.getElementById("pfScheduleRows").innerHTML = (pf.operations?.rows || []).map(row => `<tr><td>${row.year}</td><td>${unitMoney(row.tariff_m3)}</td><td>${money(row.revenue)}</td><td>${money(row.opex)}</td><td>${money(row.cfads)}</td><td>${money(row.principal)}</td><td>${money(row.interest)}</td><td>${money(row.debt_service)}</td><td>${ratio(row.dscr)}</td><td>${money(row.dsra_closing)}</td><td>${money(row.closing_debt)}</td></tr>`).join("");
+    document.getElementById("pfScheduleRows").innerHTML = (pf.operations?.rows || []).map(row => `<tr><td>${row.year}</td><td>${unitMoney(row.tariff_m3)}</td><td>${money(row.revenue)}</td><td>${money(row.opex)}</td><td>${money(row.cfads)}</td><td>${money(row.principal)}</td><td>${money(row.interest)}</td><td>${money(row.debt_service)}</td><td>${ratio(row.raw_dscr)}</td><td>${ratio(row.reserve_aware_dscr)}</td><td>${ratio(row.tested_dscr)}</td><td>${money(row.reserve_deficiency)}</td><td>${money(row.dsra_closing)}</td><td>${money(row.closing_debt)}</td></tr>`).join("");
     document.getElementById("pfLimitations").innerHTML = (pf.limitations || []).map(text => `<div class="review"><strong>Model boundary / reconciliation</strong><p>${escapeHtml(text)}</p></div>`).join("");
   }
 

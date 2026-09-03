@@ -300,6 +300,21 @@
     const [title, subtitle] = panelTitles[name] || panelTitles.sources; document.getElementById("workspaceTitle").textContent = title; document.getElementById("workspaceSubtitle").textContent = subtitle; document.querySelector(".twds-workspace")?.scrollTo({top: 0, behavior: "smooth"});
   }
 
+  function setModelMode(mode) {
+    const labels = {quick: "Quick Economics", financial: "Financial Model", "project-finance": "Project Finance"};
+    document.querySelectorAll("[data-model-mode]").forEach(button => { const active = button.dataset.modelMode === mode; button.classList.toggle("active", active); button.setAttribute("aria-checked", String(active)); });
+    document.getElementById("activeModeStatus").textContent = `${labels[mode] || labels.quick} active`;
+    document.querySelector("[data-twds-app-shell]")?.setAttribute("data-economics-mode", mode);
+  }
+
+  function openFirstRun() { const dialog = document.getElementById("firstRunDialog"); if (dialog && !dialog.open) dialog.showModal(); }
+  function chooseStart(choice) {
+    document.getElementById("firstRunDialog")?.close();
+    if (choice === "twds") activatePanel("sources");
+    else if (choice === "template") { activatePanel("overview"); showReview("Template assumptions visible", "Choose and review a template in Model Setup before calculating; no output is hidden or pre-calculated."); }
+    else activatePanel("overview");
+  }
+
   function resetState() {
     state = clone(starter); lastResult = null; currentProjectRevisionId = null;
     document.querySelectorAll("[data-path]").forEach(el => { const val = getPath(el.dataset.path); el.value = val == null ? "" : val; });
@@ -359,7 +374,7 @@
   }
 
   function handleProjectAction(action) {
-    if (action === "new") { if (!window.TWDSAppUI?.dirty || confirm("Discard unsaved changes and start a new Total Water Economics project?")) resetState(); }
+    if (action === "new") { if (!window.TWDSAppUI?.dirty || confirm("Discard unsaved changes and start a new Total Water Economics project?")) { resetState(); openFirstRun(); } }
     else if (action === "library") openProjectLibrary();
     else if (action === "save") saveProject();
     else if (action === "revision") createRevision();
@@ -370,6 +385,8 @@
 
   function bindEvents() {
     document.querySelectorAll("[data-panel]").forEach(btn => btn.addEventListener("click", () => activatePanel(btn.dataset.panel)));
+    document.querySelectorAll("[data-model-mode]").forEach(btn => btn.addEventListener("click", () => setModelMode(btn.dataset.modelMode)));
+    document.querySelectorAll("[data-start-choice]").forEach(btn => btn.addEventListener("click", () => chooseStart(btn.dataset.startChoice)));
     document.getElementById("addSourceBtn").addEventListener("click", () => { state.source_summaries = state.source_summaries || []; state.source_summaries.push(newSource(state.source_summaries.length ? "other" : "ro")); renderSourceRows(); markDirty(true); });
     document.getElementById("importSummaryBtn").addEventListener("click", importSummaryJson);
     document.getElementById("addCostItemBtn").addEventListener("click", () => { state.cost_items = state.cost_items || []; state.cost_items.push({item_id:`item-${Date.now()}`,description:"New project cost item",bucket:"equipment_purchase",discipline:"Project",quantity:1,unit:"LS",unit_cost:0,source_type:"user",source_reference:""}); renderCostRows(); markDirty(true); });
@@ -380,6 +397,6 @@
     document.getElementById("projectLibraryDialog").addEventListener("click", e => { if (e.target.matches("[data-dialog-close]")) e.currentTarget.close(); const open = e.target.closest("[data-open-project]"); if (open) loadProject(open.dataset.openProject); });
   }
 
-  function init() { bindPathInputs(); renderSourceRows(); renderCostRows(); renderMaturityRows(); syncProjectHeader(); bindEvents(); activatePanel("sources"); markDirty(false); setCalcState("idle", "Total Water Economics ready."); }
+  function init() { bindPathInputs(); renderSourceRows(); renderCostRows(); renderMaturityRows(); syncProjectHeader(); bindEvents(); setModelMode("quick"); activatePanel("overview"); markDirty(false); setCalcState("idle", "Total Water Economics ready."); openFirstRun(); }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init); else init();
 })();

@@ -1,0 +1,42 @@
+# TOT-689 exact changed-file manifest
+# Base: 3df3fe63103def304f9eb2631ac363c3a9a9041b
+# Candidate ref: task/tot-689-current-alpha-tweco-h-v6
+
+.github/workflows/tot-921-tweco-h-validation.yml
+app.py
+capex_wbs.py
+economic_aggregator.py
+economic_formula_graph.py
+economic_inflation.py
+economic_model.py
+economic_model_contracts.py
+economic_persistence.py
+economic_risk_costs.py
+economics_reporting.py
+migrations/economics/001_tweco_model_store.sql
+project_finance.py
+requirements.txt
+static/economics.css
+static/economics.js
+static/economics_finance.js
+templates/economics_suite.html
+tests/fixtures/economic_inflation/bls_cpi.json
+tests/fixtures/economic_inflation/world_bank_cpi.json
+tests/test_capex_wbs.py
+tests/test_economic_inflation.py
+tests/test_economic_model_architecture.py
+tests/test_economic_risk_costs.py
+tests/test_economics_api_authorization.py
+tests/test_economics_reporting.py
+tests/test_project_finance.py
+tests/test_water_economics_authenticated_browser.py
+tests/test_water_economics_browser.py
+tests/test_water_economics_ui_ux.py
+validation/TOT-265-live-provider-health.txt
+validation/TOT-271-screenshots/economics-1024.png
+validation/TOT-271-screenshots/economics-1280.png
+validation/TOT-271-screenshots/economics-1440.png
+validation/TOT-271-screenshots/economics-390.png
+validation/TOT-271-screenshots/economics-768.png
+validation/TOT-689-changed-file-manifest.txt
+validation/TOT-689-intended-commit-manifest.md

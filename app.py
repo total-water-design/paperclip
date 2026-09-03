@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, jsonify, redirect, url_for, abort
+from flask import Flask, render_template, request, jsonify, redirect, url_for, abort, send_file
 from flask_login import current_user, login_required
 from flask_wtf.csrf import generate_csrf
 from werkzeug.exceptions import HTTPException
@@ -20,6 +20,7 @@ import uuid
 import secrets
 import time
 import threading
+import re
 from functools import wraps
 from datetime import datetime, timezone
 from email.message import EmailMessage
@@ -31,6 +32,7 @@ from auth import (init_auth, product_entitlement_for, serialized_product_entitle
                   user_can_access_product, db, record_telemetry)
 from suite_catalog import PRODUCT_BY_ID, PRODUCTS, SUITE_HEADLINE, SUITE_NAME, SUITE_TAGLINE, SUITE_VERSION, product_catalog, status_label
 from report_snapshot import validate_report_snapshot
+from economics_reporting import build_snapshot, snapshot_json, build_workbook, build_pdf
 from flowsheet import solve_payload, FlowsheetConvergenceError
 from entitlements import (
     EntitlementContext, EntitlementError, FEATURE_MIN_TIER,
@@ -47,6 +49,14 @@ FEEDBACK_TO = os.getenv("TOTALRO_FEEDBACK_TO", "support@totalrodesign.com")
 ACCOUNT_ROLE = str(os.getenv("TOTALRO_ACCOUNT_ROLE", "admin") or "admin").strip().lower()
 LICENSED_TIER = normalize_tier(os.getenv("TOTALRO_LICENSED_TIER", "platinum"), "platinum")
 
+
+class EconomicsAuthorizationError(PermissionError):
+    """Raised when the governed Economics API has no valid caller grant."""
+
+    def __init__(self, message: str, *, status_code: int = 403):
+        self.status_code = status_code
+        super().__init__(message)
+
 # The current compute monitor/cancel engine is process-wide.  Until jobs are
 # moved to a dedicated queue, the authenticated Alpha permits one active heavy
 # engineering calculation at a time so users cannot overwrite or cancel each
@@ -61,6 +71,8 @@ _active_calculation_owner = None
 _report_snapshot_lock = threading.RLock()
 _report_snapshots: dict[str, dict] = {}
 _REPORT_SNAPSHOT_TTL_SECONDS = int(os.getenv("TOTALRO_REPORT_SNAPSHOT_TTL_SECONDS", "1800") or 1800)
+_economics_report_lock = threading.RLock()
+_economics_report_snapshots: dict[str, dict] = {}
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -139,6 +151,44 @@ def _require_feature(feature_id: str) -> EntitlementContext:
     context.require(feature_id)
     return context
 
+
+def _require_economics_authorization() -> EntitlementContext:
+    """Authorize the Economics API without trusting local-preview defaults.
+
+    The desktop application deliberately supports an administrator preview
+    without accounts.  A governed deployment must never inherit that fallback:
+    if authentication is disabled there, no request header can manufacture an
+    Economics grant.  Authenticated callers use their Economics product grant,
+    independently of the legacy RO entitlement bridge.
+    """
+    if not app.config.get("AUTH_ENABLED", False):
+        deployment_mode = str(app.config.get("DEPLOYMENT_MODE", "desktop") or "desktop").strip().lower()
+        if deployment_mode in {"server", "aws", "production"}:
+            raise EconomicsAuthorizationError(
+                "Authentication must be enabled before the governed Economics API can be used.",
+                status_code=401,
+            )
+        return _require_feature("economics")
+
+    if not current_user.is_authenticated:
+        raise EconomicsAuthorizationError("Authentication is required for the Economics API.", status_code=401)
+
+    entitlement = product_entitlement_for(current_user, "economics")
+    if not entitlement or not entitlement.enabled or not entitlement.is_current():
+        raise EconomicsAuthorizationError("An active Total Water Economics product entitlement is required.")
+
+    role = str(getattr(current_user, "role", "user") or "user").strip().lower()
+    licensed_tier = normalize_tier(getattr(entitlement, "tier", None), "entry")
+    context = EntitlementContext(
+        role=role,
+        licensed_tier=licensed_tier,
+        effective_tier=clamp_preview_tier(
+            request.headers.get("X-TotalRO-Effective-Tier"), licensed_tier, role,
+        ),
+    )
+    context.require("economics")
+    return context
+
 def _feedback_outbox_dir():
     configured=os.getenv("TOTALRO_FEEDBACK_OUTBOX")
     root=Path(configured).expanduser() if configured else (Path.home()/"TotalRODesign_Feedback_Outbox")
@@ -187,6 +237,15 @@ def entitlement_error(exc):
         'effective_tier': exc.effective_tier,
         'guidance': f"Switch the administrator preview to {exc.required_tier.title()} or use an account licensed for that tier.",
     }), 403
+
+
+@app.errorhandler(EconomicsAuthorizationError)
+def economics_authorization_error(exc):
+    return jsonify({
+        "error": str(exc),
+        "error_type": "EconomicsAuthorizationError",
+        "feature_id": "economics",
+    }), exc.status_code
 
 
 @app.post('/api/feedback/report')
@@ -368,6 +427,12 @@ def suite_dashboard():
         products=products,
         status_label=status_label,
     )
+
+
+@app.get('/economics-suite')
+def economics_application():
+    """Serve the authenticated Total Water Economics workflow."""
+    return render_template('economics_suite.html')
 
 
 def _purge_expired_report_snapshots(now: float | None = None) -> None:
@@ -561,11 +626,54 @@ def optimize_plant_api():
 
 @app.post('/api/economics')
 def economics():
-    _require_feature('economics')
+    _require_economics_authorization()
     try:
         return jsonify(economic_analysis(request.get_json(force=True)))
     except (KeyError, ValueError, ZeroDivisionError) as exc:
         return jsonify({'error': str(exc)}), 400
+
+
+@app.post('/api/economics/report-snapshot')
+def create_economics_report_snapshot():
+    """Calculate once and freeze the sole source for every report format."""
+    _require_feature('economics')
+    try:
+        model_input = request.get_json(force=True) or {}
+        snapshot = build_snapshot(model_input, economic_analysis(model_input))
+    except (KeyError, ValueError, ZeroDivisionError) as exc:
+        return jsonify({'error': str(exc)}), 400
+    token = secrets.token_urlsafe(32)
+    with _economics_report_lock:
+        _economics_report_snapshots[token] = snapshot
+    base = f"/api/economics/report/{token}"
+    return jsonify({'token': token, 'snapshot_id': snapshot['snapshot_id'], 'calculation_id': snapshot['calculation_id'], 'json_url': base + '.json', 'xlsx_url': base + '.xlsx', 'executive_pdf_url': base + '/executive.pdf', 'full_pdf_url': base + '/full.pdf'}), 201
+
+
+def _economics_snapshot(token: str) -> dict:
+    _require_feature('economics')
+    if not re.fullmatch(r"[A-Za-z0-9_-]{32,64}", token or ""):
+        abort(404)
+    with _economics_report_lock:
+        snapshot = _economics_report_snapshots.get(token)
+    if snapshot is None: abort(404)
+    return snapshot
+
+
+@app.get('/api/economics/report/<token>.json')
+def economics_snapshot_export(token):
+    snapshot = _economics_snapshot(token)
+    return app.response_class(snapshot_json(snapshot), mimetype='application/json', headers={'Content-Disposition': 'attachment; filename="total-water-economics-snapshot.json"'})
+
+
+@app.get('/api/economics/report/<token>.xlsx')
+def economics_workbook_export(token):
+    return send_file(io.BytesIO(build_workbook(_economics_snapshot(token))), mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', as_attachment=True, download_name='total-water-economics.xlsx')
+
+
+@app.get('/api/economics/report/<token>/<report_type>.pdf')
+def economics_pdf_export(token, report_type):
+    if report_type not in {'executive', 'full'}: abort(404)
+    return send_file(io.BytesIO(build_pdf(_economics_snapshot(token), report_type)), mimetype='application/pdf', as_attachment=True, download_name=f'total-water-economics-{report_type}.pdf')
 
 @app.get('/api/compute/capabilities')
 def compute_capabilities():
@@ -915,7 +1023,7 @@ def calculate(mode):
         _require_feature('erd')
     if mode == 'multistage' and str(payload.get('design_mode','manual') or 'manual').lower() == 'auto':
         _require_feature('auto_design')
-    if mode == 'multistage' and str(payload.get('pump_curve_basis','auto') or 'auto').lower() in {'shared_auto','auto_shared','vcmp','vcmp_auto','database','hhecp','pd'}:
+    if mode == 'multistage' and str(payload.get('pump_curve_basis','auto') or 'auto').lower() in {'vcmp','vcmp_auto','database'}:
         _require_feature('vcmp_pump_selection')
     truthy = lambda v: v is True or str(v).lower() in {'1','true','yes','on','coupled'}
     basis = str(payload.get('solve_basis','pressure') or 'pressure').lower()

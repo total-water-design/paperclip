@@ -46,6 +46,36 @@ def _positive_int(value: Any, default: int, name: str) -> int:
     return out
 
 
+def _choice(value: Any, default: str, name: str, choices: set[str]) -> str:
+    out = str(value if value not in (None, "") else default).strip().lower()
+    if out not in choices:
+        allowed = ", ".join(sorted(choices))
+        raise ValueError(f"{name} must be one of: {allowed}.")
+    return out
+
+
+def _equity_cure_config(cfg: dict) -> dict:
+    """Normalize the deliberately narrow v1 cure contract.
+
+    A cure is an explicit sponsor contribution, not an inferred refinancing or a
+    replacement for lender-document cure language.  Disabled is intentionally the
+    default so historical one-tranche calculations retain their cash-flow mechanics.
+    """
+    raw = cfg.get("equity_cure") if isinstance(cfg.get("equity_cure"), dict) else {}
+    enabled = bool(raw.get("enabled", False))
+    amount_basis = _choice(raw.get("amount_basis"), "dscr_shortfall", "equity_cure.amount_basis", {"dscr_shortfall", "fixed_amount"})
+    frequency = _choice(raw.get("frequency"), "per_period", "equity_cure.frequency", {"per_period", "once"})
+    treatment = _choice(raw.get("treatment"), "cfads_addition", "equity_cure.treatment", {"cfads_addition", "debt_prepayment"})
+    fixed_amount = max(0.0, _number(raw.get("amount"), 0.0))
+    consecutive_cap = max(0, int(round(_number(raw.get("consecutive_use_cap"), 0))))
+    total_cap = max(0, int(round(_number(raw.get("total_use_cap"), 0))))
+    return {
+        "enabled": enabled, "amount_basis": amount_basis, "frequency": frequency,
+        "amount": fixed_amount, "consecutive_use_cap": consecutive_cap,
+        "total_use_cap": total_cap, "treatment": treatment,
+    }
+
+
 def _normalize_curve(raw: Any, periods: int) -> list[float]:
     if raw in (None, "", []):
         return [1.0 / periods] * periods
@@ -238,6 +268,21 @@ def _debt_schedule(initial_debt: float, debt_tenor: int, debt_rate: float, conce
     return rows
 
 
+def _reschedule_after_prepayment(rows: list[dict], next_index: int, prepayment: float, debt_rate: float, repayment: str) -> None:
+    """Apply a voluntary cure prepayment to future scheduled debt service.
+
+    The current-period covenant is deliberately not improved by a prepayment; the
+    benefit begins with the next contractual period, as it would in lender reporting.
+    """
+    if prepayment <= 0 or next_index >= len(rows):
+        return
+    remaining = max(0.0, rows[next_index]["opening_debt"] - prepayment)
+    active_years = sum(1 for row in rows[next_index:] if row["debt_service"] > 1e-9)
+    replacement = _debt_schedule(remaining, max(1, active_years), debt_rate, len(rows) - next_index, repayment)
+    for target, source in zip(rows[next_index:], replacement):
+        target.update({key: source[key] for key in ("opening_debt", "principal", "interest", "debt_service", "closing_debt")})
+
+
 def _simulate(tariff: float, cfg: dict, project_result: dict, construction: dict) -> dict:
     concession_years = _positive_int(cfg.get("concession_years", (project_result.get("operating") or {}).get("project_life_years", 25)), 25, "concession_years")
     debt_tenor = _positive_int(cfg.get("debt_tenor_years"), 18, "debt_tenor_years")
@@ -247,6 +292,15 @@ def _simulate(tariff: float, cfg: dict, project_result: dict, construction: dict
     if debt_rate < 0:
         raise ValueError("Debt interest rate cannot be negative.")
     repayment = str(cfg.get("repayment_profile") or "equal_principal").strip().lower()
+    covenant_dscr_basis = _choice(
+        cfg.get("covenant_dscr_basis"), "reserve_aware", "covenant_dscr_basis",
+        {"raw", "reserve_aware"},
+    )
+    target_dscr = max(0.0, _number(cfg.get("target_min_dscr"), 0.0))
+    cure_cfg = _equity_cure_config(cfg)
+    sculpting_scenario_id = str(cfg.get("sculpting_scenario_id") or "base").strip()
+    if not sculpting_scenario_id:
+        raise ValueError("sculpting_scenario_id cannot be blank.")
 
     operating = project_result.get("operating") or {}
     capacity = max(0.0, _number(operating.get("capacity_m3d"), 0.0))
@@ -303,13 +357,16 @@ def _simulate(tariff: float, cfg: dict, project_result: dict, construction: dict
 
     project_loss = levered_loss = prior_nwc = 0.0
     prior_dsra = initial_dsra
+    cure_uses = consecutive_cure_uses = 0
     rows = []
     project_cashflows = []
+    levered_tax_project_cashflows = []
     equity_cashflows = []
     construction_years = construction["months"] / 12.0
     for row in construction["rows"]:
         t = row["month"] / 12.0
         project_cashflows.append((t, -row["base_capex_spend"]))
+        levered_tax_project_cashflows.append((t, -row["base_capex_spend"]))
         equity_cashflows.append((t, -row["equity_draw"]))
     if initial_dsra > 0:
         equity_cashflows.append((construction_years, -initial_dsra))
@@ -348,19 +405,52 @@ def _simulate(tariff: float, cfg: dict, project_result: dict, construction: dict
 
         project_cfads = ebitda - project_tax - delta_nwc - major_maintenance + wc_release
         levered_cfads = ebitda - levered_tax - delta_nwc - major_maintenance + wc_release
-        dscr = levered_cfads / debt_service if debt_service > 1e-9 else None
-
         next_debt_service = debt_schedule[year]["debt_service"] if year < concession_years else 0.0
         closing_dsra = next_debt_service * dsra_months / 12.0
         change_dsra = closing_dsra - prior_dsra
         dsra_funding = max(0.0, change_dsra)
         dsra_release = max(0.0, -change_dsra)
+        # Reserve-aware coverage conservatively deducts only cash required to top
+        # up the reserve.  A reserve release is separately disclosed, not counted
+        # as CFADS for covenant coverage.
+        reserve_aware_cfads = levered_cfads - dsra_funding
+        reserve_deficiency = max(0.0, closing_dsra - (prior_dsra + dsra_funding - dsra_release))
+        raw_dscr = levered_cfads / debt_service if debt_service > 1e-9 else None
+        reserve_aware_dscr = reserve_aware_cfads / debt_service if debt_service > 1e-9 else None
+        covenant_cfads = levered_cfads if covenant_dscr_basis == "raw" else reserve_aware_cfads
+        selected_dscr_pre_cure = covenant_cfads / debt_service if debt_service > 1e-9 else None
+
+        cure_amount = 0.0
+        cure_eligible = (
+            cure_cfg["enabled"] and debt_service > 1e-9 and target_dscr > 0
+            and (cure_cfg["frequency"] != "once" or cure_uses == 0)
+            and (cure_cfg["total_use_cap"] == 0 or cure_uses < cure_cfg["total_use_cap"])
+            and (cure_cfg["consecutive_use_cap"] == 0 or consecutive_cure_uses < cure_cfg["consecutive_use_cap"])
+        )
+        if cure_eligible and (selected_dscr_pre_cure is None or selected_dscr_pre_cure < target_dscr):
+            shortfall = max(0.0, target_dscr * debt_service - covenant_cfads)
+            cure_amount = shortfall if cure_cfg["amount_basis"] == "dscr_shortfall" else cure_cfg["amount"]
+        cure_applied_to_cfads = cure_amount if cure_cfg["treatment"] == "cfads_addition" else 0.0
+        tested_dscr = ((covenant_cfads + cure_applied_to_cfads) / debt_service) if debt_service > 1e-9 else None
+        if cure_amount > 0:
+            cure_uses += 1
+            consecutive_cure_uses += 1
+        else:
+            consecutive_cure_uses = 0
+        if cure_amount > 0 and cure_cfg["treatment"] == "debt_prepayment":
+            closing_debt = max(0.0, closing_debt - cure_amount)
+            debt_row["closing_debt"] = closing_debt
+            _reschedule_after_prepayment(debt_schedule, year, cure_amount, debt_rate, repayment)
 
         final_adjustment = (terminal_value - handback_cost) if year == concession_years else 0.0
         project_free_cash_flow = project_cfads + final_adjustment
-        equity_cash_flow = levered_cfads - debt_service - change_dsra + final_adjustment
+        levered_tax_project_free_cash_flow = levered_cfads + final_adjustment
+        equity_cash_flow = levered_cfads - debt_service - change_dsra + final_adjustment - (
+            cure_amount if cure_cfg["treatment"] == "debt_prepayment" else 0.0
+        )
         t = construction_years + year
         project_cashflows.append((t, project_free_cash_flow))
+        levered_tax_project_cashflows.append((t, levered_tax_project_free_cash_flow))
         equity_cashflows.append((t, equity_cash_flow))
 
         rows.append({
@@ -374,12 +464,21 @@ def _simulate(tariff: float, cfg: dict, project_result: dict, construction: dict
             "working_capital_release": wc_release, "major_maintenance": major_maintenance,
             "opening_debt": opening_debt, "principal": principal, "interest": interest,
             "debt_service": debt_service, "closing_debt": closing_debt, "cfads": levered_cfads,
-            "project_cfads": project_cfads, "dscr": dscr,
+            "project_cfads": project_cfads, "dscr": raw_dscr,
+            "raw_dscr": raw_dscr, "reserve_aware_cfads": reserve_aware_cfads,
+            "reserve_aware_dscr": reserve_aware_dscr, "selected_dscr_pre_cure": selected_dscr_pre_cure,
+            "tested_dscr": tested_dscr, "covenant_dscr_basis": covenant_dscr_basis,
+            "reserve_deficiency": reserve_deficiency, "equity_cure_amount": cure_amount,
+            "equity_cure_treatment": cure_cfg["treatment"] if cure_amount > 0 else None,
+            "equity_cure_cfads_addition": cure_applied_to_cfads,
+            "equity_cure_debt_prepayment": cure_amount if cure_amount > 0 and cure_cfg["treatment"] == "debt_prepayment" else 0.0,
             "dsra_opening": prior_dsra, "dsra_closing": closing_dsra,
             "dsra_funding": dsra_funding, "dsra_release": dsra_release,
             "terminal_value": terminal_value if year == concession_years else 0.0,
             "handback_cost": handback_cost if year == concession_years else 0.0,
-            "project_free_cash_flow": project_free_cash_flow, "equity_cash_flow": equity_cash_flow,
+            "project_free_cash_flow": project_free_cash_flow,
+            "levered_tax_project_free_cash_flow": levered_tax_project_free_cash_flow,
+            "equity_cash_flow": equity_cash_flow,
         })
         prior_nwc = nwc
         prior_dsra = closing_dsra
@@ -391,7 +490,7 @@ def _simulate(tariff: float, cfg: dict, project_result: dict, construction: dict
     f = construction["debt_fraction_effective"]
     wacc = f * after_tax_debt_cost + (1.0 - f) * cost_of_equity
     debt_rows = [row for row in rows if row["debt_service"] > 1e-9]
-    dscr_values = [row["dscr"] for row in debt_rows if row["dscr"] is not None]
+    dscr_values = [row["tested_dscr"] for row in debt_rows if row["tested_dscr"] is not None]
     min_dscr = min(dscr_values) if dscr_values else None
     avg_dscr = sum(dscr_values) / len(dscr_values) if dscr_values else None
     cfads_to_maturity = [row["cfads"] for row in rows[:debt_tenor]]
@@ -399,6 +498,7 @@ def _simulate(tariff: float, cfg: dict, project_result: dict, construction: dict
     llcr = (_npv(debt_rate, cfads_to_maturity, 1) / initial_debt) if initial_debt > 1e-9 else None
     plcr = (_npv(debt_rate, cfads_project_life, 1) / initial_debt) if initial_debt > 1e-9 else None
     project_irr = _irr(project_cashflows)
+    levered_tax_project_irr = _irr(levered_tax_project_cashflows)
     equity_irr = _irr(equity_cashflows)
     project_npv = _xnpv(wacc, project_cashflows) if wacc > -1 else None
     equity_npv = _xnpv(cost_of_equity, equity_cashflows) if cost_of_equity > -1 else None
@@ -406,14 +506,19 @@ def _simulate(tariff: float, cfg: dict, project_result: dict, construction: dict
     equity_sign_changes = _sign_changes(equity_cashflows)
 
     return {
-        "tariff_m3": tariff, "wacc": wacc, "project_irr": project_irr, "equity_irr": equity_irr,
+        "tariff_m3": tariff, "wacc": wacc, "project_irr": project_irr,
+        "levered_tax_project_irr": levered_tax_project_irr, "equity_irr": equity_irr,
         "project_npv": project_npv, "equity_npv": equity_npv, "min_dscr": min_dscr,
         "average_dscr": avg_dscr, "llcr": llcr, "plcr": plcr, "debt_at_cod": initial_debt,
         "initial_dsra": initial_dsra,
         "funding_requirement_including_initial_dsra": construction["total_funding_requirement"] + initial_dsra,
         "project_cashflow_sign_changes": project_sign_changes,
         "equity_cashflow_sign_changes": equity_sign_changes,
-        "rows": rows, "project_cashflows": project_cashflows, "equity_cashflows": equity_cashflows,
+        "rows": rows, "project_cashflows": project_cashflows,
+        "levered_tax_project_cashflows": levered_tax_project_cashflows, "equity_cashflows": equity_cashflows,
+        "covenant_dscr_basis": covenant_dscr_basis, "equity_cure": {**cure_cfg, "uses": cure_uses},
+        "sculpting_scenario_id": sculpting_scenario_id,
+        "sculpting_cfads_vector": [row["cfads"] for row in rows[:debt_tenor]],
     }
 
 
@@ -465,6 +570,8 @@ def analyze_project_finance(payload: dict, project_result: dict) -> dict:
         "No jurisdiction-specific MAT/AMT, VAT/GST recovery, withholding tax or tax-credit rules are implied by this generic engine.",
         "No interest-rate swaps, FX hedges, refinancing, cash sweep, distribution lock-up or lender default waterfall are modeled yet.",
         "DSRA is modeled as an equity-funded reserve with no reserve interest. Alternative reserve funding sources and letter-of-credit structures remain future lender-structure extensions.",
+        "Annual operating periods cannot represent intra-year seasonality. Semi-annual covenant periods are out of scope for v1; assess seasonal liquidity separately.",
+        "VAT/GST is unsupported in v1. Do not infer recoverability, timing, registration, withholding, or jurisdiction-specific tax treatment from this output.",
     ]
     if scenario["project_cashflow_sign_changes"] > 1:
         limitations.append("Project cash flow changes sign more than once; project IRR may be economically ambiguous. Review NPV and the full cash-flow series rather than relying on IRR alone.")
@@ -481,6 +588,9 @@ def analyze_project_finance(payload: dict, project_result: dict) -> dict:
         "operations": {"concession_years": len(scenario["rows"]), "tariff_m3": scenario["tariff_m3"], "rows": scenario["rows"]},
         "returns": {
             "wacc": scenario["wacc"], "project_irr": scenario["project_irr"], "equity_irr": scenario["equity_irr"],
+            "project_irr_basis": "unlevered tax: project taxable income excludes interest; therefore the interest tax shield is excluded",
+            "levered_tax_project_irr": scenario["levered_tax_project_irr"],
+            "levered_tax_project_irr_basis": "levered tax variant: project taxable income deducts interest and therefore includes the interest tax shield",
             "project_npv": scenario["project_npv"], "equity_npv": scenario["equity_npv"],
             "project_cashflow_sign_changes": scenario["project_cashflow_sign_changes"],
             "equity_cashflow_sign_changes": scenario["equity_cashflow_sign_changes"],
@@ -488,15 +598,28 @@ def analyze_project_finance(payload: dict, project_result: dict) -> dict:
         "debt": {
             "debt_at_cod": scenario["debt_at_cod"], "min_dscr": scenario["min_dscr"], "average_dscr": scenario["average_dscr"],
             "llcr": scenario["llcr"], "plcr": scenario["plcr"], "initial_dsra": scenario["initial_dsra"],
+            "covenant_dscr_basis": scenario["covenant_dscr_basis"],
+            "sculpting": {
+                "scenario_id": scenario["sculpting_scenario_id"],
+                "cfads_vector": scenario["sculpting_cfads_vector"],
+                "debt_schedule": [
+                    {key: row[key] for key in ("year", "opening_debt", "principal", "interest", "debt_service", "closing_debt")}
+                    for row in scenario["rows"][:_positive_int(cfg.get("debt_tenor_years"), 18, "debt_tenor_years")]
+                ],
+                "note": "Target DSCR is met by construction only when a sculpted debt schedule is assessed against this stored scenario ID and exact CFADS vector. Covenant results for a different scenario are informative only.",
+            },
+            "equity_cure": scenario["equity_cure"],
         },
         "tariff_solver": solver,
         "methodology": {
             "construction": "Monthly spend curve with pro-rata debt/equity funding and algebraically resolved capitalized IDC on average debt balance.",
             "debt_service": "Equal-principal or annuity amortization. Equal-principal interest uses average opening/closing balance, matching periodic amortization economics more closely than opening-balance-only interest.",
             "cfads": "Revenue less cash OPEX, cash tax, working-capital movement and major maintenance; before debt service, reserve funding and equity distributions.",
-            "coverage": "DSCR is period CFADS / principal+interest. LLCR/PLCR are NPV of future CFADS divided by outstanding debt, discounted at debt rate.",
+            "coverage": "Each period reports raw DSCR (CFADS / principal+interest) and reserve-aware DSCR (CFADS less reserve top-up / principal+interest). The covenant test uses the configured covenant_dscr_basis, default reserve_aware; reserve deficiency is reported separately.",
+            "sculpting": "The debt output stores a scenario ID and exact debt-tenor CFADS vector with the debt schedule. A target DSCR is met by construction only on that sculpting scenario; coverage under another scenario is informative only.",
+            "equity_cure": "Equity cure is disabled by default. When enabled, the output discloses amount basis, frequency, caps, treatment and uses. CFADS-addition cures affect the stated covenant test; debt-prepayment cures reduce future scheduled debt but do not improve the current-period covenant result.",
             "dsra": "Initial reserve equals configured months of first-period debt service, funded by equity at COD. Closing reserve follows the next period debt-service requirement and is released as debt amortizes.",
-            "tax": "Jurisdiction-neutral corporate tax with tax-loss carryforward and configurable straight-line or declining-balance tax depreciation.",
+            "tax": "Project IRR uses unlevered tax (interest excluded from taxable income), so it excludes the interest tax shield. A levered-tax Project IRR variant is disclosed separately. Jurisdiction-neutral corporate tax has tax-loss carryforward and configurable straight-line or declining-balance tax depreciation; jurisdiction modules and VAT/GST are unsupported in v1.",
             "terminal": "Terminal value and handback cost are explicit separate inputs; contractual termination compensation is not conflated with terminal value.",
         },
         "limitations": limitations,
