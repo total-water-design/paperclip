@@ -443,6 +443,40 @@ describe("assertGitSensitiveAdapterWorkspaceValid", () => {
     );
   });
 
+  it("accepts a checkout whose origin matches the intended workspace repository", async () => {
+    const cwd = await createGitCheckout({ withRemote: true });
+    const input = buildWorkspaceValidationInput();
+    const repoUrl = "https://github.com/example/repo.git";
+
+    try {
+      for (const intendedRepoUrl of [repoUrl, `${repoUrl}\r\n`]) {
+        await expect(
+          assertGitSensitiveAdapterWorkspaceValid(
+            buildWorkspaceValidationInput({
+              resolvedWorkspace: buildResolvedWorkspace({
+                cwd,
+                repoUrl: intendedRepoUrl,
+              }),
+              executionWorkspace: {
+                ...input.executionWorkspace,
+                baseCwd: cwd,
+                cwd,
+                repoUrl: intendedRepoUrl,
+              },
+              persistedExecutionWorkspace: {
+                ...input.persistedExecutionWorkspace!,
+                cwd,
+                repoUrl: intendedRepoUrl,
+              },
+            }),
+          ),
+        ).resolves.toBeUndefined();
+      }
+    } finally {
+      await fs.rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it("rejects a checkout whose origin is not the intended workspace fork", async () => {
     const cwd = await createGitCheckout({ withRemote: true });
     const input = buildWorkspaceValidationInput();

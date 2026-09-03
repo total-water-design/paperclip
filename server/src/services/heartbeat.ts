@@ -2002,8 +2002,12 @@ function sameResolvedPath(left: string | null | undefined, right: string | null 
 }
 
 function normalizeGitRemoteUrl(value: string | null | undefined) {
-  const trimmed = readNonEmptyString(value);
+  const trimmed = readNonEmptyString(value)?.trim();
   if (!trimmed) return null;
+  // Git writes a terminal line ending to stdout. Outer whitespace is transport
+  // formatting, not repository identity. Keep the substantive URL comparison
+  // strict after removing that formatting.
+  //
   // Credentials are not repository provenance. Normalizing them away lets a
   // host credential helper and an agent checkout compare the same repository.
   return trimmed
