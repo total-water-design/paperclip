@@ -2000,15 +2000,9 @@ function sameResolvedPath(left: string | null | undefined, right: string | null 
 }
 
 export function normalizeGitRemoteUrl(value: string | null | undefined) {
-  const trimmed = readNonEmptyString(value)?.trim();
-  if (!trimmed) return null;
-  // Credentials are not repository provenance. Normalizing them away lets a
-  // host credential helper and an agent checkout compare the same repository.
-  return trimmed
-    .replace(/^(https?|ssh):\/\/[^/@]+@/i, "$1://")
-    .replace(/\/$/, "")
-    .replace(/\.git$/i, "")
-    .toLowerCase();
+  if (typeof value !== "string") return null;
+  const withoutShellLineEnding = value.replace(/[\r\n]+$/, "");
+  return withoutShellLineEnding.length > 0 ? withoutShellLineEnding : null;
 }
 
 async function hasGitPushRemote(cwd: string | null | undefined) {

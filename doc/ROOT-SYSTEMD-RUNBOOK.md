@@ -59,6 +59,8 @@ install -o root -g root -m 0644 deploy/systemd/paperclip.service /etc/systemd/sy
 install -d -o root -g root -m 0755 /usr/lib/paperclip
 install -o root -g root -m 0755 deploy/systemd/paperclip-preflight /usr/lib/paperclip/paperclip-preflight
 install -o root -g root -m 0755 scripts/paperclip-activation-preflight.sh /usr/lib/paperclip/paperclip-activation-preflight
+install -o root -g root -m 0755 scripts/paperclip-artifact-identity.mjs /usr/lib/paperclip/paperclip-artifact-identity.mjs
+install -o root -g root -m 0755 scripts/paperclip-runtime-wrapper.mjs /usr/lib/paperclip/paperclip-runtime-wrapper
 install -o root -g paperclip -m 0640 /dev/null /etc/paperclip/paperclip.env
 cat >/etc/paperclip/paperclip.env <<'EOF'
 PAPERCLIP_HOME=/var/lib/paperclip

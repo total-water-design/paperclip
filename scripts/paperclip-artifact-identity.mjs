@@ -98,7 +98,7 @@ export function createCertification({ identityPath, archivePath, executablePath,
   return certification;
 }
 
-export function verifyActivation({ manifestPath, identityPath, executablePath, archivePath, runtimeIdentityPath }) {
+export function verifyActivation({ manifestPath, identityPath, executablePath, archivePath, runtimeIdentityPath, runtimePid }) {
   const certified = JSON.parse(readFileSync(manifestPath, "utf8"));
   const installed = JSON.parse(readFileSync(identityPath, "utf8"));
   if (certified.format !== FORMAT || installed.format !== FORMAT) fail("unsupported identity format");
@@ -110,6 +110,9 @@ export function verifyActivation({ manifestPath, identityPath, executablePath, a
   if (archivePath && sha256File(archivePath) !== certified.archive.sha256) fail("archive digest differs from certification manifest");
   if (runtimeIdentityPath) {
     const runtime = JSON.parse(readFileSync(runtimeIdentityPath, "utf8"));
+    if (runtimePid && (runtime.pid !== Number(runtimePid) || runtime.processStartTime !== readFileSync(`/proc/${runtimePid}/stat`, "utf8").split(" ")[21])) {
+      fail("runtime PID identity does not match the live process");
+    }
     if (runtime.sourceSha !== certified.source.sha || runtime.executableSha256 !== certified.installedExecutable.sha256) {
       fail(`stale runtime identity: running ${runtime.sourceSha ?? "unknown"}/${runtime.executableSha256 ?? "unknown"}, certified ${certified.source.sha}/${certified.installedExecutable.sha256}`);
     }
@@ -139,7 +142,7 @@ function main() {
   } else if (command === "certify") {
     createCertification({ identityPath: required(options, "identity"), archivePath: required(options, "archive"), executablePath: required(options, "executable"), outputPath: required(options, "manifest") });
   } else if (command === "preflight") {
-    verifyActivation({ manifestPath: required(options, "manifest"), identityPath: required(options, "identity"), executablePath: required(options, "executable"), archivePath: options.archive ? resolve(options.archive) : null, runtimeIdentityPath: options["runtime-identity"] ? resolve(options["runtime-identity"]) : null });
+    verifyActivation({ manifestPath: required(options, "manifest"), identityPath: required(options, "identity"), executablePath: required(options, "executable"), archivePath: options.archive ? resolve(options.archive) : null, runtimeIdentityPath: options["runtime-identity"] ? resolve(options["runtime-identity"]) : null, runtimePid: options["runtime-pid"] });
     console.log("artifact identity: activation preflight passed");
   } else fail("usage: identity|certify|preflight [options]");
 }

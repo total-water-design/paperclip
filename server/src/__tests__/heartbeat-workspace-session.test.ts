@@ -54,14 +54,19 @@ import type { TrustPresetResolution } from "../services/trust-preset-resolver.ts
 const execFile = promisify(execFileCallback);
 
 describe("normalizeGitRemoteUrl", () => {
-  it.each(["\n", "\r\n"])("ignores shell line endings (%j)", (lineEnding) => {
+  it.each(["\n", "\r\n", "\r", "\n\n"])("ignores terminal shell line endings (%j)", (lineEnding) => {
     expect(normalizeGitRemoteUrl(`https://github.com/total-water-design/paperclip.git${lineEnding}`))
-      .toBe("https://github.com/total-water-design/paperclip");
+      .toBe("https://github.com/total-water-design/paperclip.git");
   });
 
-  it("preserves genuine repository differences", () => {
-    expect(normalizeGitRemoteUrl("https://github.com/total-water-design/paperclip.git\n"))
-      .not.toBe(normalizeGitRemoteUrl("https://github.com/total-water-design/other.git"));
+  it.each([
+    ["credentials", "https://token@github.com/Org/Repo.git", "https://github.com/Org/Repo.git"],
+    ["case", "https://github.com/Org/Repo.git", "https://github.com/org/repo.git"],
+    ["slash", "https://github.com/Org/Repo.git/", "https://github.com/Org/Repo.git"],
+    ["dot-git", "https://github.com/Org/Repo.git", "https://github.com/Org/Repo"],
+    ["leading whitespace", " https://github.com/Org/Repo.git", "https://github.com/Org/Repo.git"],
+  ])("preserves and rejects the %s difference", (_name, left, right) => {
+    expect(normalizeGitRemoteUrl(left)).not.toBe(normalizeGitRemoteUrl(right));
   });
 });
 
