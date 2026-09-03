@@ -30,7 +30,7 @@ from water_chemistry import SPECIES
 from design_optimizer import run_design_optimization
 from auth import (init_auth, product_entitlement_for, serialized_product_entitlements,
                   user_can_access_product, db, record_telemetry)
-from suite_catalog import PRODUCT_BY_ID, PRODUCTS, SUITE_HEADLINE, SUITE_NAME, SUITE_TAGLINE, SUITE_VERSION, product_catalog, status_label
+from suite_catalog import PRODUCT_BY_ID, PRODUCTS, SUITE_HEADLINE, SUITE_NAME, SUITE_TAGLINE, SUITE_VERSION, product_catalog, public_product_catalog, status_label
 from report_snapshot import validate_report_snapshot
 from economics_reporting import build_snapshot, snapshot_json, build_workbook, build_pdf
 from flowsheet import solve_payload, FlowsheetConvergenceError
@@ -366,11 +366,45 @@ def index():
     """Public master-brand landing page."""
     return render_template(
         'suite_landing.html',
-        products=product_catalog(),
+        products=public_product_catalog(),
         suite_headline=SUITE_HEADLINE,
         suite_tagline=SUITE_TAGLINE,
         status_label=status_label,
     )
+
+
+@app.get('/platform')
+def platform_page():
+    return render_template('website_page.html', page='platform', products=public_product_catalog())
+
+
+@app.get('/applications')
+def applications_page():
+    return render_template('website_page.html', page='applications', products=public_product_catalog())
+
+
+@app.get('/applications/<product_id>')
+def public_product_page(product_id):
+    product = next((item for item in public_product_catalog() if item['product_id'] == product_id), None)
+    if product is None:
+        abort(404)
+    return render_template('website_page.html', page='product', product=product, products=public_product_catalog(), status_label=status_label)
+
+
+@app.get('/sample-reports')
+@app.get('/engineering-time-savings')
+@app.get('/engineering-trust')
+@app.get('/academy')
+@app.get('/pricing')
+@app.get('/request-access')
+@app.get('/request-demo')
+@app.get('/waitlist')
+@app.get('/terms')
+@app.get('/privacy')
+@app.get('/contact')
+def public_information_page():
+    page = request.path.lstrip('/')
+    return render_template('website_page.html', page=page, products=public_product_catalog())
 
 
 @app.get('/api/suite/catalog')

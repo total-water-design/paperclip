@@ -9,9 +9,9 @@ LINKEDIN_ANCHOR = (
 )
 
 
-def test_founder_message_identity_and_link_safety():
+def test_public_landing_omits_unapproved_personal_identity_and_link_safety():
     source = TEMPLATE.read_text(encoding="utf-8")
     forbidden = "ala" + "dyr"
     assert forbidden not in source.lower()
-    assert LINKEDIN_URL in source
-    assert LINKEDIN_ANCHOR in source
+    assert LINKEDIN_URL not in source
+    assert LINKEDIN_ANCHOR not in source
