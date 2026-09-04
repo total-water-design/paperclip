@@ -136,6 +136,35 @@ export interface AgentConfigRevision {
   createdAt: Date;
 }
 
+export interface AgentConfigurationAttestation {
+  schemaVersion: "agent-configuration-attestation/v1";
+  agentId: string;
+  companyId: string;
+  configurationRevisionId: string | null;
+  configurationDigest: `sha256:${string}`;
+  configuration: {
+    adapterType: string;
+    engine: string | null;
+    filesystemScope: string | null;
+    filesystemSandboxCommand: string | null;
+    networkScope: string | null;
+    networkAllowlist: string[];
+    heartbeat: { enabled: boolean | null };
+  };
+  state: {
+    status: string;
+    pauseReason: string | null;
+    pausedAt: string | null;
+  };
+  provenance: {
+    source: "persisted_agent_record";
+    agentUpdatedAt: string;
+    configurationRevisionCreatedAt: string | null;
+    candidateSha: string | null;
+    candidateSourceAvailable: boolean;
+  };
+}
+
 // The public status union for an adapter login session. The name is neutral: it
 // carries no vendor word and no roadmap word. The union is closed. A public
 // response returns only one of these six values.

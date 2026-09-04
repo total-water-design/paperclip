@@ -99,6 +99,8 @@ import {
 } from "../adapters/index.js";
 import { redactEventPayload } from "../redaction.js";
 import { redactCurrentUserValue } from "../log-redaction.js";
+import { buildAgentConfigurationAttestation } from "../services/agent-configuration-attestation.js";
+import { getServerInfoSnapshot } from "../server-info.js";
 import { renderOrgChartSvg, renderOrgChartPng, type OrgNode, type OrgChartStyle, ORG_CHART_STYLES } from "./org-chart-svg.js";
 import {
   instanceSettingsService,
@@ -3391,6 +3393,46 @@ export function agentRoutes(
     }
     await assertCanReadConfigurations(req, agent.companyId);
     res.json(redactAgentConfiguration(agent));
+  });
+
+  router.get("/agents/:id/configuration-attestation", async (req, res) => {
+    const id = req.params.id as string;
+    const agent = await getAccessibleResource(req, res, svc.getById(id), "Agent not found");
+    if (!agent) return;
+
+    const principalId = req.actor.type === "agent" ? req.actor.agentId : req.actor.userId;
+    const principalType = req.actor.type === "agent" ? "agent" : "user";
+    const permitted = principalId
+      ? await access.hasPermission(agent.companyId, principalType, principalId, "audit:view_agent_actions")
+      : false;
+    if (!permitted) {
+      throw forbidden("Missing permission: audit:view_agent_actions");
+    }
+
+    const revisions = await svc.listConfigRevisions(id);
+    const attestation = buildAgentConfigurationAttestation({
+      agent,
+      latestRevision: revisions[0] ?? null,
+      serverGit: getServerInfoSnapshot().git,
+    });
+    const actor = getActorInfo(req);
+    await logActivity(db, {
+      companyId: agent.companyId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      agentApiKeyId: actor.agentApiKeyId,
+      action: "agent.configuration_attestation_read",
+      entityType: "agent",
+      entityId: agent.id,
+      details: {
+        configurationRevisionId: attestation.configurationRevisionId,
+        configurationDigest: attestation.configurationDigest,
+        candidateSha: attestation.provenance.candidateSha,
+      },
+    });
+    res.json(attestation);
   });
 
   router.get("/agents/:id/config-revisions", async (req, res) => {

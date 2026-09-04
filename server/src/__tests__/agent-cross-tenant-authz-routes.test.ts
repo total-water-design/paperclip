@@ -48,6 +48,7 @@ let currentAccessCanUser = false;
 
 const mockAgentService = vi.hoisted(() => ({
   getById: vi.fn(),
+  listConfigRevisions: vi.fn(),
   pause: vi.fn(),
   resume: vi.fn(),
   clearError: vi.fn(),
@@ -302,6 +303,7 @@ function resetMockDefaults() {
   currentKeyAgentId = agentId;
   currentAccessCanUser = false;
   mockAgentService.getById.mockImplementation(async () => ({ ...baseAgent }));
+  mockAgentService.listConfigRevisions.mockImplementation(async () => []);
   mockAgentService.pause.mockImplementation(async () => ({ ...baseAgent }));
   mockAgentService.resume.mockImplementation(async () => ({ ...baseAgent }));
   mockAgentService.clearError.mockImplementation(async () => ({ ...baseAgent, status: "idle" }));
@@ -346,6 +348,52 @@ function resetMockDefaults() {
 describe.sequential("agent cross-tenant route authorization", () => {
   beforeEach(() => {
     resetMockDefaults();
+  });
+
+  it("denies cross-company and ungranted attestation reads, while permitting an explicitly granted validator", async () => {
+    const foreignApp = await createApp({
+      type: "agent",
+      agentId: "validator",
+      companyId: "foreign-company",
+      source: "agent_key",
+    });
+    const foreign = await requestApp(foreignApp, (baseUrl) => request(baseUrl).get(`/api/agents/${agentId}/configuration-attestation`));
+    expect(foreign.status).toBe(404);
+
+    const validatorApp = await createApp({
+      type: "agent",
+      agentId: "validator",
+      companyId,
+      source: "agent_key",
+    });
+    const denied = await requestApp(validatorApp, (baseUrl) => request(baseUrl).get(`/api/agents/${agentId}/configuration-attestation`));
+    expect(denied.status).toBe(403);
+    expect(mockLogActivity).not.toHaveBeenCalled();
+
+    mockAccessService.hasPermission.mockResolvedValue(true);
+    mockAgentService.getById.mockResolvedValue({
+      ...baseAgent,
+      adapterType: "codex_local",
+      adapterConfig: { engine: "cli", env: { OPENAI_API_KEY: "secret" } },
+      runtimeConfig: { heartbeat: { enabled: false } },
+      status: "paused",
+      pauseReason: "manual",
+      pausedAt: new Date("2026-09-04T12:00:00.000Z"),
+    });
+    const allowed = await requestApp(validatorApp, (baseUrl) => request(baseUrl).get(`/api/agents/${agentId}/configuration-attestation`));
+    expect(allowed.status).toBe(200);
+    expect(allowed.body.configuration).toMatchObject({
+      adapterType: "codex_local",
+      engine: "cli",
+      heartbeat: { enabled: false },
+    });
+    expect(JSON.stringify(allowed.body)).not.toContain("secret");
+    expect(mockLogActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      action: "agent.configuration_attestation_read",
+      entityId: agentId,
+    }));
+    expect(mockAgentService.pause).not.toHaveBeenCalled();
+    expect(mockAgentService.resume).not.toHaveBeenCalled();
   });
 
   it("enforces company boundaries before mutating or reading agent keys", async () => {

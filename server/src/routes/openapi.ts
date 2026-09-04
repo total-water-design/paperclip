@@ -1993,6 +1993,15 @@ registry.registerPath({
 
 registry.registerPath({
   method: "get",
+  path: "/api/agents/{id}/configuration-attestation",
+  tags: ["agents"],
+  summary: "Get a secret-free persisted agent configuration attestation",
+  request: { params: z.object({ id: z.string() }) },
+  responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden, 404: r.notFound },
+});
+
+registry.registerPath({
+  method: "get",
   path: "/api/agents/{id}/config-revisions",
   tags: ["agents"],
   summary: "List agent config revisions",
