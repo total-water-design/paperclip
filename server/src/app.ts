@@ -320,6 +320,7 @@ export async function createApp(
     managedPluginAutoInstall?: readonly string[] | null;
     /** Test override for the bundled plugin catalog root. */
     bundledPluginCatalogRoot?: string;
+    boundedValidationRuntime?: boolean;
   },
 ) {
   const app = express();
@@ -364,6 +365,13 @@ export async function createApp(
       resolveSession: opts.resolveSession,
     }),
   );
+  if (opts.boundedValidationRuntime) {
+    const { isValidationRuntimeRequest } = await import("./validation-runtime-mode.js");
+    app.use((req, res, next) => {
+      if (isValidationRuntimeRequest(req.method, req.path)) return next();
+      res.status(404).json({ error: "API route not available in bounded validation runtime" });
+    });
+  }
   app.use("/api/auth", authRoutes(db));
   if (opts.betterAuthHandler) {
     app.all("/api/auth/{*authPath}", opts.betterAuthHandler);
@@ -793,8 +801,10 @@ export async function createApp(
 
   app.use(errorHandler);
 
-  jobCoordinator.start();
-  scheduler.start();
+  if (!opts.boundedValidationRuntime) {
+    jobCoordinator.start();
+    scheduler.start();
+  }
   let feedbackExportShuttingDown = false;
   let feedbackExportTimer: ReturnType<typeof setInterval> | null = null;
   const disableFeedbackExportFlushes = () => {
@@ -818,13 +828,13 @@ export async function createApp(
     }
   };
 
-  feedbackExportTimer = opts.feedbackExportService
+  feedbackExportTimer = !opts.boundedValidationRuntime && opts.feedbackExportService
     ? setInterval(() => {
       void flushPendingFeedbackExports();
     }, FEEDBACK_EXPORT_FLUSH_INTERVAL_MS)
     : null;
   feedbackExportTimer?.unref?.();
-  if (opts.feedbackExportService) {
+  if (!opts.boundedValidationRuntime && opts.feedbackExportService) {
     void flushPendingFeedbackExports();
   }
   // Abandoned chunked-import spool sweep: hourly (plus once at startup),
@@ -843,17 +853,16 @@ export async function createApp(
         logger.error({ err }, "abandoned company import transfer spool sweep failed");
       });
   };
-  let importTransferSweepTimer: ReturnType<typeof setInterval> | null = setInterval(
-    sweepImportTransferSpools,
-    IMPORT_TRANSFER_SPOOL_SWEEP_INTERVAL_MS,
-  );
-  importTransferSweepTimer.unref?.();
+  let importTransferSweepTimer: ReturnType<typeof setInterval> | null = opts.boundedValidationRuntime
+    ? null
+    : setInterval(sweepImportTransferSpools, IMPORT_TRANSFER_SPOOL_SWEEP_INTERVAL_MS);
+  importTransferSweepTimer?.unref?.();
   // Startup only (never on the hourly interval — that would kill live
   // applies): apply jobs are in-memory in this single process, so any run
   // still "applying" now was interrupted by the previous shutdown and would
   // otherwise 409 every retry forever. Fail those stranded runs — their
   // spooled parts stay reusable — then run the normal sweep once.
-  void companyTransferRunService
+  if (!opts.boundedValidationRuntime) void companyTransferRunService
     .recoverStrandedApplyingRuns(db)
     .then((recovered) => {
       if (recovered.length > 0) {
@@ -869,7 +878,7 @@ export async function createApp(
     .finally(() => {
       sweepImportTransferSpools();
     });
-  void toolDispatcher.initialize().catch((err) => {
+  if (!opts.boundedValidationRuntime) void toolDispatcher.initialize().catch((err) => {
     logger.error({ err }, "Failed to initialize plugin tool dispatcher");
   });
   const devWatcher = createPluginDevWatcher(
@@ -908,7 +917,7 @@ export async function createApp(
   // that must not outrun plugin availability — managed sandbox environments
   // (`applyManagedEnvironments`) run before the heartbeat resumes queued
   // runs — can sequence on it. It never rejects.
-  const bundledPluginsStartup = ensureBundledPlugins(
+  const bundledPluginsStartup = opts.boundedValidationRuntime ? Promise.resolve([]) : ensureBundledPlugins(
     bundledPluginInstalls,
     { registry: pluginRegistry, loader, lifecycle, logger },
     // Managed mode reinstalls soft-uninstalled bundles (the control plane

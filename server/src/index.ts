@@ -111,6 +111,7 @@ import type {
   InstanceDatabaseBackupRunResult,
   InstanceDatabaseBackupTrigger,
 } from "./routes/instance-database-backups.js";
+import { resolveValidationRuntimePolicy } from "./validation-runtime-mode.js";
 
 type BetterAuthSessionUser = {
   id: string;
@@ -158,7 +159,13 @@ export async function startServer(): Promise<StartedServer> {
   await sentryReady;
   ensureDecisionSigningSecret();
   let config = loadConfig();
-  initTelemetry({ enabled: config.telemetryEnabled });
+  const validationRuntime = resolveValidationRuntimePolicy({
+    mode: process.env.PAPERCLIP_RUNTIME_MODE?.trim(),
+    nodeEnv: process.env.NODE_ENV,
+    host: config.host,
+    databaseUrl: config.databaseUrl,
+  });
+  initTelemetry({ enabled: validationRuntime.enabled ? false : config.telemetryEnabled });
   if (process.env.PAPERCLIP_SECRETS_PROVIDER === undefined) {
     process.env.PAPERCLIP_SECRETS_PROVIDER = config.secretsProvider;
   }
@@ -351,7 +358,9 @@ export async function startServer(): Promise<StartedServer> {
   assertCloudDatabaseContract();
   if (config.databaseUrl) {
     const migrationUrl = config.databaseMigrationUrl ?? config.databaseUrl;
-    migrationSummary = await ensureMigrations(migrationUrl, "PostgreSQL");
+    migrationSummary = validationRuntime.applyMigrations
+      ? await ensureMigrations(migrationUrl, "PostgreSQL")
+      : "skipped";
   
     db = createDb(config.databaseUrl);
     pluginMigrationDb = config.databaseMigrationUrl ? createDb(config.databaseMigrationUrl) : db;
@@ -699,7 +708,9 @@ export async function startServer(): Promise<StartedServer> {
     throw err;
   }
 
-  const uiMode = config.uiDevMiddleware ? "vite-dev" : config.serveUi ? "static" : "none";
+  const uiMode = validationRuntime.serveUi
+    ? (config.uiDevMiddleware ? "vite-dev" : config.serveUi ? "static" : "none")
+    : "none";
   const storageService = createStorageServiceFromConfig(config);
   const feedback = feedbackService(db as any, {
     shareClient: createFeedbackTraceShareClientFromConfig(config),
@@ -778,7 +789,7 @@ export async function startServer(): Promise<StartedServer> {
     }
   };
   const pluginWorkerManager = createPluginWorkerManager();
-  const heartbeat = config.heartbeatSchedulerEnabled
+  const heartbeat = validationRuntime.runHeartbeatScheduler && config.heartbeatSchedulerEnabled
     ? heartbeatService(db as any, { pluginWorkerManager })
     : null;
   const decisionServiceOptions = {
@@ -824,6 +835,7 @@ export async function startServer(): Promise<StartedServer> {
     pluginWorkerManager,
     decisionServiceOptions,
     managedPluginAutoInstall,
+    boundedValidationRuntime: validationRuntime.enabled,
   });
   const server = createServer(app as unknown as Parameters<typeof createServer>[0]);
 
@@ -881,7 +893,7 @@ export async function startServer(): Promise<StartedServer> {
     },
   });
 
-  try {
+  if (validationRuntime.runStartupReconciliation) try {
     const result = await workspaceOperationService(db as any)
       .reconcileStaleRuntimeControlOperations();
     if (result.reconciled > 0) {
@@ -894,7 +906,7 @@ export async function startServer(): Promise<StartedServer> {
     logger.error({ err }, "startup reconciliation of managed runtime control operations failed");
   }
 
-  void reconcilePersistedRuntimeServicesOnStartup(db as any)
+  if (validationRuntime.runStartupReconciliation) void reconcilePersistedRuntimeServicesOnStartup(db as any)
     .then((result) => {
       if (
         result.reconciled > 0
@@ -924,7 +936,7 @@ export async function startServer(): Promise<StartedServer> {
   // Backfill auth.json into any already-isolated codex_local managed home that
   // was created by the #8272 isolation guard before the Phase 1 seeding fix.
   // Idempotent; the Phase 1 execute-time seeding covers new strandings.
-  void reconcileCodexLocalManagedHomesOnStartup(db)
+  if (validationRuntime.runStartupReconciliation) void reconcileCodexLocalManagedHomesOnStartup(db)
     .then((result) => {
       if (result.seeded > 0 || result.failed > 0) {
         logger.warn(
@@ -943,7 +955,7 @@ export async function startServer(): Promise<StartedServer> {
       logger.error({ err }, "startup reconciliation of codex_local managed homes failed");
     });
 
-  void reconcileBuiltInAgentsOnStartup(db as any)
+  if (validationRuntime.runStartupReconciliation) void reconcileBuiltInAgentsOnStartup(db as any)
     .then((result) => {
       if (
         result.reconciled > 0
@@ -967,7 +979,7 @@ export async function startServer(): Promise<StartedServer> {
   // queued runs so the policy + managed k8s environments are in place. A bad
   // PAPERCLIP_EXECUTION_MODE / PAPERCLIP_K8S_* value throws and fails startup
   // (fail-loud) rather than silently allowing local execution.
-  try {
+  if (validationRuntime.runStartupReconciliation) try {
     const policyResult = await bootstrapExecutionPolicyFromEnv(db as any);
     if (policyResult) {
       logger.warn(
@@ -993,7 +1005,7 @@ export async function startServer(): Promise<StartedServer> {
   // activates before its provider driver is registered; the worker manager
   // additionally gates each entry on a live plugin worker (and archives the
   // row of a provider that did not come up).
-  try {
+  if (validationRuntime.runStartupReconciliation) try {
     const bundledPluginsStartup = (app as { locals?: { bundledPluginsStartup?: Promise<unknown> } })
       .locals?.bundledPluginsStartup;
     const managedEnvironmentsResult = await applyManagedEnvironments(db as any, managedConfig, {
@@ -1098,7 +1110,7 @@ export async function startServer(): Promise<StartedServer> {
     trackHeartbeatSchedulerWork(runEnvironmentLeaseCleanupSweep(ENVIRONMENT_LEASE_CLEANUP_SWEEP_BACKOFF_MS));
   };
 
-  await questionResponseDeliveries.sweepPending().then((result) => {
+  if (validationRuntime.runBackgroundJobs) await questionResponseDeliveries.sweepPending().then((result) => {
     if (result.scanned > 0) {
       logger.info(result, "startup question-response delivery sweep completed");
     }
@@ -1588,7 +1600,7 @@ export async function startServer(): Promise<StartedServer> {
         logger.error({ err }, "heartbeat scheduler tick failed");
       }));
     });
-  } else {
+  } else if (validationRuntime.runBackgroundJobs) {
     // The heartbeat scheduler is disabled, but the orphan-sandbox cleanup sweep
     // is still required. A failed acquire can leak a paid provider sandbox, so
     // this path retries the teardown at startup and on the interval, exactly as
@@ -1600,7 +1612,7 @@ export async function startServer(): Promise<StartedServer> {
     });
   }
   
-  if (config.databaseBackupEnabled) {
+  if (validationRuntime.runBackups && config.databaseBackupEnabled) {
     const backupIntervalMs = config.databaseBackupIntervalMinutes * 60 * 1000;
 
     logger.info(

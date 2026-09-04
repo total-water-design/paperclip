@@ -133,6 +133,29 @@ pnpm dev:stop
 
 ## Hot-Restart Deploys
 
+## Bounded adapter validation runtime
+
+An authorized runtime operator can expose only health, agent configuration
+attestation, and bounded adapter environment tests against an existing database:
+
+```sh
+NODE_ENV=test \
+PAPERCLIP_RUNTIME_MODE=daf-adapter-validation \
+DATABASE_URL=postgres://... \
+HOST=127.0.0.1 \
+pnpm --filter @paperclipai/server dev
+```
+
+This mode is intentionally unavailable in production, requires loopback and an
+external existing database, does not apply migrations, and disables the UI,
+telemetry, automatic backups, heartbeat scheduling, plugin/background jobs,
+orphan-run recovery, and startup runtime-service reconciliation. All other HTTP
+paths return 404. Normal authorization remains intact: attestation requires
+`audit:view_agent_actions`, adapter tests require `agents:create`, successful
+attestation reads are audited, and company non-disclosure is unchanged. The
+operator—not the implementation specialist—uses an already-authorized principal
+for the attestation read and three bounded adapter-test calls.
+
 Primary-instance rebuilds that restart `paperclip.service` can request one-shot live-run adoption instead of using the normal graceful shutdown drain. Before restarting the service, write the marker from the newly staged app with the current service PID:
 
 ```sh
