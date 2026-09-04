@@ -27,6 +27,7 @@ import {
   createIssueSchema,
   updateIssueSchema,
   stalledReviewDecisionSchema,
+  reconcileLostReviewDecisionSchema,
   createIssueLabelSchema,
   addIssueCommentSchema,
   checkoutIssueSchema,
@@ -2304,6 +2305,19 @@ registry.registerPath({
     404: r.notFound,
     409: r.conflict,
   },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/issues/{id}/reconcile-lost-review-decision",
+  tags: ["issues"],
+  summary: "Reconcile a lost typed review decision from preserved Board evidence",
+  request: {
+    params: z.object({ id: z.string() }),
+    body: jsonBody(reconcileLostReviewDecisionSchema),
+  },
+  responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized,
+    403: r.forbidden, 404: r.notFound, 409: r.conflict, 422: r.unprocessable },
 });
 
 registry.registerPath({
