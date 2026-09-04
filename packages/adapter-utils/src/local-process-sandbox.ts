@@ -80,13 +80,36 @@ const NETWORK_PROXY_TEMP_PREFIX = "paperclip-network-sandbox-";
 // remains available inside a fresh-root sandbox.
 const BLOCKING_STDIO_LAUNCHER = `
 const { spawn } = require("node:child_process");
-const { once } = require("node:events");
 const [command, ...args] = process.argv.slice(1);
 if (!command) process.exit(126);
 const child = spawn(command, args, { env: process.env, stdio: ["inherit", "pipe", "pipe"] });
+const waitWritable = (writable) => new Promise((resolve) => {
+  const done = (open) => {
+    writable.off("drain", drained);
+    writable.off("close", closed);
+    writable.off("error", closed);
+    resolve(open);
+  };
+  const drained = () => done(true);
+  const closed = () => done(false);
+  writable.once("drain", drained);
+  writable.once("close", closed);
+  writable.once("error", closed);
+});
 const forward = async (readable, writable) => {
+  let downstreamOpen = !writable.destroyed;
+  const closeDownstream = () => { downstreamOpen = false; };
+  writable.on("error", closeDownstream);
+  writable.on("close", closeDownstream);
   for await (const chunk of readable) {
-    if (!writable.write(chunk)) await once(writable, "drain");
+    if (!downstreamOpen) continue;
+    try {
+      if (!writable.write(chunk)) {
+        downstreamOpen = await waitWritable(writable);
+      }
+    } catch {
+      downstreamOpen = false;
+    }
   }
 };
 const forwarded = Promise.all([forward(child.stdout, process.stdout), forward(child.stderr, process.stderr)]);
@@ -343,7 +366,6 @@ async function createNetworkProxyBridge(): Promise<string> {
   const source = `
 const net = require("node:net");
 const { spawn } = require("node:child_process");
-const { once } = require("node:events");
 const socketPath = process.argv[2];
 const executable = process.argv[3];
 const args = process.argv.slice(4);
@@ -360,9 +382,33 @@ server.listen(${SANDBOX_PROXY_PORT}, "127.0.0.1", () => {
   // A fresh pipe gives the child blocking fd 1/2 even when Bubblewrap's ends
   // carry O_NONBLOCK; Node drains those pipes without exposing EAGAIN to Codex.
   const child = spawn(executable, args, { stdio: ["inherit", "pipe", "pipe"], env: process.env });
+  const waitWritable = (writable) => new Promise((resolve) => {
+    const done = (open) => {
+      writable.off("drain", drained);
+      writable.off("close", closed);
+      writable.off("error", closed);
+      resolve(open);
+    };
+    const drained = () => done(true);
+    const closed = () => done(false);
+    writable.once("drain", drained);
+    writable.once("close", closed);
+    writable.once("error", closed);
+  });
   const pump = async (readable, writable) => {
+    let downstreamOpen = !writable.destroyed;
+    const closeDownstream = () => { downstreamOpen = false; };
+    writable.on("error", closeDownstream);
+    writable.on("close", closeDownstream);
     for await (const chunk of readable) {
-      if (!writable.write(chunk)) await once(writable, "drain");
+      if (!downstreamOpen) continue;
+      try {
+        if (!writable.write(chunk)) {
+          downstreamOpen = await waitWritable(writable);
+        }
+      } catch {
+        downstreamOpen = false;
+      }
     }
   };
   const forwarded = Promise.all([pump(child.stdout, process.stdout), pump(child.stderr, process.stderr)]);

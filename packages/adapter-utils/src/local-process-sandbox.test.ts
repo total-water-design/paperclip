@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { spawn } from "node:child_process";
 import http from "node:http";
 import net from "node:net";
 import os from "node:os";
@@ -195,6 +196,57 @@ describe("local process sandbox", () => {
     expect(result.exitCode, result.stderr).toBe(0);
     expect(result.stderr).not.toMatch(/EAGAIN|os error 11|failed printing to stdout/);
     expect(result.stdout).toBe(expected);
+  });
+
+  it("supports repeated sequential confined launches without retaining child state", async () => {
+    const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-confined-sequential-"));
+    cleanup.push(workspace);
+    const fakeBubblewrap = path.join(fixtureDir, "test-fixtures", "nonblocking-bwrap.mjs");
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const result = await runChildProcess(
+        `confined-sequential-${attempt}`,
+        process.execPath,
+        ["-e", `process.stdout.write("run-${attempt}")`],
+        {
+          cwd: workspace,
+          env: {},
+          timeoutSec: 5,
+          graceSec: 1,
+          localProcessSandbox: { workspaceDir: workspace, networkScope: "deny", command: fakeBubblewrap },
+          onLog: async () => {},
+        },
+      );
+      expect(result).toMatchObject({ exitCode: 0, signal: null, timedOut: false, stdout: `run-${attempt}` });
+    }
+  });
+
+  it.each(["stdout", "stderr"] as const)("drains the confined child after the %s consumer closes early", async (stream) => {
+    const workspace = await fs.mkdtemp(path.join(os.tmpdir(), `paperclip-confined-closed-${stream}-`));
+    cleanup.push(workspace);
+    const fakeBubblewrap = path.join(fixtureDir, "test-fixtures", "nonblocking-bwrap.mjs");
+    const descriptor = stream === "stdout" ? 1 : 2;
+    const target = await buildLocalProcessSandboxSpawnTarget({
+      executable: process.execPath,
+      args: ["-e", `const fs=require("node:fs");for(let i=0;i<256;i++)fs.writeSync(${descriptor},Buffer.alloc(4096));`],
+      cwd: workspace,
+      options: { workspaceDir: workspace, networkScope: "deny", command: fakeBubblewrap },
+    });
+    const child = spawn(target.command, target.args, {
+      cwd: target.cwd,
+      env: { ...process.env, ...target.env },
+      stdio: "pipe",
+    });
+    child[stream]?.destroy();
+    const outcome = await Promise.race([
+      new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
+        child.once("error", reject);
+        child.once("close", (code, signal) => resolve({ code, signal }));
+      }),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("confined child did not clean up")), 5_000)),
+    ]);
+    await target.cleanup?.();
+    expect(outcome).toEqual({ code: 0, signal: null });
   });
 
   it("binds a confined absolute alias to the synchronized workspace", async () => {
