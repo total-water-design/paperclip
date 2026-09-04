@@ -337,6 +337,57 @@ describe("local process sandbox", () => {
     }
   });
 
+  it("keeps agent control-plane egress off the task-tool proxy", async () => {
+    const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-network-split-"));
+    cleanup.push(workspace);
+    const server = http.createServer((_request, response) => response.end("reachable"));
+    const controlServer = http.createServer((_request, response) => response.end("control"));
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    await new Promise<void>((resolve) => controlServer.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    const controlAddress = controlServer.address();
+    if (!address || typeof address === "string" || !controlAddress || typeof controlAddress === "string") {
+      throw new Error("Expected TCP test server addresses.");
+    }
+    const targetPort = String(address.port);
+    const controlPort = String(controlAddress.port);
+    const target = await buildLocalProcessSandboxSpawnTarget({
+      executable: process.execPath,
+      args: ["-e", "process.exit(0)"],
+      cwd: workspace,
+      options: {
+        workspaceDir: workspace,
+        networkScope: "allowlist",
+        networkAllowlist: [`127.0.0.1:${targetPort}`],
+        networkControlPlaneAllowlist: [`127.0.0.1:${controlPort}`],
+      },
+    });
+    const bridgeIndex = target.args.findIndex((value) => value.endsWith("/bridge.cjs"));
+    const controlSocketPath = target.args[bridgeIndex + 1];
+    const taskSocketPath = target.args[bridgeIndex + 2];
+    const connect = (socketPath: string, port: string) => new Promise<string>((resolve, reject) => {
+      const socket = net.createConnection(socketPath, () => {
+        socket.end(`CONNECT 127.0.0.1:${port} HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\n\r\n`);
+      });
+      let response = "";
+      socket.setEncoding("utf8");
+      socket.on("data", (chunk) => { response += chunk; });
+      socket.on("end", () => resolve(response));
+      socket.on("error", reject);
+    });
+
+    try {
+      await expect(connect(controlSocketPath, controlPort)).resolves.toContain("200 Connection Established");
+      await expect(connect(taskSocketPath, targetPort)).resolves.toContain("200 Connection Established");
+      await expect(connect(taskSocketPath, controlPort)).resolves.toContain("403 Forbidden");
+      await expect(connect(taskSocketPath, "9")).resolves.toContain("403 Forbidden");
+    } finally {
+      await target.cleanup?.();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await new Promise<void>((resolve) => controlServer.close(() => resolve()));
+    }
+  });
+
   it("fails clearly when Bubblewrap is unavailable", async () => {
     const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-fs-sandbox-missing-"));
     cleanup.push(workspace);

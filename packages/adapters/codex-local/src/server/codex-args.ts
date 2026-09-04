@@ -36,6 +36,7 @@ export function buildCodexExecArgs(
   options: {
     resumeSessionId?: string | null;
     skipGitRepoCheck?: boolean;
+    taskProxyUrl?: string | null;
   } = {},
 ): BuildCodexExecArgsResult {
   const record = asRecord(config);
@@ -70,6 +71,13 @@ export function buildCodexExecArgs(
   }
   if (fastModeApplied) {
     args.push("-c", 'service_tier="fast"', "-c", "features.fast_mode=true");
+  }
+  if (options.taskProxyUrl) {
+    const proxy = JSON.stringify(options.taskProxyUrl);
+    args.push(
+      "-c",
+      `shell_environment_policy.set={HTTP_PROXY=${proxy},HTTPS_PROXY=${proxy},http_proxy=${proxy},https_proxy=${proxy}}`,
+    );
   }
   if (extraArgs.length > 0) args.push(...extraArgs);
   if (options.resumeSessionId) args.push("resume", options.resumeSessionId, "-");

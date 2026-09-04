@@ -27,6 +27,8 @@ export interface LocalProcessSandboxOptions {
   homeDir?: string | null;
   networkScope?: LocalProcessNetworkScope | null;
   networkAllowlist?: string[];
+  /** Agent-provider endpoints available to the parent process, but not to task tools. */
+  networkControlPlaneAllowlist?: string[];
   networkTrustedUrls?: string[];
   command?: string;
 }
@@ -68,6 +70,8 @@ const SYSTEM_READ_PATHS = [
 
 const PROXY_ENV_KEYS = ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"] as const;
 const SANDBOX_PROXY_PORT = 31_337;
+const SANDBOX_TASK_PROXY_PORT = 31_338;
+export const SANDBOX_TASK_PROXY_URL = `http://127.0.0.1:${SANDBOX_TASK_PROXY_PORT}`;
 const UNIX_SOCKET_PATH_MAX_BYTES = 107;
 const NETWORK_PROXY_TEMP_PREFIX = "paperclip-network-sandbox-";
 
@@ -335,27 +339,35 @@ async function createNetworkProxyBridge(): Promise<string> {
   const source = `
 const net = require("node:net");
 const { spawn } = require("node:child_process");
-const socketPath = process.argv[2];
-const executable = process.argv[3];
-const args = process.argv.slice(4);
-const server = net.createServer((client) => {
+const controlSocketPath = process.argv[2];
+const taskSocketPath = process.argv[3];
+const executable = process.argv[4];
+const args = process.argv.slice(5);
+const listen = (port, socketPath) => net.createServer((client) => {
   const upstream = net.connect(socketPath);
   client.pipe(upstream);
   upstream.pipe(client);
   const close = () => { client.destroy(); upstream.destroy(); };
   client.on("error", close);
   upstream.on("error", close);
-});
-server.listen(${SANDBOX_PROXY_PORT}, "127.0.0.1", () => {
+}).listen(port, "127.0.0.1");
+const controlServer = listen(${SANDBOX_PROXY_PORT}, controlSocketPath);
+const taskServer = listen(${SANDBOX_TASK_PROXY_PORT}, taskSocketPath);
+let listening = 0;
+const startChild = () => {
+  listening += 1;
+  if (listening !== 2) return;
   const child = spawn(executable, args, { stdio: "inherit", env: process.env });
   const forward = (signal) => { if (!child.killed) child.kill(signal); };
   process.on("SIGTERM", () => forward("SIGTERM"));
   process.on("SIGINT", () => forward("SIGINT"));
-  child.on("exit", (code, signal) => server.close(() => {
+  child.on("exit", (code, signal) => controlServer.close(() => taskServer.close(() => {
     if (signal) process.kill(process.pid, signal);
     else process.exit(code == null ? 1 : code);
-  }));
-});
+  })));
+};
+controlServer.on("listening", startChild);
+taskServer.on("listening", startChild);
 `;
   return source.trimStart();
 }
@@ -453,10 +465,11 @@ export async function buildLocalProcessSandboxSpawnTarget(input: {
     if (networkScope === "allowlist") {
       const tempDir = await createNetworkProxyTempDir();
       const socketPath = path.join(tempDir, "proxy.sock");
+      const taskSocketPath = path.join(tempDir, "task-proxy.sock");
       const bridgePath = path.join(tempDir, "bridge.cjs");
       await fs.writeFile(bridgePath, await createNetworkProxyBridge(), { mode: 0o500 });
       const proxy = await startNetworkAllowlistProxy(
-        input.options.networkAllowlist ?? [],
+        [...(input.options.networkAllowlist ?? []), ...(input.options.networkControlPlaneAllowlist ?? [])],
         input.options.networkTrustedUrls ?? [],
         socketPath,
       ).catch(async (error) => {
@@ -465,9 +478,17 @@ export async function buildLocalProcessSandboxSpawnTarget(input: {
       });
       await mount(tempDir, "rw");
       executable = process.execPath;
-      executableArgs = [bridgePath, socketPath, input.executable, ...input.args];
+      const taskProxy = await startNetworkAllowlistProxy(
+        input.options.networkAllowlist ?? [], input.options.networkTrustedUrls ?? [], taskSocketPath,
+      ).catch(async (error) => {
+        await proxy.close();
+        await fs.rm(tempDir, { recursive: true, force: true });
+        throw error;
+      });
+      executableArgs = [bridgePath, socketPath, taskSocketPath, input.executable, ...input.args];
       cleanup = async () => {
         await proxy.close();
+        await taskProxy.close();
         await fs.rm(tempDir, { recursive: true, force: true });
       };
     }
@@ -476,10 +497,11 @@ export async function buildLocalProcessSandboxSpawnTarget(input: {
     if (networkScope === "allowlist") {
       const tempDir = await createNetworkProxyTempDir();
       const socketPath = path.join(tempDir, "proxy.sock");
+      const taskSocketPath = path.join(tempDir, "task-proxy.sock");
       const bridgePath = path.join(tempDir, "bridge.cjs");
       await fs.writeFile(bridgePath, await createNetworkProxyBridge(), { mode: 0o500 });
       const proxy = await startNetworkAllowlistProxy(
-        input.options.networkAllowlist ?? [],
+        [...(input.options.networkAllowlist ?? []), ...(input.options.networkControlPlaneAllowlist ?? [])],
         input.options.networkTrustedUrls ?? [],
         socketPath,
       ).catch(async (error) => {
@@ -487,9 +509,17 @@ export async function buildLocalProcessSandboxSpawnTarget(input: {
         throw error;
       });
       executable = process.execPath;
-      executableArgs = [bridgePath, socketPath, input.executable, ...input.args];
+      const taskProxy = await startNetworkAllowlistProxy(
+        input.options.networkAllowlist ?? [], input.options.networkTrustedUrls ?? [], taskSocketPath,
+      ).catch(async (error) => {
+        await proxy.close();
+        await fs.rm(tempDir, { recursive: true, force: true });
+        throw error;
+      });
+      executableArgs = [bridgePath, socketPath, taskSocketPath, input.executable, ...input.args];
       cleanup = async () => {
         await proxy.close();
+        await taskProxy.close();
         await fs.rm(tempDir, { recursive: true, force: true });
       };
     }

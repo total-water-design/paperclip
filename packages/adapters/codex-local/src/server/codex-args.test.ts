@@ -157,6 +157,18 @@ describe("buildCodexExecArgs", () => {
     ]);
   });
 
+  it("pins task shell commands to the task-only proxy", () => {
+    const result = buildCodexExecArgs({}, { taskProxyUrl: "http://127.0.0.1:31338" });
+
+    expect(result.args).toEqual([
+      "exec",
+      "--json",
+      "-c",
+      'shell_environment_policy.set={HTTP_PROXY="http://127.0.0.1:31338",HTTPS_PROXY="http://127.0.0.1:31338",http_proxy="http://127.0.0.1:31338",https_proxy="http://127.0.0.1:31338"}',
+      "-",
+    ]);
+  });
+
   it("does not add a second --skip-git-repo-check when extraArgs already carry it", () => {
     const result = buildCodexExecArgs(
       {

@@ -51,6 +51,7 @@ import {
   joinPromptSections,
 } from "@paperclipai/adapter-utils/server-utils";
 import {
+  SANDBOX_TASK_PROXY_URL,
   parseLocalProcessFilesystemScope,
   parseLocalProcessSandboxExtraPaths,
   parseLocalProcessNetworkAllowlist,
@@ -134,6 +135,18 @@ function firstNonEmptyLine(text: string): string {
       .map((line) => line.trim())
       .find(Boolean) ?? ""
   );
+}
+
+export function resolveCodexLocalProcessNetworkAllowlist(
+  config: Record<string, unknown>,
+  context: Record<string, unknown>,
+): string[] {
+  const executionPolicy = parseObject(context.paperclipExecutionPolicy);
+  if (executionPolicy.networkEgress && typeof executionPolicy.networkEgress === "object") {
+    const networkEgress = parseObject(executionPolicy.networkEgress);
+    return parseLocalProcessNetworkAllowlist(networkEgress.allowFqdns);
+  }
+  return parseLocalProcessNetworkAllowlist(config.networkAllowlist);
 }
 
 // Benign stderr lines that never explain a nonzero exit and must not be
@@ -994,7 +1007,10 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
             outboundRestorePaths: targetWorkspaceRealization?.outboundRestorePaths ?? [],
             homeDir: filesystemScope ? effectiveCodexHome : null,
             networkScope,
-            networkAllowlist: parseLocalProcessNetworkAllowlist(config.networkAllowlist),
+            networkAllowlist: resolveCodexLocalProcessNetworkAllowlist(config, context),
+            // These endpoints are available to the Codex parent process only.
+            // Shell commands receive the separate task proxy below.
+            networkControlPlaneAllowlist: ["chatgpt.com", "api.openai.com"],
             networkTrustedUrls: [
               paperclipBaseEnv.PAPERCLIP_API_URL,
               ...runtimeMcpGateways.map((gateway) => gateway.endpointPath),
@@ -1206,6 +1222,9 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         {
           resumeSessionId,
           skipGitRepoCheck: executionTargetIsSandbox,
+          taskProxyUrl: localProcessSandbox?.networkScope === "allowlist"
+            ? SANDBOX_TASK_PROXY_URL
+            : null,
         },
       );
       const args = execArgs.args;

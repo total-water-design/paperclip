@@ -106,8 +106,8 @@ Core fields:
 - filesystemScope (string, optional): set to "workspace" to confine local CLI filesystem access with Bubblewrap. Off by default. The workspace and managed CODEX_HOME remain writable; other host paths are hidden.
 - filesystemExtraPaths (array, optional): additional absolute host paths exposed inside the workspace sandbox. String entries are read-only; object entries use { path: "/absolute/path", access: "ro" | "rw" }.
 - filesystemSandboxCommand (string, optional): Bubblewrap executable name or absolute path; defaults to "bwrap". Linux only.
-- networkScope (string, optional): "deny" blocks all network egress; "allowlist" permits only networkAllowlist targets through Paperclip's HTTP(S) proxy. Off by default.
-- networkAllowlist (string[], optional): exact hostnames, hostname:port entries, or origin URLs. Include the configured Codex provider origin, such as "api.openai.com" or a custom model provider gateway.
+- networkScope (string, optional): "deny" blocks all network egress; "allowlist" gives Codex a provider/control-plane proxy while task shell commands receive a separate proxy limited to networkAllowlist. Off by default.
+- networkAllowlist (string[], optional): exact hostnames, hostname:port entries, or origin URLs available to task shell commands. Codex's built-in OpenAI control-plane endpoints are carried separately and do not widen task-tool egress.
 
 Operational fields:
 - timeoutSec (number, optional): run timeout in seconds
