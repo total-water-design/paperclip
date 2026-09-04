@@ -1,4 +1,15 @@
-import { readFileSync } from "node:fs";
+import {
+  cpSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
@@ -35,19 +46,19 @@ describe("server package build script", () => {
     expect(buildScript).toContain("cp -R src/built-ins/. dist/built-ins/");
   });
 
-  it("vendors the private runner runtime without a production workspace dependency", () => {
+  it("keeps the private runner dependency graph closed and vendors its build", () => {
     const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8")) as {
       scripts?: Record<string, string>;
       dependencies?: Record<string, string>;
       devDependencies?: Record<string, string>;
     };
 
-    expect(
-      packageJson.dependencies?.["@paperclipai/paperclip-runner"],
-    ).toBeUndefined();
-    expect(packageJson.devDependencies?.["@paperclipai/paperclip-runner"]).toBe(
+    expect(packageJson.dependencies?.["@paperclipai/paperclip-runner"]).toBe(
       "workspace:*",
     );
+    expect(
+      packageJson.devDependencies?.["@paperclipai/paperclip-runner"],
+    ).toBeUndefined();
     expect(packageJson.scripts?.["prepare:runner-vendor"]).toBe(
       "pnpm --filter @paperclipai/paperclip-runner build",
     );
@@ -56,14 +67,67 @@ describe("server package build script", () => {
     );
   });
 
-  it("loads runner source when the source server starts before workspace builds", () => {
+  it("loads the runner through its dependency-owning package boundary", () => {
     const shim = readFileSync(runnerShimPath, "utf8");
 
     expect(shim).toContain(
-      '"../../../../packages/paperclip-runner/src/index.ts"',
+      'import("@paperclipai/paperclip-runner")',
     );
     expect(shim).not.toContain(
-      'export * from "@paperclipai/paperclip-runner"',
+      '"../../../../packages/paperclip-runner/src/index.ts"',
     );
+  });
+
+  it("resolves the runner from a detached server dependency graph", () => {
+    const root = mkdtempSync(join(tmpdir(), "paperclip-runner-closure-"));
+    const detachedShim = join(
+      root,
+      "server/src/vendor/paperclip-runner/index.ts",
+    );
+    const detachedRunner = join(
+      root,
+      "server/node_modules/@paperclipai/paperclip-runner",
+    );
+    const runnerRoot = fileURLToPath(
+      new URL("../../../packages/paperclip-runner/", import.meta.url),
+    );
+
+    mkdirSync(dirname(detachedShim), { recursive: true });
+    mkdirSync(dirname(detachedRunner), { recursive: true });
+    writeFileSync(
+      join(root, "server/package.json"),
+      JSON.stringify({ type: "module" }),
+    );
+    cpSync(runnerShimPath, detachedShim);
+    cpSync(join(runnerRoot, "src"), join(detachedRunner, "src"), { recursive: true });
+    symlinkSync(
+      join(runnerRoot, "node_modules"),
+      join(detachedRunner, "node_modules"),
+      "dir",
+    );
+    writeFileSync(
+      join(detachedRunner, "package.json"),
+      JSON.stringify({
+        name: "@paperclipai/paperclip-runner",
+        type: "module",
+        exports: { ".": "./src/index.ts" },
+      }),
+    );
+
+    try {
+      const result = spawnSync(
+        process.execPath,
+        ["--import", import.meta.resolve("tsx"), detachedShim],
+        {
+          cwd: join(root, "server"),
+          encoding: "utf8",
+        },
+      );
+
+      expect(result.stderr).toBe("");
+      expect(result.status).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

@@ -1,11 +1,11 @@
 /**
  * Development shim for the package-local runner runtime.
  *
- * Source-mode server entry points do not build workspace dependencies first,
- * so this shim loads the package source through the TypeScript runtime. The
- * server build replaces the emitted shim with the package's compiled `dist`
- * tree so published server packages have no workspace runtime dependency.
- * Keep server imports pointed at this relative boundary.
+ * Source-mode and deployed server entry points both resolve the runner through
+ * its package boundary. This keeps the runner's runtime dependency graph
+ * attached to it in filtered and detached installs. The server build replaces
+ * the emitted shim with the package's compiled `dist` tree for published
+ * packages. Keep server imports pointed at this relative boundary.
  */
 type RunnerModule = typeof import("@paperclipai/paperclip-runner");
 
@@ -28,11 +28,7 @@ export type DurablePrpControlPlane =
 export type PaperclipSemanticDispatcher =
   import("@paperclipai/paperclip-runner").PaperclipSemanticDispatcher;
 
-const sourceUrl = new URL(
-  "../../../../packages/paperclip-runner/src/index.ts",
-  import.meta.url,
-);
-const runner = await import(sourceUrl.href) as RunnerModule;
+const runner = await import("@paperclipai/paperclip-runner") as RunnerModule;
 
 export const DurablePrpControlPlane = runner.DurablePrpControlPlane;
 export const PaperclipSemanticDispatcher = runner.PaperclipSemanticDispatcher;

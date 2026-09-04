@@ -809,6 +809,9 @@ importers:
       '@paperclipai/hermes-paperclip-adapter':
         specifier: workspace:*
         version: link:../packages/adapters/hermes
+      '@paperclipai/paperclip-runner':
+        specifier: workspace:*
+        version: link:../packages/paperclip-runner
       '@paperclipai/plugin-sdk':
         specifier: workspace:*
         version: link:../packages/plugins/sdk
@@ -879,9 +882,6 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
     devDependencies:
-      '@paperclipai/paperclip-runner':
-        specifier: workspace:*
-        version: link:../packages/paperclip-runner
       '@types/express':
         specifier: ^5.0.0
         version: 5.0.6
