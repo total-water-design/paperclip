@@ -1,5 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import { readConfig, resolveConfigPath } from "../config/store.js";
@@ -9,6 +11,7 @@ import { buildLocalHealthUrl } from "../utils/health-url.js";
 
 type CommonOptions = { instance?: string; json?: boolean };
 type HealthResult = { ok: boolean; serverVersion: string | null; error?: string };
+const execFileAsync = promisify(execFile);
 
 function output(value: unknown, json: boolean | undefined): void {
   if (json) console.log(JSON.stringify(value, null, 2));
@@ -116,6 +119,11 @@ export async function withHotRestartLock<T>(
   }
 }
 
+async function readProcessStartedAt(pid: number): Promise<string> {
+  const stat = await fs.stat(`/proc/${pid}`);
+  return new Date(stat.ctimeMs).toISOString();
+}
+
 async function writeHotRestartIntent(status: ServiceStatus, instanceId: string, drainRequired: boolean): Promise<{ requestedAt: string }> {
   if (!status.pid) throw new Error(`Cannot restart ${status.serviceName}: supervisor did not report a server pid.`);
   const health = await probeHealth(instanceId);
@@ -132,6 +140,73 @@ async function writeHotRestartIntent(status: ServiceStatus, instanceId: string, 
     requestedByRunId: process.env.PAPERCLIP_RUN_ID?.trim() || null,
   }, null, 2)}\n`, "utf8");
   return { requestedAt };
+}
+
+type SystemdHandoffDependencies = {
+  runSystemctl?: (args: string[]) => Promise<string>;
+  probe?: (instanceId: string) => Promise<HealthResult>;
+  waitForHealth?: (instanceId: string, expectedVersion: string | null) => Promise<HealthResult>;
+  waitForReport?: (instanceId: string, requestedAt: string) => Promise<unknown | null>;
+  readStartedAt?: (pid: number) => Promise<string>;
+  detectManager?: typeof detectServiceManager;
+};
+
+function parseSystemdShow(output: string) {
+  return Object.fromEntries(output.trim().split(/\r?\n/).map((line) => line.split(/=(.*)/s).slice(0, 2)));
+}
+
+export async function handoffSystemdService(input: {
+  instanceId?: string;
+  sourceUnit: string;
+  expectedVersion?: string | null;
+}, dependencies: SystemdHandoffDependencies = {}) {
+  if (process.platform !== "linux") throw new Error("First-owner handoff is supported only for systemd on Linux.");
+  if (!/^[A-Za-z0-9_.@:-]+\.service$/.test(input.sourceUnit)) throw new Error("--from-systemd-unit must name one .service unit.");
+  const instanceId = resolvePaperclipInstanceId(input.instanceId);
+  const runSystemctl = dependencies.runSystemctl ?? (async (args) => (await execFileAsync("systemctl", args, { encoding: "utf8" })).stdout);
+  const probe = dependencies.probe ?? probeHealth;
+  const detectManager = dependencies.detectManager ?? detectServiceManager;
+
+  return withHotRestartLock(instanceId, async () => {
+    const detection = await detectManager({ instanceId });
+    if (!detection.supported || detection.manager.platform !== "systemd") throw new Error(detection.supported ? "Target service is not managed by systemd." : detection.reason);
+    const targetBefore = await detection.manager.status();
+    if (!targetBefore.installed) throw new Error(`Install ${targetBefore.serviceName} before handoff.`);
+    if (targetBefore.active || targetBefore.pid) throw new Error(`Refusing handoff: target ${targetBefore.serviceName} is already active.`);
+    if (input.sourceUnit === targetBefore.serviceName) throw new Error("Source and target systemd units must be different.");
+
+    const source = parseSystemdShow(await runSystemctl(["show", input.sourceUnit, "--property=LoadState,ActiveState,MainPID"]));
+    const sourcePid = Number(source.MainPID);
+    if (source.LoadState !== "loaded" || source.ActiveState !== "active" || !Number.isInteger(sourcePid) || sourcePid < 1) {
+      throw new Error(`Source ${input.sourceUnit} is not an active service with a server PID.`);
+    }
+    const healthBefore = await probe(instanceId);
+    if (!healthBefore.ok) throw new Error(`Source ${input.sourceUnit} is not serving the configured Paperclip health endpoint.`);
+
+    const startedAt = await (dependencies.readStartedAt ?? readProcessStartedAt)(sourcePid);
+    const instanceRoot = resolvePaperclipInstanceRoot(instanceId);
+    const requestedAt = new Date().toISOString();
+    await fs.mkdir(instanceRoot, { recursive: true });
+    await fs.rm(path.join(instanceRoot, "hot-restart-report.json"), { force: true });
+    await fs.writeFile(path.join(instanceRoot, "hot-restart-intent.json"), `${JSON.stringify({
+      version: 1, requestedAt, previousServerPid: sourcePid, previousServerStartedAt: startedAt,
+      previousServerVersion: healthBefore.serverVersion, drainRequired: false,
+      requestedByRunId: process.env.PAPERCLIP_RUN_ID?.trim() || null,
+    }, null, 2)}\n`, "utf8");
+
+    await runSystemctl(["stop", input.sourceUnit]);
+    const sourceAfter = parseSystemdShow(await runSystemctl(["show", input.sourceUnit, "--property=ActiveState,MainPID"]));
+    if (sourceAfter.ActiveState === "active" || Number(sourceAfter.MainPID) > 0) throw new Error(`Source ${input.sourceUnit} still owns a process; target was not started.`);
+    if ((await probe(instanceId)).ok) throw new Error("Configured Paperclip endpoint still has a listener after source stop; target was not started.");
+
+    await detection.manager.start();
+    const health = await (dependencies.waitForHealth ?? waitForHealth)(instanceId, resolveRestartExpectedVersion(input.expectedVersion));
+    const report = await (dependencies.waitForReport ?? waitForRestartReport)(instanceId, requestedAt) as { previousServerPid?: unknown; lostRunIds?: unknown } | null;
+    if (!report || report.previousServerPid !== sourcePid || !Array.isArray(report.lostRunIds) || report.lostRunIds.length > 0) {
+      throw new Error("Handoff continuity report is missing, mismatched, or contains lost runs.");
+    }
+    return { sourceUnit: input.sourceUnit, status: await detection.manager.status(), health, report };
+  });
 }
 
 async function waitForRestartReport(instanceId: string, requestedAt: string, timeoutMs = 10_000): Promise<unknown | null> {
@@ -204,6 +279,11 @@ export function registerServiceCommands(program: Command): void {
     .option("--wait", "Wait for active runs to drain instead of adopting them", false)
     .option("--expected-version <version>", "Require the restarted server to report this version")
     .action(async (opts) => output(await restartManagedService({ instanceId: opts.instance, expectedVersion: opts.expectedVersion, waitForDrain: opts.wait }), opts.json));
+
+  common(service.command("handoff").description("Move an active system service to the installed user service without overlapping listeners"))
+    .requiredOption("--from-systemd-unit <unit>", "Active root/system unit to stop and adopt")
+    .option("--expected-version <version>", "Require the replacement server to report this version")
+    .action(async (opts) => output(await handoffSystemdService({ instanceId: opts.instance, sourceUnit: opts.fromSystemdUnit, expectedVersion: opts.expectedVersion }), opts.json));
 
   common(service.command("status").description("Show supervisor and health status")).action(async (opts) => {
     const manager = await resolveManager(opts); if (!manager) return;

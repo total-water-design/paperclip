@@ -197,6 +197,7 @@ paperclipai service uninstall
 paperclipai service start
 paperclipai service stop
 paperclipai service restart [--wait]
+paperclipai service handoff --from-systemd-unit <unit> [--expected-version <version>]
 paperclipai service status [--json]
 paperclipai service logs [-f]
 ```
@@ -207,6 +208,25 @@ environments receive foreground `paperclipai run` guidance.
 
 `paperclipai doctor` includes managed-install and service-health diagnostics in
 addition to configuration, storage, database, logging, and port checks.
+
+For the one-time Linux migration from a root/system unit to an already-installed,
+inactive Paperclip user unit, run `service handoff` as an operator authorized to
+stop the source unit. The command fails closed unless the source owns the healthy
+Paperclip endpoint and the target is inactive. It writes a PID/start-time-bound
+continuity intent, stops the source, verifies both its MainPID and configured
+listener are gone, and only then starts the user unit. Success additionally
+requires a matching restart report whose `lostRunIds` is empty:
+
+```sh
+npx paperclipai service handoff --from-systemd-unit paperclip.service --expected-version <version> --json
+```
+
+Do not start the user unit first and do not edit restart intent or recovery files.
+The installed systemd unit retains its 300-second stop timeout; systemd owns the
+service cgroup while adapter execution owns per-run process groups. Paperclip's
+timeout/cancel and terminal-result paths signal the entire adapter process group,
+then escalate to SIGKILL after its configured grace period, so no additional
+application-side descendant reaper is required for supported local runs.
 
 ## Deployment Modes
 

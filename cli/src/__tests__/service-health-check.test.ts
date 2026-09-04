@@ -10,7 +10,7 @@ import {
   renderLaunchdPlist,
   renderSystemdUnit,
 } from "../services/service-manager.js";
-import { resolveRestartExpectedVersion, withHotRestartLock } from "../commands/service.js";
+import { handoffSystemdService, resolveRestartExpectedVersion, withHotRestartLock } from "../commands/service.js";
 import type { PaperclipConfig } from "../config/schema.js";
 import { buildLocalHealthUrl } from "../utils/health-url.js";
 
@@ -64,6 +64,53 @@ function managerFixture(active = true) {
 }
 
 describe("service health doctor checks", () => {
+  it.skipIf(process.platform !== "linux")("hands off without simultaneous listeners and requires lossless continuity", async () => {
+    const manager = managerFixture(false);
+    const events: string[] = [];
+    manager.start.mockImplementation(async () => { events.push("target-start"); });
+    const probes = [
+      { ok: true, serverVersion: "1.2.3" },
+      { ok: false, serverVersion: null },
+    ];
+    const runSystemctl = vi.fn(async (args: string[]) => {
+      events.push(args.join(" "));
+      if (args[0] === "stop") return "";
+      if (events.some((event) => event.startsWith("stop "))) return "ActiveState=inactive\nMainPID=0\n";
+      return "LoadState=loaded\nActiveState=active\nMainPID=456\n";
+    });
+
+    const result = await handoffSystemdService({ sourceUnit: "paperclip.service", expectedVersion: "1.2.3" }, {
+      runSystemctl,
+      probe: vi.fn(async () => probes.shift()!),
+      waitForHealth: vi.fn(async () => ({ ok: true, serverVersion: "1.2.3" })),
+      waitForReport: vi.fn(async (_instanceId, requestedAt) => ({ requestedAt, previousServerPid: 456, lostRunIds: [] })),
+      readStartedAt: vi.fn(async () => "2026-09-04T00:00:00.000Z"),
+      detectManager: vi.fn(async () => ({ supported: true as const, manager })),
+    });
+
+    expect(events).toEqual([
+      "show paperclip.service --property=LoadState,ActiveState,MainPID",
+      "stop paperclip.service",
+      "show paperclip.service --property=ActiveState,MainPID",
+      "target-start",
+    ]);
+    expect(result.report).toMatchObject({ previousServerPid: 456, lostRunIds: [] });
+  });
+
+  it.skipIf(process.platform !== "linux")("does not start the target while any listener remains", async () => {
+    const manager = managerFixture(false);
+    const runSystemctl = vi.fn(async (args: string[]) => args[0] === "show" && args[1] === "paperclip.service" && args[2]?.includes("LoadState")
+      ? "LoadState=loaded\nActiveState=active\nMainPID=456\n"
+      : "ActiveState=inactive\nMainPID=0\n");
+    await expect(handoffSystemdService({ sourceUnit: "paperclip.service" }, {
+      runSystemctl,
+      probe: vi.fn(async () => ({ ok: true, serverVersion: "1.2.3" })),
+      readStartedAt: vi.fn(async () => "2026-09-04T00:00:00.000Z"),
+      detectManager: vi.fn(async () => ({ supported: true as const, manager })),
+    })).rejects.toThrow("still has a listener");
+    expect(manager.start).not.toHaveBeenCalled();
+  });
+
   it("skips live service checks during the managed unit's own activation", async () => {
     process.env.PAPERCLIP_SERVICE_MANAGED = "1";
     const detect = vi.fn();

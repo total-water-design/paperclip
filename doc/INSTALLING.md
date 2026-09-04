@@ -155,6 +155,17 @@ paperclipai service logs -f
 paperclipai service uninstall
 ```
 
+For a first migration from a legacy root-managed `paperclip.service` to an
+already-installed, inactive user service, use the guarded handoff path:
+
+```sh
+npx paperclipai service handoff --from-systemd-unit paperclip.service --expected-version <version> --json
+```
+
+The operator must already be authorized to stop the system unit. The command
+records continuity intent, stops and verifies the old owner before starting the
+replacement, and succeeds only for a matching report with `lostRunIds: []`.
+
 Paperclip uses a systemd user service on Linux and WSL2 systems with user
 systemd, and a LaunchAgent on macOS. Containers, WSL1, and systems without a
 supported user service manager receive foreground `paperclipai run` guidance
