@@ -10,7 +10,7 @@ def test_public_routes_render_and_product_ctas_match_status():
         response = client.get(path)
         assert response.status_code == 200, path
     assert b'Start a design' in client.get('/applications/ro').data
-    assert b'Join the waitlist' in client.get('/applications/bio').data
+    assert b'Follow development' in client.get('/applications/bio').data
 
 
 def test_every_product_has_controlled_status_and_disclosures():
@@ -50,11 +50,11 @@ def test_home_platform_and_ro_have_substantive_controlled_content():
     client = app.test_client()
     home = client.get('/').get_data(as_text=True)
     for phrase in ('Integrated Does Not Mean One Oversimplified Solver', '01 — Define the basis',
-                   'See the Engineering—Not Only the Interface.', '500 engineering hours/year',
+                   'Sample reports are planned.', '500 engineering hours/year',
                    'Built to Show Its Work.', 'More Engineering. Less Re-Engineering.'):
         assert phrase in home
     platform = client.get('/platform').get_data(as_text=True)
-    for phrase in ('The Shared Project Foundation', 'Each Application Owns Its Physics',
+    for phrase in ('The Shared Project Foundation',
                    'Preserve Meaning at Every Handoff', 'Progressive Integration, Clearly Disclosed',
                    'The Complete Engineering Workflow Being Built'):
         assert phrase in platform
@@ -63,6 +63,30 @@ def test_home_platform_and_ro_have_substantive_controlled_content():
                    'Fresh make-up enters while permeate is produced', 'Entitlement is not engineering eligibility',
                    'TDS-only mass balance does not certify chemistry feasibility'):
         assert phrase in ro
+
+
+def test_public_maturity_and_evidence_disclosures_are_actual_http_content():
+    client = app.test_client()
+    ro = client.get('/applications/ro').get_data(as_text=True)
+    for phrase in ('Conventional RO — current', 'True Batch RO — preview',
+                   'Semi-Batch RO — under validation', 'Availability does not make every mode or ERD path current'):
+        assert phrase in ro
+    pretreatment = client.get('/applications/pretreatment').get_data(as_text=True)
+    for phrase in ('3–9 h focused CEB/CIP study', '6–20 h conceptual train is planned-engine scope',
+                   'coagulation, sludge thickening and filter press', 'No unpublished cleaner is auto-populated'):
+        assert phrase in pretreatment
+    bio = client.get('/applications/bio').get_data(as_text=True)
+    assert 'BOD/COD/TSS cannot infer ions' in bio
+    assert 'gross-to-net flux, cycles/downtime, membrane area, N+1 trains' in bio
+    zld = client.get('/applications/zld').get_data(as_text=True)
+    assert '280–305 K, 35,000–95,000 mg/L, Reynolds number 45–90 and Prandtl number 5–10' in zld
+    balance = client.get('/applications/balance').get_data(as_text=True)
+    assert 'does not average pH, infer partitioning, invent mass or hide a non-converged recycle' in balance
+    economics = client.get('/applications/economics').get_data(as_text=True)
+    assert 'No silent 1:1 conversion is used' in economics
+    reports = client.get('/sample-reports').get_data(as_text=True)
+    assert 'not currently available' in reports
+    assert 'View sample reports' not in reports
 
 
 def test_route_seo_and_theme_contract_are_rendered():
