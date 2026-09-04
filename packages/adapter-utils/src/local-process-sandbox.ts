@@ -49,9 +49,9 @@ interface NetworkAllowlistProxy {
 }
 
 const SYSTEM_READ_PATHS = [
+  "/usr",
   "/bin",
   "/sbin",
-  "/usr",
   "/lib",
   "/lib64",
   "/etc/ca-certificates",
@@ -408,17 +408,26 @@ export async function buildLocalProcessSandboxSpawnTarget(input: {
 
   if (filesystemScope === "workspace") {
     args.push("--tmpfs", "/", "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp");
-    args.push(
-      "--symlink", "usr/bin", "/bin",
-      "--symlink", "usr/sbin", "/sbin",
-      "--symlink", "usr/lib", "/lib",
-      "--symlink", "usr/lib64", "/lib64",
-    );
     const created = new Set<string>(["/", "/proc", "/dev", "/tmp"]);
     const mounted = new Set<string>();
     const mount = async (source: string, access: LocalProcessSandboxAccess) => {
       const normalized = normalizeAbsolutePath(source, "Sandbox path");
       if (mounted.has(normalized) || !(await pathExists(normalized))) return;
+      // Mount /usr first and preserve the host's actual system aliases.
+      if (["/bin", "/sbin", "/lib", "/lib64"].includes(normalized)) {
+        const stat = await fs.lstat(normalized);
+        if (stat.isSymbolicLink()) {
+          const target = await fs.readlink(normalized);
+          const resolved = await fs.realpath(normalized);
+          if (!mounted.has("/usr") || !resolved.startsWith("/usr/")) {
+            throw new Error(`Unsupported sandbox system alias: ${normalized} -> ${target}`);
+          }
+          args.push("--symlink", target, normalized);
+          mounted.add(normalized);
+          created.add(normalized);
+          return;
+        }
+      }
       addParentDirectories(args, created, normalized);
       args.push(access === "rw" ? "--bind" : "--ro-bind", normalized, normalized);
       mounted.add(normalized);
