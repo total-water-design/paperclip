@@ -1,4 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { fileURLToPath } from "node:url";
+import { runChildProcess } from "@paperclipai/adapter-utils/server-utils";
+
+type ExecutionTargetRunner = typeof import("@paperclipai/adapter-utils/execution-target").runAdapterExecutionTargetProcess;
 
 const {
   ensureAdapterExecutionTargetCommandResolvable,
@@ -123,7 +127,7 @@ function buildContext(config: Record<string, unknown> = {}) {
       ...config,
     },
     context: {},
-    onLog: vi.fn(async () => {}),
+    onLog: vi.fn(async (_stream: "stdout" | "stderr", _text: string) => {}),
   };
 }
 
@@ -133,7 +137,11 @@ describe("codex_local ACP startup fallback", () => {
   });
 
   it("falls back to Codex CLI when auto-selected ACP fails before execution starts", async () => {
-    const ctx = buildContext();
+    const ctx = buildContext({
+      networkScope: "allowlist",
+      networkAllowlist: ["api.openai.com"],
+      filesystemSandboxCommand: "/usr/bin/bwrap",
+    });
 
     const result = await execute(ctx as never);
 
@@ -141,6 +149,19 @@ describe("codex_local ACP startup fallback", () => {
     expect(result.summary).toBe("hello");
     expect(executeCodexAcp).toHaveBeenCalledTimes(1);
     expect(runAdapterExecutionTargetProcess).toHaveBeenCalledTimes(1);
+    expect(runAdapterExecutionTargetProcess).toHaveBeenCalledWith(
+      "run-1",
+      null,
+      "codex",
+      expect.any(Array),
+      expect.objectContaining({
+        localProcessSandbox: expect.objectContaining({
+          networkScope: "allowlist",
+          networkAllowlist: ["api.openai.com"],
+          command: "/usr/bin/bwrap",
+        }),
+      }),
+    );
     expect(ctx.onLog).toHaveBeenCalledWith(
       "stderr",
       expect.stringContaining("Codex ACP startup failed"),
@@ -149,6 +170,48 @@ describe("codex_local ACP startup fallback", () => {
       "stderr",
       expect.stringContaining('Unexpected "<<"'),
     );
+  });
+
+  it("keeps ACP fallback stdout byte-complete through confined allowlist backpressure", async () => {
+    const fakeBubblewrap = fileURLToPath(
+      new URL("../../../../adapter-utils/src/test-fixtures/nonblocking-bwrap.mjs", import.meta.url),
+    );
+    const payloadUnit = "codex-fallback-output-";
+    const payloadRepetitions = 16_384;
+    const payload = payloadUnit.repeat(payloadRepetitions);
+    const writerScript = `const fs=require("node:fs");const payload=${JSON.stringify(payloadUnit)}.repeat(${payloadRepetitions});` +
+      `const output=JSON.stringify({type:"item.completed",item:{type:"agent_message",text:payload}})+"\\n";` +
+      `try { for(let offset=0;offset<output.length;offset+=4096) fs.writeSync(1,output.slice(offset,offset+4096)); } ` +
+      `catch(error) { fs.writeSync(2,"failed printing to stdout: Resource temporarily unavailable (os error 11)\\n"); process.exit(101); }`;
+    const fallbackRunner = runAdapterExecutionTargetProcess as unknown as {
+      mockImplementationOnce: (implementation: ExecutionTargetRunner) => void;
+    };
+    fallbackRunner.mockImplementationOnce(async (runId, _target, _command, _args, options) =>
+      runChildProcess(runId, process.execPath, ["-e", writerScript], {
+        cwd: process.cwd(),
+        env: options.env,
+        timeoutSec: 10,
+        graceSec: 1,
+        localProcessSandbox: options.localProcessSandbox,
+        onLog: async (stream, text) => {
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          await options.onLog(stream, text);
+        },
+      }),
+    );
+    const ctx = buildContext({
+      networkScope: "allowlist",
+      networkAllowlist: ["api.openai.com"],
+      filesystemSandboxCommand: fakeBubblewrap,
+    });
+
+    const result = await execute(ctx as never);
+
+    expect(Buffer.byteLength(payload)).toBeGreaterThan(256 * 1024);
+    expect(result.exitCode).toBe(0);
+    expect(result.summary).toBe(payload);
+    const logged = ctx.onLog.mock.calls.map(([, text]) => text).join("");
+    expect(logged).not.toMatch(/EAGAIN|os error 11|failed printing to stdout/);
   });
 
   it("keeps explicit ACP strict when startup fails", async () => {

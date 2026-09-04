@@ -80,16 +80,24 @@ const NETWORK_PROXY_TEMP_PREFIX = "paperclip-network-sandbox-";
 // remains available inside a fresh-root sandbox.
 const BLOCKING_STDIO_LAUNCHER = `
 const { spawn } = require("node:child_process");
+const { once } = require("node:events");
 const [command, ...args] = process.argv.slice(1);
 if (!command) process.exit(126);
-const child = spawn(command, args, { env: process.env, stdio: "inherit" });
+const child = spawn(command, args, { env: process.env, stdio: ["inherit", "pipe", "pipe"] });
+const forward = async (readable, writable) => {
+  for await (const chunk of readable) {
+    if (!writable.write(chunk)) await once(writable, "drain");
+  }
+};
+const forwarded = Promise.all([forward(child.stdout, process.stdout), forward(child.stderr, process.stderr)]);
 child.on("error", (error) => {
   process.stderr.write("[paperclip] unable to start confined command: " + error.message + "\\n");
   process.exit(126);
 });
-child.on("exit", (code, signal) => {
+child.on("close", async (code, signal) => {
+  await forwarded;
   if (signal) process.kill(process.pid, signal);
-  else process.exit(code == null ? 1 : code);
+  else process.exitCode = code == null ? 1 : code;
 });
 `.trim();
 
@@ -335,6 +343,7 @@ async function createNetworkProxyBridge(): Promise<string> {
   const source = `
 const net = require("node:net");
 const { spawn } = require("node:child_process");
+const { once } = require("node:events");
 const socketPath = process.argv[2];
 const executable = process.argv[3];
 const args = process.argv.slice(4);
@@ -347,14 +356,26 @@ const server = net.createServer((client) => {
   upstream.on("error", close);
 });
 server.listen(${SANDBOX_PROXY_PORT}, "127.0.0.1", () => {
-  const child = spawn(executable, args, { stdio: "inherit", env: process.env });
+  // Keep the final command off the bridge's inherited open file descriptions.
+  // A fresh pipe gives the child blocking fd 1/2 even when Bubblewrap's ends
+  // carry O_NONBLOCK; Node drains those pipes without exposing EAGAIN to Codex.
+  const child = spawn(executable, args, { stdio: ["inherit", "pipe", "pipe"], env: process.env });
+  const pump = async (readable, writable) => {
+    for await (const chunk of readable) {
+      if (!writable.write(chunk)) await once(writable, "drain");
+    }
+  };
+  const forwarded = Promise.all([pump(child.stdout, process.stdout), pump(child.stderr, process.stderr)]);
   const forward = (signal) => { if (!child.killed) child.kill(signal); };
   process.on("SIGTERM", () => forward("SIGTERM"));
   process.on("SIGINT", () => forward("SIGINT"));
-  child.on("exit", (code, signal) => server.close(() => {
+  child.on("close", async (code, signal) => {
+    await forwarded;
+    server.close(() => {
     if (signal) process.kill(process.pid, signal);
-    else process.exit(code == null ? 1 : code);
-  }));
+    else process.exitCode = code == null ? 1 : code;
+    });
+  });
 });
 `;
   return source.trimStart();

@@ -98,7 +98,7 @@ describe("local process sandbox", () => {
     expect(target.args.slice(-6)).toEqual([
       process.execPath,
       "-e",
-      expect.stringContaining('stdio: "inherit"'),
+      expect.stringContaining('stdio: ["inherit", "pipe", "pipe"]'),
       process.execPath,
       "-e",
       "console.log('ok')",
@@ -134,8 +134,6 @@ describe("local process sandbox", () => {
     expect(reproduction.exitCode).toBe(101);
     expect(reproductionStderr).toContain("failed printing to stdout: Resource temporarily unavailable (os error 11)");
 
-    let captured = "";
-
     const result = await runChildProcess(
       "confined-high-volume-stdio",
       process.execPath,
@@ -152,7 +150,6 @@ describe("local process sandbox", () => {
         },
         onLog: async (stream, text) => {
           await new Promise((resolve) => setTimeout(resolve, 5));
-          if (stream === "stdout") captured += text;
         },
       },
     );
@@ -160,7 +157,44 @@ describe("local process sandbox", () => {
     expect(Buffer.byteLength(expected)).toBeGreaterThan(64 * 1024);
     expect(result.exitCode, result.stderr).toBe(0);
     expect(result.stderr).not.toContain("failed printing to stdout");
-    expect(captured).toBe(expected);
+    expect(result.stdout).toBe(expected);
+  });
+
+  it("preserves every byte through the allowlist bridge under confined high-volume stdout backpressure", async () => {
+    const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-confined-bridge-stdio-"));
+    cleanup.push(workspace);
+    const fakeBubblewrap = path.join(fixtureDir, "test-fixtures", "nonblocking-bwrap.mjs");
+    const chunk = "fedcba9876543210".repeat(256);
+    const repetitions = 128;
+    const expected = chunk.repeat(repetitions);
+    const writerScript = `const fs=require("node:fs");const chunk=${JSON.stringify(chunk)};` +
+      `try { for(let i=0;i<${repetitions};i++) fs.writeSync(1,chunk); } ` +
+      `catch(error) { fs.writeSync(2,"failed printing to stdout: Resource temporarily unavailable (os error 11)\\n"); process.exit(101); }`;
+    const result = await runChildProcess(
+      "confined-allowlist-high-volume-stdio",
+      process.execPath,
+      ["-e", writerScript],
+      {
+        cwd: workspace,
+        env: {},
+        timeoutSec: 10,
+        graceSec: 1,
+        localProcessSandbox: {
+          workspaceDir: workspace,
+          networkScope: "allowlist",
+          networkAllowlist: ["api.openai.com"],
+          command: fakeBubblewrap,
+        },
+        onLog: async (stream, text) => {
+          await new Promise((resolve) => setTimeout(resolve, 5));
+        },
+      },
+    );
+
+    expect(Buffer.byteLength(expected)).toBeGreaterThan(64 * 1024);
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(result.stderr).not.toMatch(/EAGAIN|os error 11|failed printing to stdout/);
+    expect(result.stdout).toBe(expected);
   });
 
   it("binds a confined absolute alias to the synchronized workspace", async () => {
