@@ -9,6 +9,13 @@ import {
   ensurePathInEnv,
 } from "@paperclipai/adapter-utils/server-utils";
 import {
+  parseLocalProcessFilesystemScope,
+  parseLocalProcessSandboxExtraPaths,
+  parseLocalProcessNetworkAllowlist,
+  parseLocalProcessNetworkScope,
+  type LocalProcessSandboxOptions,
+} from "@paperclipai/adapter-utils/local-process-sandbox";
+import {
   ensureAdapterExecutionTargetCommandResolvable,
   ensureAdapterExecutionTargetDirectory,
   maybeRunSandboxInstallCommand,
@@ -62,6 +69,24 @@ function summarizeProbeDetail(stdout: string, stderr: string, parsedError: strin
 
 const CODEX_AUTH_REQUIRED_RE =
   /(?:not\s+logged\s+in|login\s+required|authentication\s+required|unauthorized|invalid(?:\s+or\s+missing)?\s+api(?:[_\s-]?key)?|openai[_\s-]?api[_\s-]?key|api[_\s-]?key.*required|please\s+run\s+`?codex\s+login`?)/i;
+
+const CODEX_CONNECTIVITY_POLICY_RE =
+  /(?:HTTP CONNECT[^\n]*(?:403|forbidden)|proxy[^\n]*(?:403|forbidden)|network (?:access|egress)[^\n]*(?:denied|blocked)|not allowlisted)/i;
+const CODEX_TRANSIENT_CONNECTIVITY_RE =
+  /(?:error sending request|connection (?:failed|reset|refused)|temporar(?:y|ily) unavailable|timed?\s*out|timeout|unexpected eof|dns|name resolution|502 bad gateway|503 service unavailable|504 gateway timeout)/i;
+const CODEX_PREFLIGHT_ATTEMPTS = 3;
+const CODEX_PREFLIGHT_BACKOFF_MS = [1_000, 2_000] as const;
+
+export function classifyCodexPreflightFailure(evidence: string): "auth" | "policy" | "transient" | "fatal" {
+  if (CODEX_AUTH_REQUIRED_RE.test(evidence)) return "auth";
+  if (CODEX_CONNECTIVITY_POLICY_RE.test(evidence)) return "policy";
+  if (CODEX_TRANSIENT_CONNECTIVITY_RE.test(evidence)) return "transient";
+  return "fatal";
+}
+
+function waitForPreflightBackoff(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 async function prepareCodexHelloProbe(input: {
   runId: string;
@@ -225,6 +250,17 @@ export async function testEnvironment(
     : null;
   const runId = `codex-envtest-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
+  const filesystemScope = parseLocalProcessFilesystemScope(config.filesystemScope);
+  const networkScope = parseLocalProcessNetworkScope(config.networkScope);
+  if ((filesystemScope || networkScope) && (!engineSelection.explicit || engineSelection.engine !== "cli")) {
+    checks.push({
+      code: "codex_confined_cli_not_explicit",
+      level: "error",
+      message: "Confined Codex preflight requires engine=cli to be set explicitly.",
+      hint: "Pin engine=cli; automatic ACP-to-CLI fallback is not an acceptable confined runtime policy.",
+    });
+  }
+
   if (targetLabel) {
     checks.push({
       code: "codex_environment_target",
@@ -372,20 +408,87 @@ export async function testEnvironment(
         probeApiKey,
       });
       try {
-        const probe = await runAdapterExecutionTargetProcess(
-          runId,
+        const localProcessSandbox: LocalProcessSandboxOptions | null =
+          (filesystemScope || networkScope) && !targetIsRemote
+            ? {
+                workspaceDir: cwd,
+                filesystemScope,
+                managedPaths: isNonEmpty(preparedProbe.env.CODEX_HOME)
+                  ? [{ path: preparedProbe.env.CODEX_HOME, access: "rw" }]
+                  : [],
+                extraPaths: parseLocalProcessSandboxExtraPaths(config.filesystemExtraPaths),
+                homeDir: filesystemScope && isNonEmpty(preparedProbe.env.CODEX_HOME)
+                  ? preparedProbe.env.CODEX_HOME
+                  : null,
+                networkScope,
+                networkAllowlist: parseLocalProcessNetworkAllowlist(config.networkAllowlist),
+                command: asString(config.filesystemSandboxCommand, "bwrap"),
+              }
+            : null;
+        const modelProbe = await runAdapterExecutionTargetProcess(
+          `${runId}-models`,
           target,
-          preparedProbe.command,
-          preparedProbe.args,
+          command,
+          ["debug", "models"],
           {
             cwd,
             env: preparedProbe.env,
-            timeoutSec: 45,
+            timeoutSec: 20,
             graceSec: 5,
-            stdin: "Respond with hello.",
             onLog: async () => {},
+            localProcessSandbox,
           },
         );
+        const modelProbeDetail = summarizeProbeDetail(modelProbe.stdout, modelProbe.stderr, null);
+        if (modelProbe.timedOut || (modelProbe.exitCode ?? 1) !== 0) {
+          checks.push({
+            code: "codex_model_list_preflight_failed",
+            level: "error",
+            message: modelProbe.timedOut
+              ? "Codex model-list preflight timed out after 20 seconds."
+              : "Codex model-list preflight failed.",
+            ...(modelProbeDetail ? { detail: modelProbeDetail } : {}),
+            hint: "Run `codex debug models` in the configured confined environment; this gate is not retried.",
+          });
+          return {
+            adapterType: ctx.adapterType,
+            status: summarizeStatus(checks),
+            checks,
+            testedAt: new Date().toISOString(),
+          };
+        }
+        checks.push({
+          code: "codex_model_list_preflight_passed",
+          level: "info",
+          message: "Codex model-list preflight succeeded in the configured execution environment.",
+        });
+        let probe: Awaited<ReturnType<typeof runAdapterExecutionTargetProcess>> | null = null;
+        let probeAttempt = 0;
+        for (; probeAttempt < CODEX_PREFLIGHT_ATTEMPTS; probeAttempt += 1) {
+          probe = await runAdapterExecutionTargetProcess(
+            `${runId}-${probeAttempt + 1}`,
+            target,
+            preparedProbe.command,
+            preparedProbe.args,
+            {
+              cwd,
+              env: preparedProbe.env,
+              timeoutSec: 45,
+              graceSec: 5,
+              stdin: "Respond with hello.",
+              onLog: async () => {},
+              localProcessSandbox,
+            },
+          );
+          const parsedAttempt = parseCodexJsonl(probe.stdout);
+          const evidence = `${parsedAttempt.errorMessage ?? ""}\n${probe.stdout}\n${probe.stderr}`;
+          if ((probe.exitCode ?? 1) === 0 || probe.timedOut) break;
+          if (classifyCodexPreflightFailure(evidence) !== "transient") break;
+          if (probeAttempt < CODEX_PREFLIGHT_BACKOFF_MS.length) {
+            await waitForPreflightBackoff(CODEX_PREFLIGHT_BACKOFF_MS[probeAttempt]);
+          }
+        }
+        if (!probe) throw new Error("Codex preflight did not start.");
         const parsed = parseCodexJsonl(probe.stdout);
         const detail = summarizeProbeDetail(probe.stdout, probe.stderr, parsed.errorMessage);
         const authEvidence = `${parsed.errorMessage ?? ""}\n${probe.stdout}\n${probe.stderr}`.trim();
@@ -413,7 +516,7 @@ export async function testEnvironment(
                   hint: "Try the probe manually (`codex exec --json -` then prompt: Respond with hello) to inspect full output.",
                 }),
           });
-        } else if (CODEX_AUTH_REQUIRED_RE.test(authEvidence)) {
+        } else if (classifyCodexPreflightFailure(authEvidence) === "auth") {
           checks.push({
             code: "codex_hello_probe_auth_required",
             level: "warn",
@@ -436,12 +539,17 @@ export async function testEnvironment(
             });
           }
         } else {
+          const failureClass = classifyCodexPreflightFailure(authEvidence);
           checks.push({
-            code: "codex_hello_probe_failed",
+            code: failureClass === "policy" ? "codex_hello_probe_policy_denied" : "codex_hello_probe_failed",
             level: "error",
-            message: "Codex hello probe failed.",
+            message: failureClass === "policy"
+              ? "Codex connectivity preflight was denied by network policy."
+              : "Codex hello probe failed.",
             ...(detail ? { detail } : {}),
-            hint: "Run `codex exec --json -` manually in this working directory and prompt `Respond with hello` to debug.",
+            hint: failureClass === "policy"
+              ? "Verify the configured proxy and exact networkAllowlist entries; policy failures are not retried."
+              : `Run \`codex exec --json -\` manually in this working directory to debug (attempts: ${probeAttempt + 1}/${CODEX_PREFLIGHT_ATTEMPTS}).`,
           });
         }
       } finally {
