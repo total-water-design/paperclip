@@ -114,11 +114,11 @@ def test_route_seo_and_theme_contract_are_rendered():
 
 def test_public_contrast_tokens_and_favicon_are_runtime_contracts():
     css = open('static/public_website.css', encoding='utf-8').read()
-    assert '--suite-cyan:#006b86' in css
+    assert '--suite-cyan:#004c60!important' in css
     assert '--suite-eyebrow:#005f73' in css
     assert '--suite-cyan:#75e2ef' in css
     assert '--suite-eyebrow:#8ee9f2' in css
-    for foreground, background in (('#006b86', '#f5f9fc'), ('#005f73', '#f5f9fc'),
+    for foreground, background in (('#004c60', '#f5f9fc'), ('#005f73', '#f5f9fc'),
                                    ('#75e2ef', '#0c1722'), ('#75e2ef', '#142535'),
                                    ('#8ee9f2', '#0c1722'), ('#8ee9f2', '#142535')):
         assert _contrast_ratio(foreground, background) >= 4.5
