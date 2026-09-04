@@ -31,6 +31,51 @@ describe("server package build script", () => {
     );
   });
 
+  it("starts compiled output with the production TypeScript resolver", () => {
+    const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8")) as {
+      scripts?: Record<string, string>;
+      dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+    };
+
+    expect(packageJson.scripts?.start).toBe(
+      "node --import ./node_modules/tsx/dist/loader.mjs dist/index.js",
+    );
+    expect(packageJson.dependencies?.tsx).toBe("^4.23.12");
+    expect(packageJson.devDependencies?.tsx).toBeUndefined();
+
+    const root = mkdtempSync(join(tmpdir(), "paperclip-server-start-"));
+    const detachedServer = join(root, "server");
+    const serverRoot = dirname(packageJsonPath);
+    mkdirSync(join(detachedServer, "dist"), { recursive: true });
+    writeFileSync(
+      join(detachedServer, "package.json"),
+      JSON.stringify({ type: "module" }),
+    );
+    writeFileSync(
+      join(detachedServer, "dist/index.js"),
+      'import "@paperclipai/db";\n',
+    );
+    symlinkSync(
+      join(serverRoot, "node_modules"),
+      join(detachedServer, "node_modules"),
+      "dir",
+    );
+
+    try {
+      const result = spawnSync(
+        process.execPath,
+        ["--import", "./node_modules/tsx/dist/loader.mjs", "dist/index.js"],
+        { cwd: detachedServer, encoding: "utf8" },
+      );
+
+      expect(result.stderr).toBe("");
+      expect(result.status).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("copies static runtime asset directories into dist", () => {
     const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8")) as {
       scripts?: Record<string, string>;
