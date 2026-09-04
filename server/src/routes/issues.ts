@@ -62,6 +62,7 @@ import {
   restoreIssueDocumentRevisionSchema,
   respondIssueThreadInteractionSchema,
   stalledReviewDecisionSchema,
+  reconcileLostReviewDecisionSchema,
   submitIssueThreadInteractionVerdictsSchema,
   updateIssueWorkProductSchema,
   updateDocumentAnnotationThreadSchema,
@@ -206,6 +207,7 @@ import {
 } from "../services/issues.js";
 import { authorizationDeniedDetails } from "../services/authorization.js";
 import { stalledReviewDecisionService } from "../services/stalled-review-decisions.js";
+import { lostReviewDecisionReconciliationService } from "../services/lost-review-decision-reconciliation.js";
 import { environmentService } from "../services/environments.js";
 import { environmentRuntimeService } from "../services/environment-runtime.js";
 import { redactSensitiveText } from "../redaction.js";
@@ -9369,6 +9371,63 @@ export function issueRoutes(
         comment: result.comment,
         wakeQueued,
       });
+    },
+  );
+
+  router.post(
+    "/issues/:id/reconcile-lost-review-decision",
+    validate(reconcileLostReviewDecisionSchema),
+    async (req, res) => {
+      const id = req.params.id as string;
+      const issue = await getAccessibleResource(req, res, svc.getById(id), "Issue not found");
+      if (!issue) return;
+      assertBoard(req);
+      const actor = getActorInfo(req);
+      if (actor.actorId !== req.body.approvingUserId) {
+        throw forbidden("Authenticated Board actor must match approvingUserId");
+      }
+      if (req.actor.source !== "local_implicit") {
+        const membership = await db.select({ role: companyMemberships.membershipRole })
+          .from(companyMemberships).where(and(
+            eq(companyMemberships.companyId, issue.companyId),
+            eq(companyMemberships.principalType, "user"),
+            eq(companyMemberships.principalId, actor.actorId),
+            eq(companyMemberships.status, "active"),
+          )).then((rows) => rows[0] ?? null);
+        if (!membership?.role || membership.role === "viewer") {
+          throw forbidden("Active non-viewer company membership required");
+        }
+      }
+      const result = await lostReviewDecisionReconciliationService(db).reconcileApproved({
+        issueId: issue.id, companyId: issue.companyId,
+        candidate: req.body.candidate, stageId: req.body.stageId,
+        approvingUserId: req.body.approvingUserId,
+        evidenceCommentId: req.body.evidenceCommentId,
+        actorUserId: actor.actorId, runId: actor.runId,
+      });
+
+      let dependencyWakesQueued = 0;
+      if (result.reconciled) {
+        const dependents = await svc.listWakeableBlockedDependents(issue.id);
+        for (const dependent of dependents) {
+          const wake = await enqueueStalledReviewDecisionWakeup(dependent.assigneeAgentId, {
+            source: "automation", triggerDetail: "system", reason: ISSUE_BLOCKERS_RESOLVED_WAKE_REASON,
+            idempotencyKey: buildIssueBlockersResolvedWakeStateKey({
+              dependentIssueId: dependent.id, blockerIssueIds: dependent.blockerIssueIds,
+              blockedTransitionAt: dependent.blockedTransitionAt,
+            }),
+            requestedByActorType: "user", requestedByActorId: actor.actorId,
+            payload: { issueId: dependent.id, resolvedBlockerIssueId: issue.id,
+              blockerIssueIds: dependent.blockerIssueIds, mutation: "lost_review_decision_reconciled" },
+            contextSnapshot: { issueId: dependent.id, taskId: dependent.id,
+              wakeReason: ISSUE_BLOCKERS_RESOLVED_WAKE_REASON,
+              source: "issue.lost_review_decision_reconciled", resolvedBlockerIssueId: issue.id,
+              blockerIssueIds: dependent.blockerIssueIds },
+          });
+          if (wake) dependencyWakesQueued += 1;
+        }
+      }
+      res.json({ ...result, decisionId: result.decision.id, dependencyWakesQueued });
     },
   );
 
