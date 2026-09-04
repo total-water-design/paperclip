@@ -4,6 +4,16 @@ from app import app
 from suite_catalog import public_product_catalog
 
 
+def _contrast_ratio(foreground: str, background: str) -> float:
+    def luminance(color: str) -> float:
+        channels = [int(color[index:index + 2], 16) / 255 for index in (1, 3, 5)]
+        linear = [value / 12.92 if value <= 0.04045 else ((value + 0.055) / 1.055) ** 2.4 for value in channels]
+        return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+
+    first, second = luminance(foreground), luminance(background)
+    return (max(first, second) + 0.05) / (min(first, second) + 0.05)
+
+
 def test_public_routes_render_and_product_ctas_match_status():
     client = app.test_client()
     for path in ('/', '/platform', '/applications', '/sample-reports', '/privacy', '/applications/ro', '/applications/bio'):
@@ -100,3 +110,45 @@ def test_route_seo_and_theme_contract_are_rendered():
     assert 'class="theme-toggle"' in nav
     script = open('static/public_website.js', encoding='utf-8').read()
     assert "twds-public-theme" in script and "dataset.theme" in script
+
+
+def test_public_contrast_tokens_and_favicon_are_runtime_contracts():
+    css = open('static/public_website.css', encoding='utf-8').read()
+    assert '--suite-cyan:#006b86' in css
+    assert '--suite-eyebrow:#005f73' in css
+    assert '--suite-cyan:#75e2ef' in css
+    assert '--suite-eyebrow:#8ee9f2' in css
+    for foreground, background in (('#006b86', '#f5f9fc'), ('#005f73', '#f5f9fc'),
+                                   ('#75e2ef', '#0c1722'), ('#75e2ef', '#142535'),
+                                   ('#8ee9f2', '#0c1722'), ('#8ee9f2', '#142535')):
+        assert _contrast_ratio(foreground, background) >= 4.5
+
+    client = app.test_client()
+    for path in ('/', '/platform', '/applications', '/applications/bio', '/applications/zld'):
+        assert 'totalrodesign_icon.ico' in client.get(path).get_data(as_text=True)
+    assert client.get('/static/totalrodesign_icon.ico').status_code == 200
+
+
+def test_public_handoff_bio_and_zld_disclosures_are_actual_http_content():
+    client = app.test_client()
+    platform = client.get('/platform').get_data(as_text=True)
+    for phrase in ('Source Water → Pretreatment', 'Pretreatment → Membranes/Bio',
+                   'Membranes/Bio → Reuse', 'Concentrate/residual → ZLD',
+                   'Development handoffs do not establish current customer connectivity'):
+        assert phrase in platform
+    system = client.get('/applications/system_integration').get_data(as_text=True)
+    assert 'development handoffs do not establish current customer connectivity' in system
+    balance = client.get('/applications/balance').get_data(as_text=True)
+    assert 'Direct specialist adapters and customer connectivity are planned/deferred' in balance
+    bio = client.get('/applications/bio').get_data(as_text=True)
+    for phrase in ('MBBR, SBR, anaerobic treatment', 'active versus installed area',
+                   'offline peak flux', '1–4 h basis/fractionation', '3–7 h MBR planning',
+                   '6–18 h overall concept'):
+        assert phrase in bio
+    assert '10–28 h detailed MBR planning' not in bio
+    zld = client.get('/applications/zld').get_data(as_text=True)
+    for phrase in ('separately validated design U', 'never silently extrapolated',
+                   'mother-liquor recycle/purge', 'forced-circulation duty',
+                   'equipment/customer-release validation', 'Tube mechanical design is vendor scope',
+                   'Explore the engineering preview', 'Follow development'):
+        assert phrase in zld
