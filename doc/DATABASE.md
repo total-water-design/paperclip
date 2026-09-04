@@ -126,6 +126,25 @@ DATABASE_IDLE_TIMEOUT_SECONDS=60     # close idle pooled connections; default: k
 DATABASE_CONNECT_TIMEOUT_SECONDS=10  # default: 30
 ```
 
+For an already-running PostgreSQL server exposed only through a Unix-domain
+socket, keep `DATABASE_URL` for the database name and credentials and provide
+the full socket filename separately. Do not use `?host=/tmp`: postgres-js 3.4.9
+treats that query key as a server startup parameter and still uses the URL's TCP
+host.
+
+```sh
+DATABASE_URL=postgres://paperclip@127.0.0.1:54329/paperclip \
+DATABASE_UNIX_SOCKET_PATH=/tmp/.s.PGSQL.54329 \
+pnpm db:preflight
+```
+
+The preflight uses the same `createDb` configuration parser as the server and
+executes one read-only `SELECT`. It does not migrate or otherwise modify the
+database. A successful result is a single JSON object with
+`status: "connected"`. The same two variables can then be supplied to the
+bounded adapter validation runtime; its existing no-migration and disabled-job
+policy remains unchanged.
+
 ### Push the schema
 
 ```sh

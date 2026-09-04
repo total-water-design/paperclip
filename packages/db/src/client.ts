@@ -128,6 +128,8 @@ export type MigrationState =
     };
 
 export interface DatabaseClientOptions {
+  /** postgres.js `path` — full Unix-domain socket path (for example `/tmp/.s.PGSQL.5432`). */
+  unixSocketPath?: string;
   /**
    * postgres.js `prepare`. Set false when connecting through a
    * transaction-mode pooler (pgbouncer / Neon `-pooler` endpoints /
@@ -170,6 +172,13 @@ function envPositiveInteger(env: NodeJS.ProcessEnv, name: string): number | unde
  */
 export function databaseClientOptionsFromEnv(env: NodeJS.ProcessEnv = process.env): DatabaseClientOptions {
   const options: DatabaseClientOptions = {};
+  const unixSocketPath = env.DATABASE_UNIX_SOCKET_PATH?.trim();
+  if (unixSocketPath) {
+    if (!unixSocketPath.startsWith("/")) {
+      throw new Error(`DATABASE_UNIX_SOCKET_PATH must be an absolute path, got: ${unixSocketPath}`);
+    }
+    options.unixSocketPath = unixSocketPath;
+  }
   const prepare = envBoolean(env, "DATABASE_PREPARED_STATEMENTS");
   if (prepare !== undefined) options.prepare = prepare;
   const maxConnections = envPositiveInteger(env, "DATABASE_POOL_MAX");
@@ -183,6 +192,7 @@ export function databaseClientOptionsFromEnv(env: NodeJS.ProcessEnv = process.en
 
 export function postgresJsOptions(options: DatabaseClientOptions): Record<string, unknown> {
   const driverOptions: Record<string, unknown> = {};
+  if (options.unixSocketPath !== undefined) driverOptions.path = options.unixSocketPath;
   if (options.prepare !== undefined) driverOptions.prepare = options.prepare;
   if (options.maxConnections !== undefined) driverOptions.max = options.maxConnections;
   if (options.idleTimeoutSeconds !== undefined) driverOptions.idle_timeout = options.idleTimeoutSeconds;

@@ -44,6 +44,7 @@
     "typecheck": "pnpm run check:migrations && tsc --noEmit",
     "generate": "pnpm run check:migrations && pnpm run clean && tsc -p tsconfig.json && drizzle-kit generate",
     "migrate": "pnpm run check:migrations && tsx src/migrate.ts",
+    "preflight:connection": "tsx src/preflight-connection.ts",
     "seed": "tsx src/seed.ts"
   },
   "dependencies": {

@@ -16,6 +16,20 @@ describe("databaseClientOptionsFromEnv", () => {
     ).toEqual({});
   });
 
+  it("maps an absolute Unix-domain socket path to postgres.js", () => {
+    const options = databaseClientOptionsFromEnv({
+      DATABASE_UNIX_SOCKET_PATH: "/tmp/.s.PGSQL.54329",
+    });
+    expect(options).toEqual({ unixSocketPath: "/tmp/.s.PGSQL.54329" });
+    expect(postgresJsOptions(options)).toEqual({ path: "/tmp/.s.PGSQL.54329" });
+  });
+
+  it("rejects a relative Unix-domain socket path", () => {
+    expect(() => databaseClientOptionsFromEnv({ DATABASE_UNIX_SOCKET_PATH: ".s.PGSQL.54329" })).toThrow(
+      /must be an absolute path/,
+    );
+  });
+
   it("parses prepared-statement toggles", () => {
     expect(databaseClientOptionsFromEnv({ DATABASE_PREPARED_STATEMENTS: "false" })).toEqual({ prepare: false });
     expect(databaseClientOptionsFromEnv({ DATABASE_PREPARED_STATEMENTS: "0" })).toEqual({ prepare: false });
@@ -47,11 +61,18 @@ describe("databaseClientOptionsFromEnv", () => {
   it("maps to postgres.js option names", () => {
     expect(
       postgresJsOptions({
+        unixSocketPath: "/tmp/.s.PGSQL.54329",
         prepare: false,
         maxConnections: 25,
         idleTimeoutSeconds: 60,
         connectTimeoutSeconds: 10,
       }),
-    ).toEqual({ prepare: false, max: 25, idle_timeout: 60, connect_timeout: 10 });
+    ).toEqual({
+      path: "/tmp/.s.PGSQL.54329",
+      prepare: false,
+      max: 25,
+      idle_timeout: 60,
+      connect_timeout: 10,
+    });
   });
 });
