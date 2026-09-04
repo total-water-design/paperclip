@@ -118,6 +118,8 @@ def test_public_contrast_tokens_and_favicon_are_runtime_contracts():
     assert '--suite-eyebrow:#005f73' in css
     assert '--suite-cyan:#75e2ef' in css
     assert '--suite-eyebrow:#8ee9f2' in css
+    assert 'linear-gradient(135deg,#005b73,#004c60)' in css
+    assert '.suite-whats-new-card{background:var(--suite-panel)' in css
     for foreground, background in (('#004c60', '#f5f9fc'), ('#005f73', '#f5f9fc'),
                                    ('#75e2ef', '#0c1722'), ('#75e2ef', '#142535'),
                                    ('#8ee9f2', '#0c1722'), ('#8ee9f2', '#142535')):
