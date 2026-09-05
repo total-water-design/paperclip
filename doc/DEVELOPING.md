@@ -156,6 +156,47 @@ attestation reads are audited, and company non-disclosure is unchanged. The
 operator—not the implementation specialist—uses an already-authorized principal
 for the attestation read and three bounded adapter-test calls.
 
+The end-to-end readiness check is intentionally not part of the normal test
+suite: it requires a Linux network namespace, the real sandbox proxy bridge,
+and an existing PostgreSQL database exposed by a Unix socket. An authorized
+operator runs the candidate through the normal local-process sandbox adapter
+with its exact loopback `host:port` allowlisted and uses this bounded procedure.
+Capture candidate stdout and stderr separately, and take the same process and
+listener snapshot immediately before and after the single request:
+
+```sh
+candidate_pid="$CANDIDATE_PID"
+candidate_pgid="$(ps -o pgid= -p "$candidate_pid" | tr -d ' ')"
+snapshot() {
+  ps -o pid=,ppid=,pgid=,stat=,lstart=,cmd= -g "$candidate_pgid"
+  readlink "/proc/$candidate_pid/ns/net"
+  ss -ltnp "sport = :$VALIDATION_PORT"
+  kill -0 "$candidate_pid"
+}
+
+snapshot > readiness-before.txt
+curl --fail-with-body --silent --show-error \
+  --proxy "$SANDBOX_BRIDGE_URL" \
+  --output readiness-body.json --write-out '%{http_code}\n' \
+  "http://127.0.0.1:$VALIDATION_PORT/api/health" > readiness-status.txt
+snapshot > readiness-after.txt
+
+test "$(cat readiness-status.txt)" = 200
+jq -e 'type == "object"' readiness-body.json
+listener_pid="$(sed -n 's/.*pid=\([0-9][0-9]*\).*/\1/p' readiness-after.txt | head -1)"
+listener_pgid="$(ps -o pgid= -p "$listener_pid" | tr -d ' ')"
+test "$listener_pgid" = "$candidate_pgid"
+```
+
+Launch the bounded runtime with `DATABASE_URL` naming the existing database and
+`DATABASE_UNIX_SOCKET_PATH` naming the full socket file. Preserve the launch
+command, candidate stdout/stderr, both snapshots, response status/body, PID,
+PGID, namespace identity, and liveness results together. This procedure makes
+no second readiness request and does not infer listener ownership from port
+reachability alone. The conditional Bubblewrap regression in
+`local-process-sandbox.test.ts` exercises this same real proxy bridge and asserts
+that an allowlisted absent upstream returns bounded JSON HTTP 502.
+
 Primary-instance rebuilds that restart `paperclip.service` can request one-shot live-run adoption instead of using the normal graceful shutdown drain. Before restarting the service, write the marker from the newly staged app with the current service PID:
 
 ```sh

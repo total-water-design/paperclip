@@ -4,7 +4,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildLocalProcessSandboxSpawnTarget,
   parseLocalProcessFilesystemScope,
@@ -295,6 +295,110 @@ describe("local process sandbox", () => {
     }
   });
 
+  it("returns deterministic JSON and sanitized diagnostics when an allowed upstream is absent", async () => {
+    const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-network-unreachable-"));
+    cleanup.push(workspace);
+    const reservation = net.createServer();
+    await new Promise<void>((resolve) => reservation.listen(0, "127.0.0.1", resolve));
+    const address = reservation.address();
+    if (!address || typeof address === "string") throw new Error("Expected TCP test server address.");
+    const absentPort = address.port;
+    await new Promise<void>((resolve) => reservation.close(() => resolve()));
+    const target = await buildLocalProcessSandboxSpawnTarget({
+      executable: process.execPath,
+      args: ["-e", "process.exit(0)"],
+      cwd: workspace,
+      options: {
+        workspaceDir: workspace,
+        networkScope: "allowlist",
+        networkAllowlist: [`127.0.0.1:${absentPort}`],
+      },
+    });
+    const bridgeIndex = target.args.findIndex((value) => value.endsWith("/bridge.cjs"));
+    const socketPath = target.args[bridgeIndex + 1];
+    const diagnostics: string[] = [];
+    const stderr = vi.spyOn(console, "error").mockImplementation((value) => diagnostics.push(String(value)));
+
+    try {
+      const response = await new Promise<{ status: number; headers: http.IncomingHttpHeaders; body: string }>((resolve, reject) => {
+        const outgoing = http.request({
+          socketPath,
+          path: `http://127.0.0.1:${absentPort}/health?token=must-not-appear`,
+          headers: { host: `127.0.0.1:${absentPort}`, authorization: "Bearer must-not-appear" },
+        }, (incoming) => {
+          let body = "";
+          incoming.on("data", (chunk) => { body += chunk; });
+          incoming.on("end", () => resolve({ status: incoming.statusCode ?? 0, headers: incoming.headers, body }));
+        });
+        outgoing.on("error", reject);
+        outgoing.end();
+      });
+
+      expect(response.status).toBe(502);
+      expect(response.headers["content-type"]).toBe("application/json; charset=utf-8");
+      const payload = JSON.parse(response.body) as { error: { code: string; correlationId: string } };
+      expect(payload.error.code).toBe("sandbox_upstream_unreachable");
+      expect(payload.error.correlationId).toBe(response.headers["x-paperclip-correlation-id"]);
+      expect(diagnostics).toHaveLength(1);
+      expect(JSON.parse(diagnostics[0]!)).toEqual({
+        event: "sandbox_upstream_unreachable",
+        correlationId: payload.error.correlationId,
+        errorCode: "ECONNREFUSED",
+        syscall: "connect",
+        targetHost: "127.0.0.1",
+        targetPort: String(absentPort),
+      });
+      expect(diagnostics[0]).not.toContain("must-not-appear");
+    } finally {
+      stderr.mockRestore();
+      await target.cleanup?.();
+    }
+  });
+
+  it("returns deterministic JSON when an allowed upstream resets before headers", async () => {
+    const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-network-reset-"));
+    cleanup.push(workspace);
+    const server = net.createServer((socket) => socket.destroy());
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Expected TCP test server address.");
+    const target = await buildLocalProcessSandboxSpawnTarget({
+      executable: process.execPath,
+      args: ["-e", "process.exit(0)"],
+      cwd: workspace,
+      options: {
+        workspaceDir: workspace,
+        networkScope: "allowlist",
+        networkAllowlist: [`127.0.0.1:${address.port}`],
+      },
+    });
+    const bridgeIndex = target.args.findIndex((value) => value.endsWith("/bridge.cjs"));
+    const socketPath = target.args[bridgeIndex + 1];
+    const stderr = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    try {
+      const response = await new Promise<{ status: number; body: string }>((resolve, reject) => {
+        const outgoing = http.request({
+          socketPath,
+          path: `http://127.0.0.1:${address.port}/health`,
+          headers: { host: `127.0.0.1:${address.port}` },
+        }, (incoming) => {
+          let body = "";
+          incoming.on("data", (chunk) => { body += chunk; });
+          incoming.on("end", () => resolve({ status: incoming.statusCode ?? 0, body }));
+        });
+        outgoing.on("error", reject);
+        outgoing.end();
+      });
+      expect(response.status).toBe(502);
+      expect(JSON.parse(response.body)).toMatchObject({ error: { code: "sandbox_upstream_unreachable" } });
+    } finally {
+      stderr.mockRestore();
+      await target.cleanup?.();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
   it("always permits trusted Paperclip control-plane URLs", async () => {
     const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-network-trusted-"));
     cleanup.push(workspace);
@@ -460,7 +564,14 @@ describe("local process sandbox", () => {
       await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
       const address = server.address();
       if (!address || typeof address === "string") throw new Error("Expected TCP test server address.");
+      const reservation = net.createServer();
+      await new Promise<void>((resolve) => reservation.listen(0, "127.0.0.1", resolve));
+      const absentAddress = reservation.address();
+      if (!absentAddress || typeof absentAddress === "string") throw new Error("Expected absent TCP test address.");
+      const absentPort = absentAddress.port;
+      await new Promise<void>((resolve) => reservation.close(() => resolve()));
       const targetUrl = `http://127.0.0.1:${address.port}/canary`;
+      const absentUrl = `http://127.0.0.1:${absentPort}/health`;
       const deniedUrl = "http://example.com/";
       const script = `
 const http = require("node:http");
@@ -476,8 +587,12 @@ function request(url) {
 }
 (async () => {
   const allowed = await request(${JSON.stringify(targetUrl)});
+  const absent = await request(${JSON.stringify(absentUrl)});
   const denied = await request(${JSON.stringify(deniedUrl)});
-  if (allowed.status !== 200 || allowed.body !== "allowed-response" || denied.status !== 403) process.exit(8);
+  const absentBody = JSON.parse(absent.body);
+  if (allowed.status !== 200 || allowed.body !== "allowed-response" ||
+      absent.status !== 502 || absentBody.error.code !== "sandbox_upstream_unreachable" ||
+      denied.status !== 403) process.exit(8);
 })().catch((error) => { console.error(error); process.exit(7); });
 `;
       try {
@@ -498,7 +613,7 @@ function request(url) {
                 workspaceDir: workspace,
                 filesystemScope: "workspace",
                 networkScope: "allowlist",
-                networkAllowlist: [`127.0.0.1:${address.port}`],
+                networkAllowlist: [`127.0.0.1:${address.port}`, `127.0.0.1:${absentPort}`],
                 command: process.env.PAPERCLIP_TEST_BWRAP,
               },
             },

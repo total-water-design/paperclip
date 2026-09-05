@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import http from "node:http";
 import net from "node:net";
 import os from "node:os";
@@ -237,6 +238,45 @@ function writeProxyError(response: http.ServerResponse, status: number, code: st
   }).end(body);
 }
 
+function normalizedSocketErrorField(value: unknown, fallback: string): string {
+  return typeof value === "string" && /^[a-z0-9_]+$/i.test(value) && value.length <= 64 ? value : fallback;
+}
+
+function writeUpstreamProxyError(
+  response: http.ServerResponse,
+  error: Error & { code?: unknown; syscall?: unknown },
+  target: URL,
+  port: string,
+): void {
+  const correlationId = randomUUID();
+  const diagnostic = {
+    event: "sandbox_upstream_unreachable",
+    correlationId,
+    errorCode: normalizedSocketErrorField(error.code, "UNKNOWN"),
+    syscall: normalizedSocketErrorField(error.syscall, "unknown"),
+    targetHost: target.hostname.toLowerCase().replace(/^\[|\]$/g, ""),
+    targetPort: port,
+  };
+  console.error(JSON.stringify(diagnostic));
+  if (response.headersSent || response.destroyed) {
+    response.destroy(error);
+    return;
+  }
+  const body = `${JSON.stringify({
+    error: {
+      code: "sandbox_upstream_unreachable",
+      message: "Allowed upstream target was unreachable.",
+      correlationId,
+    },
+  })}\n`;
+  response.writeHead(502, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Content-Length": Buffer.byteLength(body),
+    "X-Paperclip-Correlation-Id": correlationId,
+    "Connection": "close",
+  }).end(body);
+}
+
 function connectProxyError(code: string, message: string): string {
   const body = `${JSON.stringify({ error: { code, message } })}\n`;
   return [
@@ -288,7 +328,7 @@ async function startNetworkAllowlistProxy(
       response.writeHead(upstreamResponse.statusCode ?? 502, upstreamResponse.headers);
       upstreamResponse.pipe(response);
     });
-    upstream.on("error", (error) => response.destroy(error));
+    upstream.on("error", (error) => writeUpstreamProxyError(response, error, target, port));
     request.pipe(upstream);
   });
   server.on("connect", (request, clientSocket, head) => {
