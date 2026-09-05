@@ -1,4 +1,6 @@
 import fs from "node:fs/promises";
+import http from "node:http";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { inferOpenAiCompatibleBiller, type AdapterExecutionContext, type AdapterExecutionResult } from "@paperclipai/adapter-utils";
@@ -31,6 +33,10 @@ import {
   startAdapterExecutionTargetPaperclipBridge,
 } from "@paperclipai/adapter-utils/execution-target";
 import {
+  authorizeSandboxCallbackBridgeRequestWithRoutes,
+  sanitizeSandboxCallbackBridgeHeaders,
+} from "@paperclipai/adapter-utils/sandbox-callback-bridge";
+import {
   asString,
   asNumber,
   parseObject,
@@ -50,6 +56,59 @@ import {
   DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE,
   joinPromptSections,
 } from "@paperclipai/adapter-utils/server-utils";
+
+async function startLocalConfinedPaperclipBridge(input: {
+  runId: string;
+  hostApiUrl: string;
+  hostApiToken: string;
+}): Promise<{ env: Record<string, string>; stop(): Promise<void> }> {
+  const bridgeToken = randomBytes(24).toString("base64url");
+  const sockets = new Set<import("node:net").Socket>();
+  const server = http.createServer(async (request, response) => {
+    const received = (request.headers.authorization ?? "").replace(/^Bearer\s+/i, "");
+    const expectedBytes = Buffer.from(bridgeToken);
+    const receivedBytes = Buffer.from(received);
+    if (expectedBytes.length !== receivedBytes.length || !timingSafeEqual(expectedBytes, receivedBytes)) {
+      response.writeHead(401, { "content-type": "application/json" }).end('{"error":"Unauthorized"}');
+      return;
+    }
+    const requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
+    const denied = authorizeSandboxCallbackBridgeRequestWithRoutes({ method: request.method ?? "GET", path: requestUrl.pathname });
+    if (denied) {
+      response.writeHead(403, { "content-type": "application/json" }).end(JSON.stringify({ error: denied }));
+      return;
+    }
+    try {
+      const body: Buffer[] = [];
+      for await (const chunk of request) body.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      const headers = new Headers(sanitizeSandboxCallbackBridgeHeaders(
+        Object.fromEntries(Object.entries(request.headers).flatMap(([key, value]) => value == null ? [] : [[key, Array.isArray(value) ? value.join(", ") : value]])),
+      ));
+      headers.set("authorization", `Bearer ${input.hostApiToken}`);
+      headers.set("x-paperclip-run-id", input.runId);
+      const upstream = await fetch(new URL(`${requestUrl.pathname}${requestUrl.search}`, input.hostApiUrl), {
+        method: request.method,
+        headers,
+        body: request.method === "GET" || request.method === "HEAD" ? undefined : Buffer.concat(body),
+      });
+      response.writeHead(upstream.status, Object.fromEntries(upstream.headers.entries()));
+      response.end(Buffer.from(await upstream.arrayBuffer()));
+    } catch {
+      response.writeHead(502, { "content-type": "application/json" }).end('{"error":"Paperclip bridge forward failed"}');
+    }
+  });
+  server.on("connection", (socket) => { sockets.add(socket); socket.on("close", () => sockets.delete(socket)); });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => { server.off("error", reject); resolve(); });
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Local confined Paperclip bridge did not bind.");
+  return {
+    env: { PAPERCLIP_API_URL: `http://127.0.0.1:${address.port}`, PAPERCLIP_API_KEY: bridgeToken, PAPERCLIP_API_BRIDGE_MODE: "local_proxy_v1" },
+    stop: async () => { for (const socket of sockets) socket.destroy(); await new Promise<void>((resolve) => server.close(() => resolve())); },
+  };
+}
 import {
   parseLocalProcessFilesystemScope,
   parseLocalProcessSandboxExtraPaths,
@@ -969,6 +1028,9 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     if (authToken) {
       env.PAPERCLIP_API_KEY = authToken;
     }
+    const networkScope = parseLocalProcessNetworkScope(config.networkScope);
+    const filesystemScope = parseLocalProcessFilesystemScope(config.filesystemScope);
+    let localConfinedPaperclipBridge: Awaited<ReturnType<typeof startLocalConfinedPaperclipBridge>> | null = null;
     if (executionTargetIsRemote && adapterExecutionTargetUsesPaperclipBridge(runtimeExecutionTarget)) {
       paperclipBridge = await startAdapterExecutionTargetPaperclipBridge({
         runId,
@@ -984,6 +1046,17 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       if (paperclipBridge) {
         Object.assign(env, paperclipBridge.env);
       }
+    } else if (!executionTargetIsRemote && (filesystemScope || networkScope)) {
+      const hostApiToken = env.PAPERCLIP_API_KEY?.trim();
+      if (!hostApiToken) {
+        throw new Error("Local confined Paperclip bridge requires a host-side Paperclip API token.");
+      }
+      localConfinedPaperclipBridge = await startLocalConfinedPaperclipBridge({
+        runId,
+        hostApiUrl: paperclipBaseEnv.PAPERCLIP_API_URL,
+        hostApiToken,
+      });
+      Object.assign(env, localConfinedPaperclipBridge.env);
     }
     const effectiveEnv = Object.fromEntries(
       Object.entries({ ...process.env, ...env }).filter(
@@ -991,8 +1064,6 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       ),
     );
     const billingType = resolveCodexBillingType(effectiveEnv);
-    const networkScope = parseLocalProcessNetworkScope(config.networkScope);
-    const filesystemScope = parseLocalProcessFilesystemScope(config.filesystemScope);
     const localProcessSandbox: LocalProcessSandboxOptions | null =
       (filesystemScope || networkScope) && !executionTargetIsRemote
         ? {
@@ -1008,7 +1079,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
             networkScope,
             networkAllowlist: resolveCodexLocalProcessNetworkAllowlist(config, context),
             networkTrustedUrls: [
-              paperclipBaseEnv.PAPERCLIP_API_URL,
+              env.PAPERCLIP_API_URL,
               ...runtimeMcpGateways.map((gateway) => gateway.endpointPath),
             ],
             command: asString(config.filesystemSandboxCommand, "bwrap"),
@@ -1558,6 +1629,9 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     } finally {
       if (paperclipBridge) {
         await paperclipBridge.stop();
+      }
+      if (localConfinedPaperclipBridge) {
+        await localConfinedPaperclipBridge.stop();
       }
       if (restoreRemoteWorkspace) {
         // This teardown runs in a `finally`, so a throw here replaces the

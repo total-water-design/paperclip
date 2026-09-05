@@ -127,6 +127,7 @@ function buildContext(config: Record<string, unknown> = {}) {
       ...config,
     },
     context: {},
+    authToken: "real-run-agent-token",
     onLog: vi.fn(async (_stream: "stdout" | "stderr", _text: string) => {}),
   };
 }
@@ -160,8 +161,15 @@ describe("codex_local ACP startup fallback", () => {
           networkAllowlist: ["api.openai.com"],
           command: "/usr/bin/bwrap",
         }),
+        env: expect.objectContaining({
+          PAPERCLIP_API_URL: expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+$/),
+          PAPERCLIP_API_KEY: expect.not.stringMatching(/^real-run-agent-token$/),
+          PAPERCLIP_API_BRIDGE_MODE: "local_proxy_v1",
+        }),
       }),
     );
+    const processOptions = (runAdapterExecutionTargetProcess as unknown as { mock: { calls: Array<[unknown, unknown, unknown, unknown, { env: Record<string, string>; localProcessSandbox?: { networkTrustedUrls?: string[] } }]> } }).mock.calls[0]![4];
+    expect(processOptions.localProcessSandbox?.networkTrustedUrls).toContain(processOptions.env.PAPERCLIP_API_URL);
     expect(ctx.onLog).toHaveBeenCalledWith(
       "stderr",
       expect.stringContaining("Codex ACP startup failed"),
@@ -170,6 +178,16 @@ describe("codex_local ACP startup fallback", () => {
       "stderr",
       expect.stringContaining('Unexpected "<<"'),
     );
+  });
+
+  it("fails closed before launching a locally confined run when no host token can seed the bridge", async () => {
+    const ctx = buildContext({ networkScope: "allowlist", networkAllowlist: ["api.openai.com"] });
+    delete (ctx as { authToken?: string }).authToken;
+
+    await expect(execute(ctx as never)).rejects.toThrow(
+      "Local confined Paperclip bridge requires a host-side Paperclip API token.",
+    );
+    expect(runAdapterExecutionTargetProcess).not.toHaveBeenCalled();
   });
 
   it("keeps ACP fallback stdout byte-complete through confined allowlist backpressure", async () => {
