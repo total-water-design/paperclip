@@ -197,11 +197,12 @@ describe("systemd database-unhealthy health recovery", () => {
     const recoveryUnit = path.join(input.target, "etc/systemd/system/paperclip-health-recovery.service");
     const timer = path.join(input.target, "etc/systemd/system/paperclip-health-recovery.timer");
     const env = path.join(input.target, "etc/paperclip/paperclip.env");
+    const activationPreflight = path.join(input.target, "usr/lib/paperclip/paperclip-activation-preflight");
     const recoveryScript = path.join(input.target, "usr/lib/paperclip/paperclip-health-recovery");
     const fixedHelper = path.join(input.target, "usr/local/lib/paperclip/paperclip-recovery");
     const sudoers = path.join(input.target, "etc/sudoers.d/paperclip-recovery");
     const tokenProvisioner = path.join(input.target, "usr/lib/paperclip/paperclip-recovery-token-provision");
-    for (const file of [unit, recoveryUnit, timer, env, recoveryScript, fixedHelper, sudoers, tokenProvisioner]) expect(fs.existsSync(file)).toBe(true);
+    for (const file of [unit, recoveryUnit, timer, env, activationPreflight, recoveryScript, fixedHelper, sudoers, tokenProvisioner]) expect(fs.existsSync(file)).toBe(true);
     expect(fs.statSync(unit).mode & 0o777).toBe(0o644);
     expect(fs.statSync(recoveryUnit).mode & 0o777).toBe(0o644);
     expect(fs.statSync(timer).mode & 0o777).toBe(0o644);
@@ -218,7 +219,7 @@ describe("systemd database-unhealthy health recovery", () => {
     expect(fs.statSync(unit).mode & 0o777).toBe(0o600);
     expect(fs.readFileSync(env, "utf8")).toBe("prior environment\n");
     expect(fs.statSync(env).mode & 0o777).toBe(0o600);
-    for (const file of [recoveryUnit, timer, recoveryScript, fixedHelper, sudoers, tokenProvisioner]) expect(fs.existsSync(file)).toBe(false);
+    for (const file of [recoveryUnit, timer, activationPreflight, recoveryScript, fixedHelper, sudoers, tokenProvisioner]) expect(fs.existsSync(file)).toBe(false);
     expect(fs.readFileSync(path.join(input.state, "paperclip.service.enabled"), "utf8")).toBe("disabled");
     expect(fs.readFileSync(path.join(input.state, "paperclip.service.active"), "utf8")).toBe("inactive");
     expect(fs.readFileSync(path.join(input.state, "paperclip-health-recovery.timer.enabled"), "utf8")).toBe("enabled");
