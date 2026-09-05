@@ -106,8 +106,8 @@ Core fields:
 - filesystemScope (string, optional): set to "workspace" to confine local CLI filesystem access with Bubblewrap. Off by default. The workspace and managed CODEX_HOME remain writable; other host paths are hidden.
 - filesystemExtraPaths (array, optional): additional absolute host paths exposed inside the workspace sandbox. String entries are read-only; object entries use { path: "/absolute/path", access: "ro" | "rw" }.
 - filesystemSandboxCommand (string, optional): Bubblewrap executable name or absolute path; defaults to "bwrap". Linux only.
-- networkScope (string, optional): "deny" blocks all network egress; "allowlist" gives Codex a provider/control-plane proxy while task shell commands receive a separate proxy limited to networkAllowlist. Off by default.
-- networkAllowlist (string[], optional): exact hostnames, hostname:port entries, or origin URLs available to task shell commands. Codex's built-in OpenAI control-plane endpoints are carried separately and do not widen task-tool egress.
+- networkScope (string, optional): "deny" blocks all network egress; "allowlist" gives the Codex parent a provider/control-plane proxy while task shell commands run in Codex's nested managed-network sandbox. Off by default.
+- networkAllowlist (string[], optional): exact hostnames, hostname:port entries, or origin URLs available to task shell commands through Codex's managed domain proxy. Codex's built-in OpenAI control-plane endpoints stay outside the task sandbox and do not widen task-tool egress.
 
 Operational fields:
 - timeoutSec (number, optional): run timeout in seconds
@@ -120,7 +120,7 @@ Operational fields:
 - warmHandleIdleMs (number, optional): warm ACP process idle timeout when engine="acp"; defaults to 0
 
 Notes:
-- filesystemScope and networkScope are spawn-level confinement and are orthogonal to Codex approval/sandbox flags. Both require Bubblewrap on the host and select the CLI engine in auto mode; engine="acp" is rejected because ACP confinement is not yet supported. networkScope="allowlist" injects HTTP_PROXY/HTTPS_PROXY for the CLI while its private network namespace blocks direct sockets, so every required provider/API hostname must be listed explicitly.
+- filesystemScope and networkScope are spawn-level confinement. Both require Bubblewrap on the host and select the CLI engine in auto mode; engine="acp" is rejected because ACP confinement is not yet supported. For networkScope="allowlist", the outer private namespace carries Codex provider/control traffic and Codex's nested managed-network sandbox independently enforces the exact task domain list. Sandbox-bypass or conflicting network/sandbox extra arguments are rejected while this confinement is active.
 - Prompts are piped via stdin (Codex receives "-" prompt argument).
 - If instructionsFilePath is configured, Paperclip prepends that file's contents to the stdin prompt on every run.
 - Codex exec automatically applies repo-scoped AGENTS.md instructions from the active workspace. Paperclip cannot suppress that discovery in exec mode, so repo AGENTS.md files may still apply even when you only configured an explicit instructionsFilePath.

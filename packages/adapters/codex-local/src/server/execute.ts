@@ -51,7 +51,6 @@ import {
   joinPromptSections,
 } from "@paperclipai/adapter-utils/server-utils";
 import {
-  SANDBOX_TASK_PROXY_URL,
   parseLocalProcessFilesystemScope,
   parseLocalProcessSandboxExtraPaths,
   parseLocalProcessNetworkAllowlist,
@@ -1222,8 +1221,8 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         {
           resumeSessionId,
           skipGitRepoCheck: executionTargetIsSandbox,
-          taskProxyUrl: localProcessSandbox?.networkScope === "allowlist"
-            ? SANDBOX_TASK_PROXY_URL
+          taskNetworkAllowlist: localProcessSandbox?.networkScope === "allowlist"
+            ? resolveCodexLocalProcessNetworkAllowlist(config, context)
             : null,
         },
       );

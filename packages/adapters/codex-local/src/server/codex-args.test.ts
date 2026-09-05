@@ -157,16 +157,46 @@ describe("buildCodexExecArgs", () => {
     ]);
   });
 
-  it("pins task shell commands to the task-only proxy", () => {
-    const result = buildCodexExecArgs({}, { taskProxyUrl: "http://127.0.0.1:31338" });
+  it("pins task shell commands to Codex's managed domain proxy", () => {
+    const result = buildCodexExecArgs({}, { taskNetworkAllowlist: ["totalwaterdesign.com"] });
 
     expect(result.args).toEqual([
       "exec",
       "--json",
+      "--sandbox",
+      "workspace-write",
       "-c",
-      'shell_environment_policy.set={HTTP_PROXY="http://127.0.0.1:31338",HTTPS_PROXY="http://127.0.0.1:31338",http_proxy="http://127.0.0.1:31338",https_proxy="http://127.0.0.1:31338"}',
+      "sandbox_workspace_write.network_access=true",
+      "-c",
+      'features.network_proxy={"enabled":true,"enable_socks5":false,"allow_upstream_proxy":true,"domains":{"totalwaterdesign.com":"allow"}}',
       "-",
     ]);
+  });
+
+  it("preserves an empty commissioned task allowlist as fail-closed", () => {
+    const result = buildCodexExecArgs({}, { taskNetworkAllowlist: [] });
+    expect(result.args).toContain(
+      'features.network_proxy={"enabled":true,"enable_socks5":false,"allow_upstream_proxy":true,"domains":{}}',
+    );
+  });
+
+  it("rejects sandbox bypass under commissioned network confinement", () => {
+    expect(() => buildCodexExecArgs(
+      { dangerouslyBypassApprovalsAndSandbox: true },
+      { taskNetworkAllowlist: ["totalwaterdesign.com"] },
+    )).toThrow("cannot be combined");
+    expect(() => buildCodexExecArgs(
+      { extraArgs: ["--dangerously-bypass-approvals-and-sandbox"] },
+      { taskNetworkAllowlist: [] },
+    )).toThrow("cannot be combined");
+    expect(() => buildCodexExecArgs(
+      { extraArgs: ["--sandbox", "danger-full-access"] },
+      { taskNetworkAllowlist: ["totalwaterdesign.com"] },
+    )).toThrow("cannot be combined");
+    expect(() => buildCodexExecArgs(
+      { extraArgs: ["-c", "features.network_proxy=false"] },
+      { taskNetworkAllowlist: ["totalwaterdesign.com"] },
+    )).toThrow("cannot be combined");
   });
 
   it("does not add a second --skip-git-repo-check when extraArgs already carry it", () => {

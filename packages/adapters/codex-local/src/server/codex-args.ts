@@ -36,7 +36,7 @@ export function buildCodexExecArgs(
   options: {
     resumeSessionId?: string | null;
     skipGitRepoCheck?: boolean;
-    taskProxyUrl?: string | null;
+    taskNetworkAllowlist?: string[] | null;
   } = {},
 ): BuildCodexExecArgsResult {
   const record = asRecord(config);
@@ -53,6 +53,16 @@ export function buildCodexExecArgs(
     asBoolean(record.dangerouslyBypassSandbox, false),
   );
   const extraArgs = readExtraArgs(record);
+  const confinementOverride = extraArgs.some((arg, index) =>
+    arg === "--dangerously-bypass-approvals-and-sandbox"
+    || arg === "--sandbox"
+    || arg === "-s"
+    || arg.startsWith("--sandbox=")
+    || ((arg === "-c" || arg === "--config") && /^(sandbox_|sandbox_mode|features\.network_proxy)/.test(extraArgs[index + 1] ?? ""))
+    || /^--config=(sandbox_|sandbox_mode|features\.network_proxy)/.test(arg));
+  if (options.taskNetworkAllowlist && (bypass || confinementOverride)) {
+    throw new Error("Codex sandbox or network-policy overrides cannot be combined with commissioned network confinement.");
+  }
 
   const args = ["exec", "--json"];
   // Codex rejects a repeated `--skip-git-repo-check` ("cannot be used multiple
@@ -72,11 +82,17 @@ export function buildCodexExecArgs(
   if (fastModeApplied) {
     args.push("-c", 'service_tier="fast"', "-c", "features.fast_mode=true");
   }
-  if (options.taskProxyUrl) {
-    const proxy = JSON.stringify(options.taskProxyUrl);
+  if (options.taskNetworkAllowlist) {
+    const domains = Object.fromEntries(options.taskNetworkAllowlist.map((host) => [host, "allow"]));
     args.push(
-      "-c",
-      `shell_environment_policy.set={HTTP_PROXY=${proxy},HTTPS_PROXY=${proxy},http_proxy=${proxy},https_proxy=${proxy}}`,
+      "--sandbox", "workspace-write",
+      "-c", "sandbox_workspace_write.network_access=true",
+      "-c", `features.network_proxy=${JSON.stringify({
+        enabled: true,
+        enable_socks5: false,
+        allow_upstream_proxy: true,
+        domains,
+      })}`,
     );
   }
   if (extraArgs.length > 0) args.push(...extraArgs);
