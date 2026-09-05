@@ -67,6 +67,13 @@ const SYSTEM_READ_PATHS = [
   "/etc/gitconfig",
 ] as const;
 
+const SYSTEM_COMPAT_SYMLINKS = [
+  { path: "/bin", target: "usr/bin" },
+  { path: "/sbin", target: "usr/sbin" },
+  { path: "/lib", target: "usr/lib" },
+  { path: "/lib64", target: "usr/lib64" },
+] as const;
+
 const PROXY_ENV_KEYS = ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"] as const;
 const SANDBOX_PROXY_PORT = 31_337;
 const UNIX_SOCKET_PATH_MAX_BYTES = 107;
@@ -448,12 +455,13 @@ export async function buildLocalProcessSandboxSpawnTarget(input: {
 
   if (filesystemScope === "workspace") {
     args.push("--tmpfs", "/", "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp");
-    args.push(
-      "--symlink", "usr/bin", "/bin",
-      "--symlink", "usr/sbin", "/sbin",
-      "--symlink", "usr/lib", "/lib",
-      "--symlink", "usr/lib64", "/lib64",
-    );
+    const hostSymlinks = new Set<string>();
+    for (const compat of SYSTEM_COMPAT_SYMLINKS) {
+      const isSymbolicLink = await fs.lstat(compat.path).then((stats) => stats.isSymbolicLink()).catch(() => false);
+      if (!isSymbolicLink) continue;
+      args.push("--symlink", compat.target, compat.path);
+      hostSymlinks.add(compat.path);
+    }
     const created = new Set<string>(["/", "/proc", "/dev", "/tmp"]);
     const mounted = new Set<string>();
     const mount = async (source: string, access: LocalProcessSandboxAccess) => {
@@ -464,7 +472,9 @@ export async function buildLocalProcessSandboxSpawnTarget(input: {
       mounted.add(normalized);
       created.add(normalized);
     };
-    for (const systemPath of SYSTEM_READ_PATHS) await mount(systemPath, "ro");
+    for (const systemPath of SYSTEM_READ_PATHS) {
+      if (!hostSymlinks.has(systemPath)) await mount(systemPath, "ro");
+    }
     for (const executablePath of await executableReadPaths(input.executable)) await mount(executablePath, "ro");
     for (const nodePath of await executableReadPaths(process.execPath)) await mount(nodePath, "ro");
     if (networkScope === "allowlist") {
