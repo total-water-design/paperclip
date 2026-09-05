@@ -784,11 +784,13 @@ type OpenApiAuthLevel =
   | "public"
   | "authenticated"
   | "board"
-  | "instance_admin";
+  | "instance_admin"
+  | "recovery";
 
 const BOARD_SESSION_AUTH_SCHEME = "BoardSessionAuth";
 const BOARD_API_KEY_AUTH_SCHEME = "BoardApiKeyAuth";
 const AGENT_BEARER_AUTH_SCHEME = "AgentBearerAuth";
+const RECOVERY_TOKEN_AUTH_SCHEME = "RecoveryTokenAuth";
 
 function securityRequirement(name: string): Record<string, string[]> {
   return { [name]: [] };
@@ -1066,6 +1068,7 @@ function isBoardOnlyOperation(method: string, path: string) {
 
 function resolveOperationAuthLevel(method: string, path: string): OpenApiAuthLevel {
   const key = operationKey(method, path);
+  if (key === "POST /api/recovery/reconcile") return "recovery";
   if (PUBLIC_OPERATIONS.has(key)) return "public";
   if (INSTANCE_ADMIN_OPERATIONS.has(key)) return "instance_admin";
   if (isBoardOnlyOperation(method, path)) return "board";
@@ -1106,6 +1109,12 @@ function applyDocumentFixups(document: any): any {
       description:
         "Agent API key or Paperclip-issued local agent JWT presented in the Authorization bearer header.",
     },
+    [RECOVERY_TOKEN_AUTH_SCHEME]: {
+      type: "apiKey",
+      in: "header",
+      name: "x-paperclip-recovery-token",
+      description: "Host-provisioned recovery token. This endpoint is also restricted to loopback requests.",
+    },
   };
   document.security = AUTHENTICATED_SECURITY;
 
@@ -1114,6 +1123,8 @@ function applyDocumentFixups(document: any): any {
       const authLevel = resolveOperationAuthLevel(method, path);
       if (authLevel === "public") {
         operation.security = [];
+      } else if (authLevel === "recovery") {
+        operation.security = [securityRequirement(RECOVERY_TOKEN_AUTH_SCHEME)];
       } else if (authLevel === "authenticated") {
         operation.security = AUTHENTICATED_SECURITY;
       } else {
@@ -1125,6 +1136,8 @@ function applyDocumentFixups(document: any): any {
           ? { actor: "board", instanceAdmin: true }
           : authLevel === "board"
             ? { actor: "board" }
+            : authLevel === "recovery"
+              ? { actor: "host_recovery", loopbackOnly: true }
             : authLevel === "authenticated"
               ? { actor: "board_or_agent" }
               : { actor: "public" };
@@ -1265,6 +1278,19 @@ registry.registerPath({
   tags: ["health"],
   summary: "Get the generated OpenAPI document",
   responses: { 200: r.ok() },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/recovery/reconcile",
+  tags: ["health"],
+  summary: "Reconcile host-local recovery state",
+  responses: {
+    200: r.ok(),
+    401: r.unauthorized,
+    403: r.forbidden,
+    503: r.serverError,
+  },
 });
 
 // ─── Companies ───────────────────────────────────────────────────────────────

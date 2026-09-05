@@ -49,6 +49,7 @@ const apiPrefixes: Record<string, string> = {
   "plugin-ui-static.ts": "/api",
   "plugins.ts": "/api",
   "projects.ts": "/api",
+  "recovery.ts": "/api",
   "resource-memberships.ts": "/api",
   "routines.ts": "/api",
   "secrets.ts": "/api",
@@ -287,6 +288,13 @@ describe("openapi routes", () => {
     const { spec } = loadSpecRoutes();
 
     expect(spec.paths["/api/openapi.json"].get.security).toEqual([]);
+    expect(spec.paths["/api/recovery/reconcile"].post.security).toEqual([
+      { RecoveryTokenAuth: [] },
+    ]);
+    expect(spec.paths["/api/recovery/reconcile"].post["x-paperclip-authorization"]).toEqual({
+      actor: "host_recovery",
+      loopbackOnly: true,
+    });
     expect(spec.paths["/api/plugins/install"].post.security).toEqual([
       { BoardSessionAuth: [] },
       { BoardApiKeyAuth: [] },
