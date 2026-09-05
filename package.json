@@ -34,6 +34,7 @@
     "build:npm": "./scripts/build-npm.sh",
     "build:npm:certified": "./scripts/build-certified-npm.sh",
     "test:artifact-identity": "node --test scripts/paperclip-artifact-identity.test.mjs",
+    "test:certified-npm-payload": "node --test scripts/certified-npm-payload.test.mjs",
     "release": "./scripts/release.sh",
     "release:canary": "./scripts/release.sh canary",
     "release:stable": "./scripts/release.sh stable",

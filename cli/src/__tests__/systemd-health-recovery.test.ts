@@ -118,6 +118,17 @@ function runInstaller(input: ReturnType<typeof installerFixture>, action: "insta
   });
 }
 
+function packagedInstallerFixture() {
+  const input = installerFixture();
+  const dist = path.join(input.root, "native-global", "node_modules", "paperclipai", "dist");
+  fs.mkdirSync(dist, { recursive: true });
+  fs.cpSync(path.join(repositoryRoot, "deploy"), path.join(dist, "deploy"), { recursive: true });
+  fs.mkdirSync(path.join(dist, "scripts"));
+  for (const name of ["paperclip-activation-preflight.sh", "paperclip-artifact-identity.mjs"])
+    fs.copyFileSync(path.join(repositoryRoot, "scripts", name), path.join(dist, "scripts", name));
+  return { ...input, installer: path.join(dist, "deploy/systemd/paperclip-service-install") };
+}
+
 describe("systemd database-unhealthy health recovery", () => {
   it("recovers only after the documented threshold and confirms full-service readiness", () => {
     const input = fixture();
@@ -293,6 +304,16 @@ describe("systemd database-unhealthy health recovery", () => {
     expect(fs.readFileSync(path.join(input.state, "paperclip-health-recovery.timer.enabled"), "utf8")).toBe("enabled");
     expect(fs.readFileSync(path.join(input.state, "paperclip-health-recovery.timer.active"), "utf8")).toBe("active");
     expect(fs.readFileSync(input.calls, "utf8")).toContain("daemon-reload");
+  });
+
+  it("resolves packaged assets from the native global npm layout outside the current directory", () => {
+    const input = packagedInstallerFixture();
+    execFileSync("bash", [input.installer, "install"], {
+      cwd: input.root,
+      env: { ...process.env, PATH: `${input.bin}:${process.env.PATH}`, SYSTEMCTL_CALLS: input.calls, SYSTEMCTL_STATE: input.state, PAPERCLIP_INSTALL_ROOT: input.target, PAPERCLIP_ROLLBACK_ROOT: input.backup, PAPERCLIP_INSTALL_OWNER: testUid.toString(), PAPERCLIP_INSTALL_GROUP: testGid.toString(), PAPERCLIP_CERTIFIED_ARCHIVE_SOURCE: input.archiveSource, PAPERCLIP_CERTIFICATION_MANIFEST_SOURCE: input.manifestSource },
+    });
+    expect(fs.readFileSync(path.join(input.target, "etc/systemd/system/paperclip.service"), "utf8")).toContain("paperclip-activation-preflight");
+    expect(fs.readFileSync(path.join(input.target, "usr/local/lib/paperclip/paperclip-recovery"), "utf8")).toContain("/api/recovery/reconcile");
   });
 
   it("keeps the native installed layout, activation identity, and systemd execution paths in agreement", () => {

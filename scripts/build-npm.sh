@@ -55,6 +55,15 @@ await esbuild.build(config);
 
 chmod +x dist/index.js
 
+# Ship the reviewed root-service payload inside the npm package.  Keep these
+# paths stable: operators locate the installer under the native npm/global
+# package root at dist/deploy/systemd/paperclip-service-install.
+mkdir -p dist/deploy dist/scripts
+cp -a "$REPO_ROOT/deploy/systemd" dist/deploy/
+cp -a "$REPO_ROOT/deploy/recovery" dist/deploy/
+cp -a "$REPO_ROOT/scripts/paperclip-activation-preflight.sh" dist/scripts/
+cp -a "$REPO_ROOT/scripts/paperclip-artifact-identity.mjs" dist/scripts/
+
 # ── Step 4: Validate bundled entrypoint syntax ─────────────────────────────────
 echo "  [4/6] Verifying bundled entrypoint syntax..."
 node --check "$DIST_DIR/index.js"
