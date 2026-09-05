@@ -68,6 +68,7 @@ export function buildCodexExecArgs(
     arg === "--dangerously-bypass-approvals-and-sandbox"
     || arg === "--sandbox"
     || arg === "-s"
+    || (arg.startsWith("-s") && !arg.startsWith("--"))
     || arg.startsWith("--sandbox=")
     || arg === "-c"
     || arg.startsWith("-c")

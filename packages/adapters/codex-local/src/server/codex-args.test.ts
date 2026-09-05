@@ -204,6 +204,8 @@ describe("buildCodexExecArgs", () => {
       ["--disable", "network_proxy"],
       ["--disable=network_proxy"],
       ["--enable", "network_proxy"],
+      ["-sdanger-full-access"],
+      ["-s=danger-full-access"],
     ]) {
       expect(() => buildCodexExecArgs(
         { extraArgs },
