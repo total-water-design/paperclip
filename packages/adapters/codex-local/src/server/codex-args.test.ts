@@ -1,5 +1,6 @@
+import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
-import { buildCodexExecArgs } from "./codex-args.js";
+import { buildCodexExecArgs, buildManagedNetworkProxyConfig } from "./codex-args.js";
 
 describe("buildCodexExecArgs", () => {
   it("rewrites the legacy bare gpt-5.6 alias to gpt-5.6-sol and applies fast mode", () => {
@@ -168,7 +169,7 @@ describe("buildCodexExecArgs", () => {
       "-c",
       "sandbox_workspace_write.network_access=true",
       "-c",
-      'features.network_proxy={"enabled":true,"enable_socks5":false,"allow_upstream_proxy":true,"domains":{"totalwaterdesign.com":"allow"}}',
+      'features.network_proxy={enabled=true,enable_socks5=false,allow_upstream_proxy=true,domains={"totalwaterdesign.com"="allow"}}',
       "-",
     ]);
   });
@@ -176,7 +177,7 @@ describe("buildCodexExecArgs", () => {
   it("preserves an empty commissioned task allowlist as fail-closed", () => {
     const result = buildCodexExecArgs({}, { taskNetworkAllowlist: [] });
     expect(result.args).toContain(
-      'features.network_proxy={"enabled":true,"enable_socks5":false,"allow_upstream_proxy":true,"domains":{}}',
+      'features.network_proxy={enabled=true,enable_socks5=false,allow_upstream_proxy=true,domains={}}',
     );
   });
 
@@ -197,7 +198,32 @@ describe("buildCodexExecArgs", () => {
       { extraArgs: ["-c", "features.network_proxy=false"] },
       { taskNetworkAllowlist: ["totalwaterdesign.com"] },
     )).toThrow("cannot be combined");
+    for (const extraArgs of [
+      ["-cfeatures.network_proxy=false"],
+      ["--config=features.network_proxy=false"],
+      ["--disable", "network_proxy"],
+      ["--disable=network_proxy"],
+      ["--enable", "network_proxy"],
+    ]) {
+      expect(() => buildCodexExecArgs(
+        { extraArgs },
+        { taskNetworkAllowlist: ["totalwaterdesign.com"] },
+      )).toThrow("cannot be combined");
+    }
   });
+
+  it.runIf(Boolean(process.env.PAPERCLIP_TEST_CODEX_COMMAND))(
+    "loads the production managed-network value in the real Codex CLI",
+    () => {
+      const result = spawnSync(
+        process.env.PAPERCLIP_TEST_CODEX_COMMAND!,
+        ["-c", buildManagedNetworkProxyConfig(["totalwaterdesign.com"]), "features", "list"],
+        { encoding: "utf8" },
+      );
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toMatch(/^network_proxy\s+experimental\s+true$/m);
+    },
+  );
 
   it("does not add a second --skip-git-repo-check when extraArgs already carry it", () => {
     const result = buildCodexExecArgs(

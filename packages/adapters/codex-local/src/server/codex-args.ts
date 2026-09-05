@@ -31,6 +31,17 @@ function formatFastModeSupportedModels(): string {
   return `${CODEX_LOCAL_FAST_MODE_SUPPORTED_MODELS.join(", ")} or manually configured model IDs`;
 }
 
+function tomlString(value: string): string {
+  return JSON.stringify(value);
+}
+
+export function buildManagedNetworkProxyConfig(domains: string[]): string {
+  const domainEntries = domains
+    .map((host) => `${tomlString(host)}="allow"`)
+    .join(",");
+  return `features.network_proxy={enabled=true,enable_socks5=false,allow_upstream_proxy=true,domains={${domainEntries}}}`;
+}
+
 export function buildCodexExecArgs(
   config: unknown,
   options: {
@@ -53,13 +64,19 @@ export function buildCodexExecArgs(
     asBoolean(record.dangerouslyBypassSandbox, false),
   );
   const extraArgs = readExtraArgs(record);
-  const confinementOverride = extraArgs.some((arg, index) =>
+  const confinementOverride = extraArgs.some((arg) =>
     arg === "--dangerously-bypass-approvals-and-sandbox"
     || arg === "--sandbox"
     || arg === "-s"
     || arg.startsWith("--sandbox=")
-    || ((arg === "-c" || arg === "--config") && /^(sandbox_|sandbox_mode|features\.network_proxy)/.test(extraArgs[index + 1] ?? ""))
-    || /^--config=(sandbox_|sandbox_mode|features\.network_proxy)/.test(arg));
+    || arg === "-c"
+    || arg.startsWith("-c")
+    || arg === "--config"
+    || arg.startsWith("--config=")
+    || arg === "--enable"
+    || arg.startsWith("--enable=")
+    || arg === "--disable"
+    || arg.startsWith("--disable="));
   if (options.taskNetworkAllowlist && (bypass || confinementOverride)) {
     throw new Error("Codex sandbox or network-policy overrides cannot be combined with commissioned network confinement.");
   }
@@ -83,16 +100,10 @@ export function buildCodexExecArgs(
     args.push("-c", 'service_tier="fast"', "-c", "features.fast_mode=true");
   }
   if (options.taskNetworkAllowlist) {
-    const domains = Object.fromEntries(options.taskNetworkAllowlist.map((host) => [host, "allow"]));
     args.push(
       "--sandbox", "workspace-write",
       "-c", "sandbox_workspace_write.network_access=true",
-      "-c", `features.network_proxy=${JSON.stringify({
-        enabled: true,
-        enable_socks5: false,
-        allow_upstream_proxy: true,
-        domains,
-      })}`,
+      "-c", buildManagedNetworkProxyConfig(options.taskNetworkAllowlist),
     );
   }
   if (extraArgs.length > 0) args.push(...extraArgs);
