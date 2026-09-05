@@ -44,6 +44,7 @@ describe("issue subresource commands", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    delete process.env.TOT_708_SIDE_EFFECT;
   });
 
   it("wraps core issue get, update, and delete endpoints", async () => {
@@ -59,6 +60,35 @@ describe("issue subresource commands", () => {
       ["PATCH", `http://localhost:3100/api/issues/${ISSUE_ID}`],
       ["DELETE", `http://localhost:3100/api/issues/${ISSUE_ID}`],
     ]);
+  });
+
+  it("preserves positional-parameter text byte-exactly for issue and comment creation", async () => {
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(jsonResponse()));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const positionalText = "literal $1 ${2} $@ $?";
+    const inertMetacharacters = "; TOT_708_SIDE_EFFECT=changed | false &";
+    process.env.TOT_708_SIDE_EFFECT = "unchanged";
+
+    await run([
+      "issue", "create",
+      "--company-id", COMPANY_ID,
+      "--title", positionalText,
+      "--description", inertMetacharacters,
+    ]);
+    await run([
+      "issue", "comment", ISSUE_ID,
+      "--body", `${positionalText}\n${inertMetacharacters}`,
+    ]);
+
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+      title: positionalText,
+      description: inertMetacharacters,
+    });
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toMatchObject({
+      body: `${positionalText}\n${inertMetacharacters}`,
+    });
+    expect(process.env.TOT_708_SIDE_EFFECT).toBe("unchanged");
   });
 
   it("wraps comments, approvals, markers, and recovery action endpoints", async () => {
