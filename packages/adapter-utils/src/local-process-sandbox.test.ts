@@ -106,6 +106,67 @@ describe("local process sandbox", () => {
     ]);
   });
 
+  it("uses compat symlinks instead of colliding read-only binds on usr-merged hosts", async () => {
+    const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-fs-usr-merged-"));
+    cleanup.push(workspace);
+    const target = await buildLocalProcessSandboxSpawnTarget({
+      executable: process.execPath,
+      args: ["-e", "process.exit(0)"],
+      cwd: workspace,
+      options: { workspaceDir: workspace, filesystemScope: "workspace" },
+    });
+    const compatPaths = ["/bin", "/sbin", "/lib", "/lib64"];
+    const hostSymlinkPaths = new Set((await Promise.all(compatPaths.map(async (candidate) =>
+      await fs.lstat(candidate).then((stats) => stats.isSymbolicLink() ? candidate : null).catch(() => null),
+    ))).filter((candidate): candidate is string => candidate !== null));
+    const operations = target.args.flatMap((value, index) =>
+      value === "--ro-bind" || value === "--symlink"
+        ? [{ operation: value, source: target.args[index + 1], destination: target.args[index + 2] }]
+        : [],
+    );
+
+    for (const compatPath of hostSymlinkPaths) {
+      expect(operations).not.toContainEqual({ operation: "--ro-bind", source: compatPath, destination: compatPath });
+      expect(operations).toContainEqual({
+        operation: "--symlink",
+        source: `usr/${path.basename(compatPath)}`,
+        destination: compatPath,
+      });
+    }
+    expect(operations).toContainEqual({ operation: "--ro-bind", source: "/usr", destination: "/usr" });
+  });
+
+  it("executes a workspace-scope target with Bubblewrap when available", async ({ skip }) => {
+    await fs.access("/usr/bin/bwrap").catch(() => skip());
+    const capability = await runChildProcess(
+      "bubblewrap-capability-check",
+      "/usr/bin/bwrap",
+      ["--ro-bind", "/", "/", "--dev", "/dev", "--unshare-all", "true"],
+      { cwd: process.cwd(), env: {}, timeoutSec: 10, graceSec: 1, onLog: async () => {} },
+    );
+    if (capability.exitCode !== 0) skip();
+    const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-fs-bwrap-spawn-"));
+    cleanup.push(workspace);
+    const target = await buildLocalProcessSandboxSpawnTarget({
+      executable: process.execPath,
+      args: ["-e", "process.stdout.write('SANDBOX_OK')"],
+      cwd: workspace,
+      options: { workspaceDir: workspace, filesystemScope: "workspace", command: "/usr/bin/bwrap" },
+    });
+    let stdout = "";
+    const result = await runChildProcess("workspace-sandbox-spawn", target.command, target.args, {
+      cwd: target.cwd,
+      env: Object.fromEntries(Object.entries(target.env ?? {}).filter((entry): entry is [string, string] =>
+        entry[1] !== undefined)),
+      timeoutSec: 10,
+      graceSec: 1,
+      onLog: async (stream, text) => { if (stream === "stdout") stdout += text; },
+    });
+
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(stdout).toBe("SANDBOX_OK");
+  });
+
   it("preserves every byte under confined high-volume stdout backpressure", async () => {
     const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-confined-stdio-"));
     cleanup.push(workspace);
