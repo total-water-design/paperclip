@@ -76,6 +76,7 @@ export interface WorkspaceGitScanInput {
     agentId?: string | null;
     runId?: string | null;
     untrackedFilesMode?: string;
+    requestId?: string;
   };
 }
 
@@ -221,6 +222,11 @@ export function workspaceGitSchedulerOptionsFromEnv(
 
 function workspaceIdentity(canonicalWorkspacePath: string): string {
   return createHash("sha256").update(canonicalWorkspacePath).digest("hex").slice(0, 16);
+}
+
+function telemetryIdentity(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 16);
 }
 
 function scanKey(input: {
@@ -507,10 +513,11 @@ export class WorkspaceGitOperationScheduler {
         event: "workspace_git_scan",
         operation: input.operation,
         workspaceHash,
-        workspaceId: input.context?.workspaceId,
-        issueIdentifiers: input.context?.issueIdentifiers,
-        agentId: input.context?.agentId,
-        runId: input.context?.runId,
+        workspaceIdHash: telemetryIdentity(input.context?.workspaceId),
+        issueSetHash: telemetryIdentity(input.context?.issueIdentifiers),
+        actorHash: telemetryIdentity(input.context?.agentId),
+        runHash: telemetryIdentity(input.context?.runId),
+        requestId: input.context?.requestId,
         repositoryRootHash: workspaceHash,
         gitOperation: input.args[0] ?? null,
         untrackedFilesMode: input.context?.untrackedFilesMode,
@@ -534,6 +541,18 @@ export class WorkspaceGitOperationScheduler {
     if (existing) {
       existing.joinCount += 1;
       this.totals.singleFlightJoins += 1;
+      logger.info({
+        event: "workspace_git_scan",
+        operation: input.operation,
+        requestId: input.context?.requestId,
+        workspaceIdHash: telemetryIdentity(input.context?.workspaceId),
+        workspaceHash,
+        repositoryRootHash: workspaceHash,
+        cacheHit: false,
+        singleFlightJoined: true,
+        activeCount: this.activeCount,
+        queuedCount: this.queue.length,
+      }, "workspace Git scan joined in-flight request");
       return this.addWaiter(existing, input.signal, true);
     }
 
@@ -728,10 +747,11 @@ export class WorkspaceGitOperationScheduler {
       event: "workspace_git_scan",
       operation: scan.operation,
       workspaceHash: scan.workspaceHash,
-      workspaceId: scan.context?.workspaceId,
-      issueIdentifiers: scan.context?.issueIdentifiers,
-      agentId: scan.context?.agentId,
-      runId: scan.context?.runId,
+      workspaceIdHash: telemetryIdentity(scan.context?.workspaceId),
+      issueSetHash: telemetryIdentity(scan.context?.issueIdentifiers),
+      actorHash: telemetryIdentity(scan.context?.agentId),
+      runHash: telemetryIdentity(scan.context?.runId),
+      requestId: scan.context?.requestId,
       repositoryRootHash: scan.workspaceHash,
       gitOperation: scan.args[0] ?? null,
       untrackedFilesMode: scan.context?.untrackedFilesMode,
@@ -746,7 +766,7 @@ export class WorkspaceGitOperationScheduler {
       cacheHit: false,
       singleFlightJoinCount: scan.joinCount,
       filesystemEntriesInspected: scan.operation === "execution_workspaces.close_readiness_status"
-        ? result.stdout.split(/\r?\n/).filter(Boolean).length
+        ? result.stdout.split(result.stdout.includes("\0") ? "\0" : /\r?\n/).filter(Boolean).length
         : undefined,
       exitOutcome: "zero",
       exitCode: 0,
@@ -793,10 +813,11 @@ export class WorkspaceGitOperationScheduler {
       event: "workspace_git_scan",
       operation: scan.operation,
       workspaceHash: scan.workspaceHash,
-      workspaceId: scan.context?.workspaceId,
-      issueIdentifiers: scan.context?.issueIdentifiers,
-      agentId: scan.context?.agentId,
-      runId: scan.context?.runId,
+      workspaceIdHash: telemetryIdentity(scan.context?.workspaceId),
+      issueSetHash: telemetryIdentity(scan.context?.issueIdentifiers),
+      actorHash: telemetryIdentity(scan.context?.agentId),
+      runHash: telemetryIdentity(scan.context?.runId),
+      requestId: scan.context?.requestId,
       repositoryRootHash: scan.workspaceHash,
       gitOperation: scan.args[0] ?? null,
       untrackedFilesMode: scan.context?.untrackedFilesMode,

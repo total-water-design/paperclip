@@ -790,6 +790,7 @@ async function inspectGitCloseReadiness(workspace: ExecutionWorkspace, context?:
   issueIdentifiers?: readonly string[];
   agentId?: string | null;
   runId?: string | null;
+  requestId?: string;
 }): Promise<{
   git: ExecutionWorkspaceCloseGitReadiness | null;
   warnings: string[];
@@ -873,6 +874,7 @@ async function inspectGitCloseReadiness(workspace: ExecutionWorkspace, context?:
           issueIdentifiers: context?.issueIdentifiers,
           agentId: context?.agentId,
           runId: context?.runId,
+          requestId: context?.requestId,
           untrackedFilesMode: "all",
         },
       })).stdout;
@@ -2250,7 +2252,7 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
       );
     },
 
-    getCloseReadiness: async (id: string, actor?: { agentId?: string | null; runId?: string | null }): Promise<ExecutionWorkspaceCloseReadiness | null> => {
+    getCloseReadiness: async (id: string, actor?: { agentId?: string | null; runId?: string | null; requestId?: string }): Promise<ExecutionWorkspaceCloseReadiness | null> => {
       const workspace = await db
         .select()
         .from(executionWorkspaces)
@@ -2327,6 +2329,7 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
           .filter((identifier): identifier is string => identifier !== null),
         agentId: actor?.agentId,
         runId: actor?.runId,
+        requestId: actor?.requestId,
       });
       const { deliveryState } = await assessDelivery(workspace, git);
       const warnings = [...gitWarnings];
