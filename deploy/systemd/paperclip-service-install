@@ -6,8 +6,8 @@ root="${PAPERCLIP_INSTALL_ROOT:-/}"
 backup="${PAPERCLIP_ROLLBACK_ROOT:-/root/paperclip-service-rollback}"
 install_owner="${PAPERCLIP_INSTALL_OWNER:-root}"
 install_group="${PAPERCLIP_INSTALL_GROUP:-root}"
-paths=(etc/systemd/system/paperclip.service etc/systemd/system/paperclip-health-recovery.service etc/systemd/system/paperclip-health-recovery.timer etc/paperclip/paperclip.env etc/sudoers.d/paperclip-recovery usr/lib/paperclip/paperclip-preflight usr/lib/paperclip/paperclip-activation-preflight usr/lib/paperclip/paperclip-service-install usr/lib/paperclip/paperclip-service-transition usr/lib/paperclip/paperclip-health-recovery usr/local/lib/paperclip/paperclip-recovery usr/lib/paperclip/paperclip-recovery-token-provision)
-srcs=(deploy/systemd/paperclip.service deploy/systemd/paperclip-health-recovery.service deploy/systemd/paperclip-health-recovery.timer deploy/systemd/paperclip.env deploy/recovery/paperclip-recovery.sudoers deploy/systemd/paperclip-preflight scripts/paperclip-activation-preflight.sh deploy/systemd/paperclip-service-install deploy/systemd/paperclip-service-transition deploy/systemd/paperclip-health-recovery deploy/recovery/paperclip-recovery deploy/systemd/paperclip-recovery-token-provision)
+paths=(etc/systemd/system/paperclip.service etc/systemd/system/paperclip-health-recovery.service etc/systemd/system/paperclip-health-recovery.timer etc/paperclip/paperclip.env etc/sudoers.d/paperclip-recovery usr/lib/paperclip/paperclip-preflight usr/lib/paperclip/paperclip-activation-preflight usr/lib/paperclip/paperclip-artifact-identity.mjs usr/lib/paperclip/paperclip-service-install usr/lib/paperclip/paperclip-service-transition usr/lib/paperclip/paperclip-health-recovery usr/local/lib/paperclip/paperclip-recovery usr/lib/paperclip/paperclip-recovery-token-provision)
+srcs=(deploy/systemd/paperclip.service deploy/systemd/paperclip-health-recovery.service deploy/systemd/paperclip-health-recovery.timer deploy/systemd/paperclip.env deploy/recovery/paperclip-recovery.sudoers deploy/systemd/paperclip-preflight scripts/paperclip-activation-preflight.sh scripts/paperclip-artifact-identity.mjs deploy/systemd/paperclip-service-install deploy/systemd/paperclip-service-transition deploy/systemd/paperclip-health-recovery deploy/recovery/paperclip-recovery deploy/systemd/paperclip-recovery-token-provision)
 mkdir -p "$backup/files"
 
 snapshot() {
@@ -34,6 +34,7 @@ validate_install() {
   [[ "$(stat -c '%a' "$root/usr/local/lib/paperclip/paperclip-recovery")" == 750 ]] || { echo "unsafe recovery helper mode" >&2; exit 1; }
   [[ "$(stat -c '%a' "$root/etc/sudoers.d/paperclip-recovery")" == 440 ]] || { echo "unsafe sudoers mode" >&2; exit 1; }
   [[ "$(stat -c '%a' "$root/usr/lib/paperclip/paperclip-recovery-token-provision")" == 750 ]] || { echo "unsafe token provisioner mode" >&2; exit 1; }
+  [[ "$(stat -c '%a' "$root/usr/lib/paperclip/paperclip-artifact-identity.mjs")" == 644 ]] || { echo "unsafe artifact identity verifier mode" >&2; exit 1; }
   visudo -c -f "$root/etc/sudoers.d/paperclip-recovery" >/dev/null
 }
 
@@ -43,6 +44,7 @@ case "$action" in
     for i in "${!paths[@]}"; do mkdir -p "$(dirname "$root/${paths[$i]}")"; install -o "$install_owner" -g "$install_group" -m 0755 "${srcs[$i]}" "$root/${paths[$i]}"; done
     chmod 0644 "$root/etc/systemd/system/paperclip.service" "$root/etc/systemd/system/paperclip-health-recovery.service" "$root/etc/systemd/system/paperclip-health-recovery.timer"
     chmod 0640 "$root/etc/paperclip/paperclip.env"
+    chmod 0644 "$root/usr/lib/paperclip/paperclip-artifact-identity.mjs"
     chmod 0440 "$root/etc/sudoers.d/paperclip-recovery"
     chmod 0750 "$root/usr/local/lib/paperclip/paperclip-recovery" "$root/usr/lib/paperclip/paperclip-recovery-token-provision"
     validate_install

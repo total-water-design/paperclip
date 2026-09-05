@@ -6,7 +6,9 @@ for name in PAPERCLIP_ARTIFACT_MANIFEST PAPERCLIP_ARTIFACT_IDENTITY PAPERCLIP_EX
   [[ -n "${!name:-}" ]] || fail "missing $name"
   [[ -f "${!name}" && ! -L "${!name}" ]] || fail "$name must name a regular non-symlink file"
 done
-repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+script_dir="$(cd "$(dirname "$0")" && pwd)"
+verifier="$script_dir/paperclip-artifact-identity.mjs"
+[[ -f "$verifier" && ! -L "$verifier" ]] || fail "installed artifact identity verifier is missing or unsafe"
 args=(preflight --manifest "$PAPERCLIP_ARTIFACT_MANIFEST" --identity "$PAPERCLIP_ARTIFACT_IDENTITY" --executable "$PAPERCLIP_EXECUTABLE")
 [[ -z "${PAPERCLIP_ARTIFACT_ARCHIVE:-}" ]] || args+=(--archive "$PAPERCLIP_ARTIFACT_ARCHIVE")
 if [[ -n "${PAPERCLIP_RUNTIME_PID_FILE:-}" && -s "$PAPERCLIP_RUNTIME_PID_FILE" ]]; then
@@ -19,4 +21,4 @@ if [[ -n "${PAPERCLIP_RUNTIME_PID_FILE:-}" && -s "$PAPERCLIP_RUNTIME_PID_FILE" ]
 elif [[ -n "${PAPERCLIP_RUNTIME_IDENTITY:-}" ]]; then
   args+=(--runtime-identity "$PAPERCLIP_RUNTIME_IDENTITY")
 fi
-exec "${PAPERCLIP_NODE:-node}" "$repo_root/scripts/paperclip-artifact-identity.mjs" "${args[@]}"
+exec "${PAPERCLIP_NODE:-node}" "$verifier" "${args[@]}"

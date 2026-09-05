@@ -198,11 +198,12 @@ describe("systemd database-unhealthy health recovery", () => {
     const timer = path.join(input.target, "etc/systemd/system/paperclip-health-recovery.timer");
     const env = path.join(input.target, "etc/paperclip/paperclip.env");
     const activationPreflight = path.join(input.target, "usr/lib/paperclip/paperclip-activation-preflight");
+    const artifactIdentityVerifier = path.join(input.target, "usr/lib/paperclip/paperclip-artifact-identity.mjs");
     const recoveryScript = path.join(input.target, "usr/lib/paperclip/paperclip-health-recovery");
     const fixedHelper = path.join(input.target, "usr/local/lib/paperclip/paperclip-recovery");
     const sudoers = path.join(input.target, "etc/sudoers.d/paperclip-recovery");
     const tokenProvisioner = path.join(input.target, "usr/lib/paperclip/paperclip-recovery-token-provision");
-    for (const file of [unit, recoveryUnit, timer, env, activationPreflight, recoveryScript, fixedHelper, sudoers, tokenProvisioner]) expect(fs.existsSync(file)).toBe(true);
+    for (const file of [unit, recoveryUnit, timer, env, activationPreflight, artifactIdentityVerifier, recoveryScript, fixedHelper, sudoers, tokenProvisioner]) expect(fs.existsSync(file)).toBe(true);
     expect(fs.statSync(unit).mode & 0o777).toBe(0o644);
     expect(fs.statSync(recoveryUnit).mode & 0o777).toBe(0o644);
     expect(fs.statSync(timer).mode & 0o777).toBe(0o644);
@@ -211,15 +212,41 @@ describe("systemd database-unhealthy health recovery", () => {
     expect(fs.statSync(fixedHelper).mode & 0o777).toBe(0o750);
     expect(fs.statSync(sudoers).mode & 0o777).toBe(0o440);
     expect(fs.statSync(tokenProvisioner).mode & 0o777).toBe(0o750);
+    expect(fs.statSync(artifactIdentityVerifier).mode & 0o777).toBe(0o644);
     expect(fs.statSync(recoveryScript).uid).toBe(testUid);
     expect(fs.statSync(recoveryScript).gid).toBe(testGid);
+
+    const artifactRoot = path.join(input.root, "artifact");
+    const artifactOutput = path.join(artifactRoot, "out");
+    fs.mkdirSync(artifactOutput, { recursive: true });
+    fs.writeFileSync(path.join(artifactRoot, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
+    fs.writeFileSync(path.join(artifactRoot, ".gitignore"), "out/\n");
+    fs.writeFileSync(path.join(artifactRoot, "source"), "source\n");
+    execFileSync("git", ["init", "-q", artifactRoot]);
+    execFileSync("git", ["-C", artifactRoot, "config", "user.email", "test@example.invalid"]);
+    execFileSync("git", ["-C", artifactRoot, "config", "user.name", "Test"]);
+    execFileSync("git", ["-C", artifactRoot, "add", "."]);
+    execFileSync("git", ["-C", artifactRoot, "commit", "-qm", "fixture"]);
+    const sourceSha = execFileSync("git", ["-C", artifactRoot, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+    const executable = path.join(artifactOutput, "index.js");
+    const identity = path.join(artifactOutput, "paperclip-artifact-identity.json");
+    const archive = path.join(input.root, "paperclip.tgz");
+    const manifest = path.join(artifactRoot, "certification.json");
+    fs.writeFileSync(executable, "installed executable\n");
+    fs.writeFileSync(archive, "installed archive\n");
+    execFileSync(process.execPath, [artifactIdentityVerifier, "identity", "--repo", artifactRoot, "--output-dir", artifactOutput, "--source-sha", sourceSha, "--build-command", "pnpm certified"]);
+    execFileSync(process.execPath, [artifactIdentityVerifier, "certify", "--identity", identity, "--archive", archive, "--executable", executable, "--manifest", manifest]);
+    expect(execFileSync(activationPreflight, {
+      encoding: "utf8",
+      env: { ...process.env, PAPERCLIP_NODE: process.execPath, PAPERCLIP_ARTIFACT_MANIFEST: manifest, PAPERCLIP_ARTIFACT_IDENTITY: identity, PAPERCLIP_ARTIFACT_ARCHIVE: archive, PAPERCLIP_EXECUTABLE: executable },
+    })).toContain("artifact identity: activation preflight passed");
 
     runInstaller(input, "rollback");
     expect(fs.readFileSync(unit, "utf8")).toBe("prior primary unit\n");
     expect(fs.statSync(unit).mode & 0o777).toBe(0o600);
     expect(fs.readFileSync(env, "utf8")).toBe("prior environment\n");
     expect(fs.statSync(env).mode & 0o777).toBe(0o600);
-    for (const file of [recoveryUnit, timer, activationPreflight, recoveryScript, fixedHelper, sudoers, tokenProvisioner]) expect(fs.existsSync(file)).toBe(false);
+    for (const file of [recoveryUnit, timer, activationPreflight, artifactIdentityVerifier, recoveryScript, fixedHelper, sudoers, tokenProvisioner]) expect(fs.existsSync(file)).toBe(false);
     expect(fs.readFileSync(path.join(input.state, "paperclip.service.enabled"), "utf8")).toBe("disabled");
     expect(fs.readFileSync(path.join(input.state, "paperclip.service.active"), "utf8")).toBe("inactive");
     expect(fs.readFileSync(path.join(input.state, "paperclip-health-recovery.timer.enabled"), "utf8")).toBe("enabled");
