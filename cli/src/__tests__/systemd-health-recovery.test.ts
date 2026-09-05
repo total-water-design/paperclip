@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 const directories: string[] = [];
 const recovery = path.resolve(import.meta.dirname, "../../../deploy/systemd/paperclip-health-recovery");
 const installer = path.resolve(import.meta.dirname, "../../../deploy/systemd/paperclip-service-install");
+const repositoryRoot = path.resolve(import.meta.dirname, "../../..");
 const testUid = process.getuid?.() ?? 0;
 const testGid = process.getgid?.() ?? 0;
 
@@ -69,9 +70,25 @@ function installerFixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "paperclip-service-install-"));
   directories.push(root);
   const target = path.join(root, "target"), backup = path.join(root, "backup"), bin = path.join(root, "bin"), state = path.join(root, "systemctl-state"), calls = path.join(root, "systemctl.calls");
+  const archiveSource = path.join(root, "candidate.tgz"), manifestSource = path.join(root, "candidate.certification.json");
   fs.mkdirSync(bin); fs.mkdirSync(state); fs.mkdirSync(path.join(target, "etc/systemd/system"), { recursive: true }); fs.mkdirSync(path.join(target, "etc/paperclip"), { recursive: true });
   fs.writeFileSync(path.join(target, "etc/systemd/system/paperclip.service"), "prior primary unit\n", { mode: 0o600 });
   fs.writeFileSync(path.join(target, "etc/paperclip/paperclip.env"), "prior environment\n", { mode: 0o600 });
+  const priorDropins = path.join(target, "etc/systemd/system/paperclip.service.d");
+  fs.mkdirSync(priorDropins);
+  fs.writeFileSync(path.join(priorDropins, "10-safe-shutdown.conf"), "prior safe shutdown\n");
+  fs.writeFileSync(path.join(priorDropins, "20-git-scan-containment.conf"), "prior git containment\n");
+  fs.writeFileSync(path.join(priorDropins, "90-local.conf"), "prior local override\n");
+  const cliRoot = path.join(target, "home/paperclip/.paperclip/cli");
+  fs.mkdirSync(path.join(cliRoot, "releases/prior"), { recursive: true });
+  fs.symlinkSync("releases/prior", path.join(cliRoot, "current"));
+  fs.writeFileSync(path.join(cliRoot, "install.json"), "prior install manifest\n");
+  const priorCertification = path.join(cliRoot, "certification/current");
+  fs.mkdirSync(priorCertification, { recursive: true });
+  fs.writeFileSync(path.join(priorCertification, "paperclipai.tgz"), "prior archive\n");
+  fs.writeFileSync(path.join(priorCertification, "paperclipai.certification.json"), "prior certification\n");
+  fs.writeFileSync(archiveSource, "candidate archive\n");
+  fs.writeFileSync(manifestSource, "candidate certification\n");
   for (const [unit, enabled, active] of [["paperclip.service", "disabled", "inactive"], ["paperclip-health-recovery.timer", "enabled", "active"]]) {
     fs.writeFileSync(path.join(state, `${unit}.enabled`), enabled); fs.writeFileSync(path.join(state, `${unit}.active`), active);
   }
@@ -90,13 +107,14 @@ case "$1" in
 esac
 `, { mode: 0o755 });
   fs.writeFileSync(path.join(bin, "visudo"), "#!/usr/bin/env bash\n[[ \"$1\" == -c && \"$2\" == -f ]]\n", { mode: 0o755 });
-  return { root, target, backup, bin, state, calls };
+  return { root, target, backup, bin, state, calls, archiveSource, manifestSource };
 }
 
 function runInstaller(input: ReturnType<typeof installerFixture>, action: "install" | "rollback") {
   return execFileSync("bash", [installer, action], {
     encoding: "utf8",
-    env: { ...process.env, PATH: `${input.bin}:${process.env.PATH}`, SYSTEMCTL_CALLS: input.calls, SYSTEMCTL_STATE: input.state, PAPERCLIP_INSTALL_ROOT: input.target, PAPERCLIP_ROLLBACK_ROOT: input.backup, PAPERCLIP_INSTALL_OWNER: testUid.toString(), PAPERCLIP_INSTALL_GROUP: testGid.toString() },
+    cwd: repositoryRoot,
+    env: { ...process.env, PATH: `${input.bin}:${process.env.PATH}`, SYSTEMCTL_CALLS: input.calls, SYSTEMCTL_STATE: input.state, PAPERCLIP_INSTALL_ROOT: input.target, PAPERCLIP_ROLLBACK_ROOT: input.backup, PAPERCLIP_INSTALL_OWNER: testUid.toString(), PAPERCLIP_INSTALL_GROUP: testGid.toString(), PAPERCLIP_CERTIFIED_ARCHIVE_SOURCE: input.archiveSource, PAPERCLIP_CERTIFICATION_MANIFEST_SOURCE: input.manifestSource },
   });
 }
 
@@ -203,6 +221,8 @@ describe("systemd database-unhealthy health recovery", () => {
     const fixedHelper = path.join(input.target, "usr/local/lib/paperclip/paperclip-recovery");
     const sudoers = path.join(input.target, "etc/sudoers.d/paperclip-recovery");
     const tokenProvisioner = path.join(input.target, "usr/lib/paperclip/paperclip-recovery-token-provision");
+    const dropins = path.join(input.target, "etc/systemd/system/paperclip.service.d");
+    const certification = path.join(input.target, "home/paperclip/.paperclip/cli/certification/current");
     for (const file of [unit, recoveryUnit, timer, env, activationPreflight, artifactIdentityVerifier, recoveryScript, fixedHelper, sudoers, tokenProvisioner]) expect(fs.existsSync(file)).toBe(true);
     expect(fs.statSync(unit).mode & 0o777).toBe(0o644);
     expect(fs.statSync(recoveryUnit).mode & 0o777).toBe(0o644);
@@ -215,6 +235,16 @@ describe("systemd database-unhealthy health recovery", () => {
     expect(fs.statSync(artifactIdentityVerifier).mode & 0o777).toBe(0o644);
     expect(fs.statSync(recoveryScript).uid).toBe(testUid);
     expect(fs.statSync(recoveryScript).gid).toBe(testGid);
+    expect(fs.readdirSync(dropins).sort()).toEqual(["10-safe-shutdown.conf", "20-git-scan-containment.conf"]);
+    expect(fs.readFileSync(path.join(dropins, "10-safe-shutdown.conf"), "utf8")).toContain("KillMode=mixed");
+    expect(fs.readFileSync(path.join(dropins, "20-git-scan-containment.conf"), "utf8")).toContain("PAPERCLIP_WORKSPACE_GIT_SCAN_CONCURRENCY=1");
+    expect(fs.readFileSync(path.join(certification, "paperclipai.tgz"), "utf8")).toBe("candidate archive\n");
+    expect(fs.readFileSync(path.join(certification, "paperclipai.certification.json"), "utf8")).toBe("candidate certification\n");
+    const rollbackManifest = fs.readFileSync(path.join(input.backup, "manifest.tsv"), "utf8");
+    expect(rollbackManifest).toContain("etc/systemd/system/paperclip.service.d");
+    expect(rollbackManifest).toContain("home/paperclip/.paperclip/cli/certification/current");
+    expect(rollbackManifest).toContain("home/paperclip/.paperclip/cli/current");
+    expect(rollbackManifest).toContain("home/paperclip/.paperclip/cli/install.json");
 
     const artifactRoot = path.join(input.root, "artifact");
     const artifactOutput = path.join(artifactRoot, "out");
@@ -241,17 +271,44 @@ describe("systemd database-unhealthy health recovery", () => {
       env: { ...process.env, PAPERCLIP_NODE: process.execPath, PAPERCLIP_ARTIFACT_MANIFEST: manifest, PAPERCLIP_ARTIFACT_IDENTITY: identity, PAPERCLIP_ARTIFACT_ARCHIVE: archive, PAPERCLIP_EXECUTABLE: executable },
     })).toContain("artifact identity: activation preflight passed");
 
+    const cliRoot = path.join(input.target, "home/paperclip/.paperclip/cli");
+    fs.unlinkSync(path.join(cliRoot, "current"));
+    fs.mkdirSync(path.join(cliRoot, "releases/candidate"));
+    fs.symlinkSync("releases/candidate", path.join(cliRoot, "current"));
+    fs.writeFileSync(path.join(cliRoot, "install.json"), "candidate install manifest\n");
     runInstaller(input, "rollback");
     expect(fs.readFileSync(unit, "utf8")).toBe("prior primary unit\n");
     expect(fs.statSync(unit).mode & 0o777).toBe(0o600);
     expect(fs.readFileSync(env, "utf8")).toBe("prior environment\n");
     expect(fs.statSync(env).mode & 0o777).toBe(0o600);
+    expect(fs.readdirSync(dropins).sort()).toEqual(["10-safe-shutdown.conf", "20-git-scan-containment.conf", "90-local.conf"]);
+    expect(fs.readFileSync(path.join(dropins, "10-safe-shutdown.conf"), "utf8")).toBe("prior safe shutdown\n");
+    expect(fs.readlinkSync(path.join(cliRoot, "current"))).toBe("releases/prior");
+    expect(fs.readFileSync(path.join(cliRoot, "install.json"), "utf8")).toBe("prior install manifest\n");
+    expect(fs.readFileSync(path.join(certification, "paperclipai.tgz"), "utf8")).toBe("prior archive\n");
+    expect(fs.readFileSync(path.join(certification, "paperclipai.certification.json"), "utf8")).toBe("prior certification\n");
     for (const file of [recoveryUnit, timer, activationPreflight, artifactIdentityVerifier, recoveryScript, fixedHelper, sudoers, tokenProvisioner]) expect(fs.existsSync(file)).toBe(false);
     expect(fs.readFileSync(path.join(input.state, "paperclip.service.enabled"), "utf8")).toBe("disabled");
     expect(fs.readFileSync(path.join(input.state, "paperclip.service.active"), "utf8")).toBe("inactive");
     expect(fs.readFileSync(path.join(input.state, "paperclip-health-recovery.timer.enabled"), "utf8")).toBe("enabled");
     expect(fs.readFileSync(path.join(input.state, "paperclip-health-recovery.timer.active"), "utf8")).toBe("active");
     expect(fs.readFileSync(input.calls, "utf8")).toContain("daemon-reload");
+  });
+
+  it("keeps the native installed layout, activation identity, and systemd execution paths in agreement", () => {
+    const environment = fs.readFileSync(path.resolve(import.meta.dirname, "../../../deploy/systemd/paperclip.env"), "utf8");
+    const unit = fs.readFileSync(path.resolve(import.meta.dirname, "../../../deploy/systemd/paperclip.service"), "utf8");
+    expect(environment).toContain("PAPERCLIP_HOME=/home/paperclip/.paperclip");
+    expect(environment).toContain("PAPERCLIP_EXECUTABLE=/home/paperclip/.paperclip/cli/current/node_modules/paperclipai/dist/index.js");
+    expect(environment).toContain("PAPERCLIP_ARTIFACT_IDENTITY=/home/paperclip/.paperclip/cli/current/node_modules/paperclipai/dist/paperclip-artifact-identity.json");
+    expect(environment).toContain("PAPERCLIP_ARTIFACT_MANIFEST=/home/paperclip/.paperclip/cli/certification/current/paperclipai.certification.json");
+    expect(environment).toContain("PAPERCLIP_ARTIFACT_ARCHIVE=/home/paperclip/.paperclip/cli/certification/current/paperclipai.tgz");
+    expect(unit).toContain('exec "$PAPERCLIP_NODE" "$PAPERCLIP_EXECUTABLE" run --instance "$PAPERCLIP_INSTANCE_ID"');
+    expect(unit).toContain("ProtectSystem=strict");
+    expect(unit).toContain("ProtectHome=read-only");
+    expect(unit).toContain("ReadWritePaths=/home/paperclip/.paperclip/instances");
+    expect(unit).not.toContain("/opt/paperclip");
+    expect(environment).not.toContain("/var/lib/paperclip");
   });
 
   it("runs the recovery component as the Paperclip service identity", () => {

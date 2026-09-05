@@ -6,15 +6,37 @@ root="${PAPERCLIP_INSTALL_ROOT:-/}"
 backup="${PAPERCLIP_ROLLBACK_ROOT:-/root/paperclip-service-rollback}"
 install_owner="${PAPERCLIP_INSTALL_OWNER:-root}"
 install_group="${PAPERCLIP_INSTALL_GROUP:-root}"
-paths=(etc/systemd/system/paperclip.service etc/systemd/system/paperclip-health-recovery.service etc/systemd/system/paperclip-health-recovery.timer etc/paperclip/paperclip.env etc/sudoers.d/paperclip-recovery usr/lib/paperclip/paperclip-preflight usr/lib/paperclip/paperclip-activation-preflight usr/lib/paperclip/paperclip-artifact-identity.mjs usr/lib/paperclip/paperclip-service-install usr/lib/paperclip/paperclip-service-transition usr/lib/paperclip/paperclip-health-recovery usr/local/lib/paperclip/paperclip-recovery usr/lib/paperclip/paperclip-recovery-token-provision)
-srcs=(deploy/systemd/paperclip.service deploy/systemd/paperclip-health-recovery.service deploy/systemd/paperclip-health-recovery.timer deploy/systemd/paperclip.env deploy/recovery/paperclip-recovery.sudoers deploy/systemd/paperclip-preflight scripts/paperclip-activation-preflight.sh scripts/paperclip-artifact-identity.mjs deploy/systemd/paperclip-service-install deploy/systemd/paperclip-service-transition deploy/systemd/paperclip-health-recovery deploy/recovery/paperclip-recovery deploy/systemd/paperclip-recovery-token-provision)
-mkdir -p "$backup/files"
+
+managed_paths=(etc/systemd/system/paperclip.service etc/systemd/system/paperclip-health-recovery.service etc/systemd/system/paperclip-health-recovery.timer etc/paperclip/paperclip.env etc/sudoers.d/paperclip-recovery usr/lib/paperclip/paperclip-preflight usr/lib/paperclip/paperclip-activation-preflight usr/lib/paperclip/paperclip-artifact-identity.mjs usr/lib/paperclip/paperclip-service-install usr/lib/paperclip/paperclip-service-transition usr/lib/paperclip/paperclip-health-recovery usr/local/lib/paperclip/paperclip-recovery usr/lib/paperclip/paperclip-recovery-token-provision)
+managed_srcs=(deploy/systemd/paperclip.service deploy/systemd/paperclip-health-recovery.service deploy/systemd/paperclip-health-recovery.timer deploy/systemd/paperclip.env deploy/recovery/paperclip-recovery.sudoers deploy/systemd/paperclip-preflight scripts/paperclip-activation-preflight.sh scripts/paperclip-artifact-identity.mjs deploy/systemd/paperclip-service-install deploy/systemd/paperclip-service-transition deploy/systemd/paperclip-health-recovery deploy/recovery/paperclip-recovery deploy/systemd/paperclip-recovery-token-provision)
+dropin_path=etc/systemd/system/paperclip.service.d
+certification_path=home/paperclip/.paperclip/cli/certification/current
+# These are changed by the separately reviewed CLI candidate staging command.
+# Snapshotting them here makes service rollback restore the complete activation.
+snapshot_only_paths=(home/paperclip/.paperclip/cli/current home/paperclip/.paperclip/cli/install.json)
+
+move_aside() {
+  local target="$1" destination="$2"
+  if [[ -e "$target" || -L "$target" ]]; then
+    mkdir -p "$(dirname "$destination")"
+    mv "$target" "$destination"
+  fi
+}
 
 snapshot() {
+  [[ ! -e "$backup/manifest.tsv" ]] || { echo "rollback snapshot already exists: $backup" >&2; exit 1; }
+  mkdir -p "$backup/files"
   : >"$backup/manifest.tsv"
-  for rel in "${paths[@]}"; do
+  local rel target
+  for rel in "${managed_paths[@]}" "$dropin_path" "$certification_path" "${snapshot_only_paths[@]}"; do
     target="$root/$rel"
-    if [[ -e "$target" || -L "$target" ]]; then printf 'present\t%s\n' "$rel" >>"$backup/manifest.tsv"; mkdir -p "$backup/files/$(dirname "$rel")"; cp -a "$target" "$backup/files/$rel"; else printf 'absent\t%s\n' "$rel" >>"$backup/manifest.tsv"; fi
+    if [[ -e "$target" || -L "$target" ]]; then
+      printf 'present\t%s\n' "$rel" >>"$backup/manifest.tsv"
+      mkdir -p "$backup/files/$(dirname "$rel")"
+      cp -a "$target" "$backup/files/$rel"
+    else
+      printf 'absent\t%s\n' "$rel" >>"$backup/manifest.tsv"
+    fi
   done
   systemctl is-enabled paperclip.service >"$backup/prior.enabled" 2>&1 || true
   systemctl is-active paperclip.service >"$backup/prior.active" 2>&1 || true
@@ -23,8 +45,8 @@ snapshot() {
 }
 
 validate_install() {
-  local rel target mode owner group
-  for rel in "${paths[@]}"; do
+  local rel target owner group expected actual
+  for rel in "${managed_paths[@]}"; do
     target="$root/$rel"
     [[ -f "$target" && ! -L "$target" ]] || { echo "unsafe installed target: $target" >&2; exit 1; }
     owner="$(stat -c '%U' "$target")"; group="$(stat -c '%G' "$target")"
@@ -36,12 +58,30 @@ validate_install() {
   [[ "$(stat -c '%a' "$root/usr/lib/paperclip/paperclip-recovery-token-provision")" == 750 ]] || { echo "unsafe token provisioner mode" >&2; exit 1; }
   [[ "$(stat -c '%a' "$root/usr/lib/paperclip/paperclip-artifact-identity.mjs")" == 644 ]] || { echo "unsafe artifact identity verifier mode" >&2; exit 1; }
   visudo -c -f "$root/etc/sudoers.d/paperclip-recovery" >/dev/null
+  expected="$(cd deploy/systemd/paperclip.service.d && find . -type f -printf '%P\n' | LC_ALL=C sort)"
+  actual="$(cd "$root/$dropin_path" && find . -type f -printf '%P\n' | LC_ALL=C sort)"
+  [[ "$actual" == "$expected" ]] || { echo "installed service drop-in set differs from certified set" >&2; exit 1; }
+  while IFS= read -r rel; do cmp -s "deploy/systemd/paperclip.service.d/$rel" "$root/$dropin_path/$rel" || { echo "installed drop-in differs: $rel" >&2; exit 1; }; done <<<"$expected"
+  [[ -f "$root/$certification_path/paperclipai.certification.json" && ! -L "$root/$certification_path/paperclipai.certification.json" ]] || { echo "unsafe certification manifest" >&2; exit 1; }
+  [[ -f "$root/$certification_path/paperclipai.tgz" && ! -L "$root/$certification_path/paperclipai.tgz" ]] || { echo "unsafe certified archive" >&2; exit 1; }
 }
 
 case "$action" in
   install)
+    archive_source="${PAPERCLIP_CERTIFIED_ARCHIVE_SOURCE:-}"
+    manifest_source="${PAPERCLIP_CERTIFICATION_MANIFEST_SOURCE:-}"
+    [[ -f "$archive_source" && ! -L "$archive_source" ]] || { echo "set PAPERCLIP_CERTIFIED_ARCHIVE_SOURCE to the certified archive" >&2; exit 1; }
+    [[ -f "$manifest_source" && ! -L "$manifest_source" ]] || { echo "set PAPERCLIP_CERTIFICATION_MANIFEST_SOURCE to its certification manifest" >&2; exit 1; }
     snapshot
-    for i in "${!paths[@]}"; do mkdir -p "$(dirname "$root/${paths[$i]}")"; install -o "$install_owner" -g "$install_group" -m 0755 "${srcs[$i]}" "$root/${paths[$i]}"; done
+    for i in "${!managed_paths[@]}"; do mkdir -p "$(dirname "$root/${managed_paths[$i]}")"; install -o "$install_owner" -g "$install_group" -m 0755 "${managed_srcs[$i]}" "$root/${managed_paths[$i]}"; done
+    mkdir -p "$backup/install-replaced"
+    move_aside "$root/$dropin_path" "$backup/install-replaced/$dropin_path"
+    install -d -o "$install_owner" -g "$install_group" -m 0755 "$root/$dropin_path"
+    for source in deploy/systemd/paperclip.service.d/*.conf; do install -o "$install_owner" -g "$install_group" -m 0644 "$source" "$root/$dropin_path/$(basename "$source")"; done
+    move_aside "$root/$certification_path" "$backup/install-replaced/$certification_path"
+    install -d -o "$install_owner" -g "$install_group" -m 0755 "$root/$certification_path"
+    install -o "$install_owner" -g "$install_group" -m 0644 "$archive_source" "$root/$certification_path/paperclipai.tgz"
+    install -o "$install_owner" -g "$install_group" -m 0644 "$manifest_source" "$root/$certification_path/paperclipai.certification.json"
     chmod 0644 "$root/etc/systemd/system/paperclip.service" "$root/etc/systemd/system/paperclip-health-recovery.service" "$root/etc/systemd/system/paperclip-health-recovery.timer"
     chmod 0640 "$root/etc/paperclip/paperclip.env"
     chmod 0644 "$root/usr/lib/paperclip/paperclip-artifact-identity.mjs"
@@ -55,7 +95,13 @@ case "$action" in
     mkdir -p "$backup/replaced"
     while IFS=$'\t' read -r state rel; do
       target="$root/$rel"
-      if [[ "$state" == present ]]; then cp -a "$backup/files/$rel" "$target"; else [[ ! -e "$target" && ! -L "$target" ]] || { mkdir -p "$backup/replaced/$(dirname "$rel")"; mv "$target" "$backup/replaced/$rel"; }; fi
+      move_aside "$target" "$backup/replaced/$rel"
+      if [[ "$state" == present ]]; then
+        mkdir -p "$(dirname "$target")"
+        cp -a "$backup/files/$rel" "$target"
+      elif [[ "$state" != absent ]]; then
+        echo "invalid rollback manifest state: $state" >&2; exit 1
+      fi
     done <"$backup/manifest.tsv"
     systemctl daemon-reload
     grep -qx enabled "$backup/prior.enabled" && systemctl enable paperclip.service || systemctl disable paperclip.service

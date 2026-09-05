@@ -28,24 +28,26 @@ for name in PAPERCLIP_DATA_DIR PAPERCLIP_BACKUP_DIR PAPERCLIP_STORAGE_DIR PAPERC
 done
 
 safe_path() {
-  local target="$1" kind="$2" mode
+  local target="$1" kind="$2" forbidden_write_mask="${3:-022}" mode
   [[ ! -L "$target" ]] || fail "$kind is a symlink: $target"
   if [[ "$kind" == "directory" ]]; then [[ -d "$target" ]] || fail "missing directory: $target"; else [[ -f "$target" ]] || fail "missing regular file: $target"; fi
   mode=$(stat -c '%a' "$target")
-  (( (8#$mode & 022) == 0 )) || fail "unsafe permissions on $target (mode $mode)"
+  (( (8#$mode & forbidden_write_mask) == 0 )) || fail "unsafe permissions on $target (mode $mode)"
 }
 safe_path "$PAPERCLIP_HOME" directory
-safe_path "$instance_root" directory
-safe_path "$PAPERCLIP_DATA_DIR" directory
-safe_path "$PAPERCLIP_BACKUP_DIR" directory
-safe_path "$PAPERCLIP_STORAGE_DIR" directory
+# State directories may be group-writable for the dedicated paperclip group in
+# the verified native install. Other-writable state remains forbidden.
+safe_path "$instance_root" directory 002
+safe_path "$PAPERCLIP_DATA_DIR" directory 002
+safe_path "$PAPERCLIP_BACKUP_DIR" directory 002
+safe_path "$PAPERCLIP_STORAGE_DIR" directory 002
 safe_path "$PAPERCLIP_CONFIG" file
 safe_path "$PAPERCLIP_SECRETS_KEY_FILE" file
 safe_path "$PAPERCLIP_ENV_FILE" file
 [[ "$(stat -c '%U' "$PAPERCLIP_ENV_FILE")" == "root" ]] || fail "PAPERCLIP_ENV_FILE must be root-owned"
 secret_mode=$(stat -c '%a' "$PAPERCLIP_SECRETS_KEY_FILE")
 (( (8#$secret_mode & 077) == 0 )) || fail "secret key must not be readable by group or other (mode $secret_mode)"
-[[ -x "$PAPERCLIP_EXECUTABLE" && -f "$PAPERCLIP_EXECUTABLE" ]] || fail "PAPERCLIP_EXECUTABLE is not an executable regular file"
+[[ -r "$PAPERCLIP_EXECUTABLE" && -f "$PAPERCLIP_EXECUTABLE" ]] || fail "PAPERCLIP_EXECUTABLE is not a readable regular file"
 [[ -x "$PAPERCLIP_NODE" && -f "$PAPERCLIP_NODE" ]] || fail "PAPERCLIP_NODE is not an executable regular file"
 [[ -z "${PAPERCLIP_SECRETS_MASTER_KEY:-}" ]] || fail "inline PAPERCLIP_SECRETS_MASTER_KEY is forbidden"
 [[ ${#PAPERCLIP_RECOVERY_TOKEN} -ge 32 && "$PAPERCLIP_RECOVERY_TOKEN" != *[[:space:]]* ]] || fail "PAPERCLIP_RECOVERY_TOKEN must be a non-whitespace value of at least 32 characters"

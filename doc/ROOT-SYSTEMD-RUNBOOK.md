@@ -14,13 +14,15 @@ host gate is approved.
   It fails closed unless the selected config is exactly `local_trusted`,
   `private`, `127.0.0.1`, and port `3100`; public/LAN/custom binding and
   weakened deployment modes are rejected.
-- The root-owned environment file names the actual `PAPERCLIP_EXECUTABLE` and
-  `PAPERCLIP_NODE`; `/usr/local/bin/paperclipai` is not assumed. The preflight
-  rejects a missing, symlinked, or non-executable binary.
+- The root-owned environment file names the native installed CLI entry point at
+  `/home/paperclip/.paperclip/cli/current/node_modules/paperclipai/dist/index.js`
+  and launches it with `/usr/bin/node`; `/opt/paperclip` and a global launcher
+  are not assumed. The preflight rejects missing or unsafe files.
 - Preserve one existing instance and explicitly name its config, embedded
   PostgreSQL data, backup, local storage, and local-encrypted secrets-key
-  paths. The preflight rejects missing paths, symlinks, group/other-writable
-  state, a disabled backup, or mismatched config references.
+  paths. The preflight rejects missing paths, symlinks, other-writable state,
+  a disabled backup, or mismatched config references. Group-writable state is
+  accepted for the dedicated `paperclip` group used by the verified layout.
 - Do not put secret values in the unit or environment file. The secrets key is
   a file reference only; inline `PAPERCLIP_SECRETS_MASTER_KEY` is rejected.
 - The separate recovery principal is provisioned only through
@@ -32,6 +34,15 @@ host gate is approved.
   shipped sudoers entry. The health script never invokes `systemctl` directly.
 - The bounded abnormal-restart policy is five starts in 60 seconds, followed by
   a five-second delay. Deliberate operator stops do not restart the service.
+- `ProtectSystem=strict` and `ProtectHome=read-only` remain enabled. Runtime
+  writes are limited to `/home/paperclip/.paperclip/instances`; the installed
+  CLI and its certification material remain read-only to the service.
+- The service installer snapshots the primary unit, the complete drop-in
+  directory, CLI `current` pointer and `install.json`, certification staging,
+  recovery files, and unit enable/active states before any replacement. It
+  installs the reviewed `10-safe-shutdown.conf` and
+  `20-git-scan-containment.conf` as the only effective drop-ins. Rollback moves
+  the complete candidate set aside and restores the snapshot byte-for-byte.
 
 ## Stage without changing the running process
 
@@ -57,13 +68,21 @@ process has a different bind, deployment mode, path layout, database, or
 secret provider, stop here and obtain a separately approved migration; do not
 silently rewrite it.
 
-Review `deploy/systemd/paperclip.env` against the recorded instance. Its values
-are examples and must match the running instance exactly. Stage the complete
-restorable artifact set only through:
+Review `deploy/systemd/paperclip.env` against the recorded instance. It is bound
+to the verified `/home/paperclip/.paperclip` native layout and must match the
+running instance exactly. Build the certified archive and manifest from the
+exact candidate before entering the production gate. The service installer
+snapshots the pre-candidate CLI pointer before a separately reviewed CLI install
+changes it, and stages immutable certification sidecars outside the release
+tree:
 
 ```sh
+PAPERCLIP_CERTIFIED_ARCHIVE_SOURCE=/approved/stage/paperclipai.tgz \
+PAPERCLIP_CERTIFICATION_MANIFEST_SOURCE=/approved/stage/paperclipai.certification.json \
 PAPERCLIP_ROLLBACK_ROOT=/root/paperclip-service-rollback \
   deploy/systemd/paperclip-service-install install
+# Only now may the separately approved exact-candidate CLI install atomically
+# update /home/paperclip/.paperclip/cli/current and cli/install.json.
 # A Board-approved operator supplies the high-entropy token on protected stdin.
 read -rsp 'Recovery token: ' token; printf '\n' >&2
 printf '%s\n' "$token" | /usr/lib/paperclip/paperclip-recovery-token-provision
@@ -73,14 +92,21 @@ systemd-analyze verify /etc/systemd/system/paperclip.service \
   /etc/systemd/system/paperclip-health-recovery.timer
 /usr/lib/paperclip/paperclip-preflight
 /usr/lib/paperclip/paperclip-activation-preflight
+systemctl cat paperclip.service
 ```
+
+The effective unit output must contain the primary unit plus exactly
+`10-safe-shutdown.conf` and `20-git-scan-containment.conf`; any unexpected
+drop-in is a stop condition. Do not edit an installed unit, drop-in, archive,
+manifest, identity file, or executable to make preflight pass.
 
 Before this preflight can pass, `config.json` must contain absolute paths equal
 to the five corresponding `PAPERCLIP_*_DIR` / `PAPERCLIP_SECRETS_KEY_FILE`
 values, with `database.mode="embedded-postgres"`, an enabled backup, local-disk
 storage, and `secrets.provider="local_encrypted"`. All paths must be inside
 `$PAPERCLIP_HOME/instances/$PAPERCLIP_INSTANCE_ID`, exist before activation,
-and not be group/other writable. Do not include `DATABASE_URL`, API keys, or
+and not be other writable. Group write is limited to the dedicated service
+group. Do not include `DATABASE_URL`, API keys, or
 other secret values in shell history or the environment file.
 
 Create release artifacts only from a clean checkout with
@@ -163,5 +189,20 @@ PAPERCLIP_ROLLBACK_ROOT=/root/paperclip-service-rollback \
 curl -fsS http://127.0.0.1:3100/api/health | jq -e '.status == "ok"'
 ```
 
-Do not delete `/var/lib/paperclip`, instance configuration, embedded PostgreSQL
-data, backups, storage, or secrets as part of rollback.
+Do not delete `/home/paperclip/.paperclip`, instance configuration, embedded
+PostgreSQL data, backups, storage, or secrets as part of rollback.
+
+## Permission gate input (record only)
+
+No permission change is authorized by this runbook. Read-only live inspection
+recorded these exact four future-gate inputs, all owned by
+`paperclip:paperclip` with mode `0775`:
+
+- `/home/paperclip/.paperclip/instances`
+- `/home/paperclip/.paperclip/instances/default`
+- `/home/paperclip/.paperclip/instances/default/data/backups`
+- `/home/paperclip/.paperclip/instances/default/data/storage`
+
+Any future permission operation must name the exact candidate and remain
+limited to those four paths. It must not be inferred from this document or
+performed as part of install, activation, or rollback.
