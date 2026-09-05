@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
 import { accessSync, constants as fsConstants, existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { and, eq } from "drizzle-orm";
@@ -60,7 +61,7 @@ import {
   issueWorkspaceLoginHandoff,
   workspaceLoginHandoffFailureStatus,
 } from "../services/workspace-login-handoff-issuer.js";
-import { conflict, unprocessable } from "../errors.js";
+import { conflict, HttpError, unprocessable } from "../errors.js";
 
 const WORKSPACE_CONTROL_OUTPUT_MAX_CHARS = 256 * 1024;
 
@@ -163,15 +164,41 @@ export function executionWorkspaceRoutes(db: Db, opts: { pluginWorkerManager?: P
 
   router.get("/execution-workspaces/:id/close-readiness", async (req, res) => {
     const id = req.params.id as string;
-    const workspace = await getAccessibleResource(req, res, svc.getById(id), "Execution workspace not found");
-    if (!workspace) return;
-    if (!(await assertExecutionWorkspaceReadAllowed(req, res, workspace.companyId))) return;
-    const readiness = await svc.getCloseReadiness(id);
-    if (!readiness) {
-      res.status(404).json({ error: "Execution workspace not found" });
-      return;
+    const requestId = randomUUID();
+    const workspaceIdHash = createHash("sha256").update(id).digest("hex").slice(0, 16);
+    const startedAt = performance.now();
+    res.setHeader("X-Paperclip-Request-Id", requestId);
+    logger.info({ event: "close_readiness_request", requestId, workspaceIdHash, outcome: "started" }, "close-readiness request started");
+    try {
+      const workspace = await getAccessibleResource(req, res, svc.getById(id), "Execution workspace not found");
+      if (!workspace) return;
+      if (!(await assertExecutionWorkspaceReadAllowed(req, res, workspace.companyId))) return;
+      const readiness = await svc.getCloseReadiness(id, { ...getActorInfo(req), requestId });
+      if (!readiness) {
+        res.status(404).json({ error: "Execution workspace not found" });
+        return;
+      }
+      logger.info({
+        event: "close_readiness_request",
+        requestId,
+        workspaceIdHash,
+        outcome: "success",
+        totalMs: Math.max(0, performance.now() - startedAt),
+        filesystemEntryCount: readiness.git?.dirtyEntryCount ?? 0,
+      }, "close-readiness request completed");
+      res.json(readiness);
+    } catch (error) {
+      logger.info({
+        event: "close_readiness_request",
+        requestId,
+        workspaceIdHash,
+        outcome: error instanceof HttpError
+          ? ((error.details as { code?: string } | undefined)?.code ?? `http_${error.status}`)
+          : "error",
+        totalMs: Math.max(0, performance.now() - startedAt),
+      }, "close-readiness request finished without a result");
+      throw error;
     }
-    res.json(readiness);
   });
 
   /**

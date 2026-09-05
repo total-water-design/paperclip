@@ -70,6 +70,14 @@ export interface WorkspaceGitScanInput {
   env?: NodeJS.ProcessEnv;
   maxStdoutBytes?: number;
   maxStderrBytes?: number;
+  context?: {
+    workspaceId?: string;
+    issueIdentifiers?: readonly string[];
+    agentId?: string | null;
+    runId?: string | null;
+    untrackedFilesMode?: string;
+    requestId?: string;
+  };
 }
 
 export interface WorkspaceGitSchedulerSnapshot {
@@ -153,6 +161,7 @@ interface PendingScan {
   controller: AbortController;
   waiters: Map<symbol, Waiter>;
   joinCount: number;
+  context?: WorkspaceGitScanInput["context"];
 }
 
 interface CacheEntry {
@@ -169,11 +178,11 @@ interface WarningBucket {
   suppressed: number;
 }
 
-const DEFAULT_CONCURRENCY = 2;
-const DEFAULT_QUEUE_CAPACITY = 32;
-const DEFAULT_TIMEOUT_MS = 8_000;
+const DEFAULT_CONCURRENCY = 1;
+const DEFAULT_QUEUE_CAPACITY = 4;
+const DEFAULT_TIMEOUT_MS = 5_000;
 const DEFAULT_KILL_GRACE_MS = 250;
-const DEFAULT_CACHE_TTL_MS = 10_000;
+const DEFAULT_CACHE_TTL_MS = 60_000;
 const DEFAULT_CACHE_ENTRIES = 64;
 const DEFAULT_CACHE_BYTES = 8 * 1024 * 1024;
 const DEFAULT_OUTPUT_BYTES = 1024 * 1024;
@@ -213,6 +222,11 @@ export function workspaceGitSchedulerOptionsFromEnv(
 
 function workspaceIdentity(canonicalWorkspacePath: string): string {
   return createHash("sha256").update(canonicalWorkspacePath).digest("hex").slice(0, 16);
+}
+
+function telemetryIdentity(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 16);
 }
 
 function scanKey(input: {
@@ -499,6 +513,14 @@ export class WorkspaceGitOperationScheduler {
         event: "workspace_git_scan",
         operation: input.operation,
         workspaceHash,
+        workspaceIdHash: telemetryIdentity(input.context?.workspaceId),
+        issueSetHash: telemetryIdentity(input.context?.issueIdentifiers),
+        actorHash: telemetryIdentity(input.context?.agentId),
+        runHash: telemetryIdentity(input.context?.runId),
+        requestId: input.context?.requestId,
+        repositoryRootHash: workspaceHash,
+        gitOperation: input.args[0] ?? null,
+        untrackedFilesMode: input.context?.untrackedFilesMode,
         cacheHit: true,
         singleFlightJoined: false,
         activeCount: this.activeCount,
@@ -519,6 +541,18 @@ export class WorkspaceGitOperationScheduler {
     if (existing) {
       existing.joinCount += 1;
       this.totals.singleFlightJoins += 1;
+      logger.info({
+        event: "workspace_git_scan",
+        operation: input.operation,
+        requestId: input.context?.requestId,
+        workspaceIdHash: telemetryIdentity(input.context?.workspaceId),
+        workspaceHash,
+        repositoryRootHash: workspaceHash,
+        cacheHit: false,
+        singleFlightJoined: true,
+        activeCount: this.activeCount,
+        queuedCount: this.queue.length,
+      }, "workspace Git scan joined in-flight request");
       return this.addWaiter(existing, input.signal, true);
     }
 
@@ -566,6 +600,7 @@ export class WorkspaceGitOperationScheduler {
       controller: new AbortController(),
       waiters: new Map(),
       joinCount: 0,
+      context: input.context,
     };
     this.inFlight.set(key, scan);
     this.queue.push(scan);
@@ -712,14 +747,29 @@ export class WorkspaceGitOperationScheduler {
       event: "workspace_git_scan",
       operation: scan.operation,
       workspaceHash: scan.workspaceHash,
+      workspaceIdHash: telemetryIdentity(scan.context?.workspaceId),
+      issueSetHash: telemetryIdentity(scan.context?.issueIdentifiers),
+      actorHash: telemetryIdentity(scan.context?.agentId),
+      runHash: telemetryIdentity(scan.context?.runId),
+      requestId: scan.context?.requestId,
+      repositoryRootHash: scan.workspaceHash,
+      gitOperation: scan.args[0] ?? null,
+      untrackedFilesMode: scan.context?.untrackedFilesMode,
       outcome: "success",
+      queueEnteredAtMs: scan.enqueuedAt,
       queueWaitMs,
       executionMs: Math.max(0, this.now() - startedAt),
+      totalMs: Math.max(0, this.now() - scan.enqueuedAt),
+      timeoutMs: scan.timeoutMs,
       activeCount: this.activeCount,
       queuedCount: this.queue.length,
       cacheHit: false,
       singleFlightJoinCount: scan.joinCount,
+      filesystemEntriesInspected: scan.operation === "execution_workspaces.close_readiness_status"
+        ? result.stdout.split(result.stdout.includes("\0") ? "\0" : /\r?\n/).filter(Boolean).length
+        : undefined,
       exitOutcome: "zero",
+      exitCode: 0,
     }, "workspace Git scan completed");
     this.release(scan);
   }
@@ -763,14 +813,28 @@ export class WorkspaceGitOperationScheduler {
       event: "workspace_git_scan",
       operation: scan.operation,
       workspaceHash: scan.workspaceHash,
+      workspaceIdHash: telemetryIdentity(scan.context?.workspaceId),
+      issueSetHash: telemetryIdentity(scan.context?.issueIdentifiers),
+      actorHash: telemetryIdentity(scan.context?.agentId),
+      runHash: telemetryIdentity(scan.context?.runId),
+      requestId: scan.context?.requestId,
+      repositoryRootHash: scan.workspaceHash,
+      gitOperation: scan.args[0] ?? null,
+      untrackedFilesMode: scan.context?.untrackedFilesMode,
       outcome: normalized.code,
+      queueEnteredAtMs: scan.enqueuedAt,
       queueWaitMs,
       executionMs: Math.max(0, this.now() - startedAt),
+      totalMs: Math.max(0, this.now() - scan.enqueuedAt),
+      timeoutMs: scan.timeoutMs,
       activeCount: this.activeCount,
       queuedCount: this.queue.length,
       cacheHit: false,
       singleFlightJoinCount: scan.joinCount,
       exitOutcome: normalized.code,
+      exitCode: typeof (normalized.details as Record<string, unknown>)?.exitCode === "number"
+        ? (normalized.details as Record<string, unknown>).exitCode
+        : null,
     }, "workspace Git scan finished without a result");
     this.release(scan);
   }

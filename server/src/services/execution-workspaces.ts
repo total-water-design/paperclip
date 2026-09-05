@@ -403,13 +403,16 @@ async function runExpensiveGitStatus(input: {
   cwd: string;
   operation: string;
   fairnessKeys?: readonly string[];
+  cacheTtlMs?: number;
+  context?: Parameters<typeof workspaceGitOperationScheduler.run>[0]["context"];
 }) {
   return workspaceGitOperationScheduler.run({
     workspacePath: input.cwd,
     args: input.args,
     operation: input.operation,
     fairnessKeys: input.fairnessKeys,
-    cacheTtlMs: 0,
+    cacheTtlMs: input.cacheTtlMs ?? 0,
+    context: input.context,
   });
 }
 
@@ -783,7 +786,12 @@ async function quarantineRestoreDirtyWorkspaceBranch(input: {
   }
 }
 
-async function inspectGitCloseReadiness(workspace: ExecutionWorkspace): Promise<{
+async function inspectGitCloseReadiness(workspace: ExecutionWorkspace, context?: {
+  issueIdentifiers?: readonly string[];
+  agentId?: string | null;
+  runId?: string | null;
+  requestId?: string;
+}): Promise<{
   git: ExecutionWorkspaceCloseGitReadiness | null;
   warnings: string[];
   statusInspectionSucceeded: boolean;
@@ -860,6 +868,15 @@ async function inspectGitCloseReadiness(workspace: ExecutionWorkspace): Promise<
           `workspace:${workspace.id}`,
           ...(workspace.sourceIssueId ? [`issue:${workspace.sourceIssueId}`] : []),
         ],
+        cacheTtlMs: 60_000,
+        context: {
+          workspaceId: workspace.id,
+          issueIdentifiers: context?.issueIdentifiers,
+          agentId: context?.agentId,
+          runId: context?.runId,
+          requestId: context?.requestId,
+          untrackedFilesMode: "all",
+        },
       })).stdout;
       for (const line of statusOutput.split(/\r?\n/)) {
         if (!line) continue;
@@ -2235,7 +2252,7 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
       );
     },
 
-    getCloseReadiness: async (id: string): Promise<ExecutionWorkspaceCloseReadiness | null> => {
+    getCloseReadiness: async (id: string, actor?: { agentId?: string | null; runId?: string | null; requestId?: string }): Promise<ExecutionWorkspaceCloseReadiness | null> => {
       const workspace = await db
         .select()
         .from(executionWorkspaces)
@@ -2306,7 +2323,14 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
         git,
         warnings: gitWarnings,
         statusInspectionSucceeded,
-      } = await inspectGitCloseReadiness(executionWorkspace);
+      } = await inspectGitCloseReadiness(executionWorkspace, {
+        issueIdentifiers: linkedIssues
+          .map((issue) => issue.identifier)
+          .filter((identifier): identifier is string => identifier !== null),
+        agentId: actor?.agentId,
+        runId: actor?.runId,
+        requestId: actor?.requestId,
+      });
       const { deliveryState } = await assessDelivery(workspace, git);
       const warnings = [...gitWarnings];
       const blockingReasons: string[] = [];

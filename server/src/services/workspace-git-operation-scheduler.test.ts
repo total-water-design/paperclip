@@ -49,10 +49,10 @@ afterEach(async () => {
 describe("WorkspaceGitOperationScheduler", () => {
   it("loads bounded process defaults and overrides from the environment", () => {
     expect(workspaceGitSchedulerOptionsFromEnv({})).toEqual({
-      concurrency: 2,
-      queueCapacity: 32,
-      timeoutMs: 8_000,
-      defaultCacheTtlMs: 10_000,
+      concurrency: 1,
+      queueCapacity: 4,
+      timeoutMs: 5_000,
+      defaultCacheTtlMs: 60_000,
     });
     expect(workspaceGitSchedulerOptionsFromEnv({
       PAPERCLIP_WORKSPACE_GIT_SCAN_CONCURRENCY: "4",
@@ -341,7 +341,7 @@ describe("WorkspaceGitOperationScheduler", () => {
     expect(scheduler.snapshot()).toMatchObject({ activeCount: 0, queuedCount: 0, inFlightCount: 0 });
   });
 
-  it("kills a hung subprocess after the hard timeout and releases the slot for the next scan", async () => {
+  it("kills a subprocess that runs beyond five seconds without leaving an orphan and releases the slot", async () => {
     const workspace = await makeWorkspace();
     const scriptPath = path.join(path.dirname(workspace), "fake-git.mjs");
     const pidPath = path.join(path.dirname(workspace), "fake-git.pid");
@@ -357,7 +357,7 @@ describe("WorkspaceGitOperationScheduler", () => {
     ].join("\n"), "utf8");
     const scheduler = createWorkspaceGitOperationScheduler({
       concurrency: 1,
-      timeoutMs: 500,
+      timeoutMs: 5_000,
       killGraceMs: 50,
       gitBinary: process.execPath,
       gitArgsPrefix: [scriptPath],
@@ -394,7 +394,7 @@ describe("WorkspaceGitOperationScheduler", () => {
       singleFlightJoined: false,
     });
     expect(scheduler.snapshot()).toMatchObject({ activeCount: 0, queuedCount: 0, inFlightCount: 0 });
-  });
+  }, 10_000);
 
   it("coalesces 500 requests over two repositories into two bounded scans", async () => {
     const firstWorkspace = await makeWorkspace("repo-a");

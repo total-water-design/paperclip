@@ -3,6 +3,7 @@ import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { errorHandler } from "../middleware/index.js";
 import { executionWorkspaceRoutes } from "../routes/execution-workspaces.js";
+import { HttpError } from "../errors.js";
 
 const mockExecutionWorkspaceService = vi.hoisted(() => ({
   list: vi.fn(),
@@ -168,6 +169,50 @@ describe.sequential("execution workspace routes", () => {
 
     expect(res.status).toBe(422);
     expect(mockExecutionWorkspaceService.listOverview).not.toHaveBeenCalled();
+  });
+
+  it("correlates close-readiness HTTP requests without exposing workspace ids in telemetry", async () => {
+    mockExecutionWorkspaceService.getById.mockResolvedValue({
+      id: "workspace-secret-id",
+      companyId: "company-1",
+    });
+    mockExecutionWorkspaceService.getCloseReadiness.mockResolvedValue({
+      git: { dirtyEntryCount: 2, untrackedEntryCount: 3 },
+      blockingReasons: [],
+      warnings: [],
+      plannedActions: [],
+      canClose: true,
+    });
+
+    const res = await request(createApp())
+      .get("/api/execution-workspaces/workspace-secret-id/close-readiness");
+
+    expect(res.status).toBe(200);
+    expect(res.headers["x-paperclip-request-id"]).toMatch(/^[0-9a-f-]{36}$/);
+    expect(mockExecutionWorkspaceService.getCloseReadiness).toHaveBeenCalledWith(
+      "workspace-secret-id",
+      expect.objectContaining({ requestId: res.headers["x-paperclip-request-id"] }),
+    );
+    expect(JSON.stringify(res.body)).not.toContain("workspace-secret-id");
+  });
+
+  it("returns a correlated graceful timeout response without exposing the workspace id", async () => {
+    mockExecutionWorkspaceService.getById.mockResolvedValue({
+      id: "workspace-timeout-secret",
+      companyId: "company-1",
+    });
+    mockExecutionWorkspaceService.getCloseReadiness.mockRejectedValue(new HttpError(
+      504,
+      "Workspace Git scan timed out",
+      { code: "workspace_git_scan_timeout" },
+    ));
+
+    const res = await request(createApp())
+      .get("/api/execution-workspaces/workspace-timeout-secret/close-readiness");
+
+    expect(res.status).toBe(504);
+    expect(res.headers["x-paperclip-request-id"]).toMatch(/^[0-9a-f-]{36}$/);
+    expect(JSON.stringify(res.body)).not.toContain("workspace-timeout-secret");
   });
 
   it.each([
