@@ -17,6 +17,22 @@ certification_path=home/paperclip/.paperclip/cli/certification/current
 # These are changed by the separately reviewed CLI candidate staging command.
 # Snapshotting them here makes service rollback restore the complete activation.
 snapshot_only_paths=(home/paperclip/.paperclip/cli/current home/paperclip/.paperclip/cli/install.json)
+credential_paths=(etc/paperclip/recovery.token etc/paperclip/recovery.env)
+credential_parent=etc/paperclip
+
+ensure_rollback_root() {
+  local owner group
+  if [[ -L "$backup" || ( -e "$backup" && ! -d "$backup" ) ]]; then
+    echo "unsafe rollback root: $backup" >&2; exit 1
+  fi
+  if [[ ! -e "$backup" ]]; then
+    install -d -o "$install_owner" -g "$install_group" -m 0700 "$backup"
+  fi
+  owner="$(stat -c '%U' "$backup")"; group="$(stat -c '%G' "$backup")"
+  [[ "$owner" == "$install_owner" || "$(stat -c '%u' "$backup")" == "$install_owner" ]] || { echo "unsafe rollback root owner: $backup" >&2; exit 1; }
+  [[ "$group" == "$install_group" || "$(stat -c '%g' "$backup")" == "$install_group" ]] || { echo "unsafe rollback root group: $backup" >&2; exit 1; }
+  [[ "$(stat -c '%a' "$backup")" == 700 ]] || { echo "unsafe rollback root mode: $backup" >&2; exit 1; }
+}
 
 move_aside() {
   local target="$1" destination="$2"
@@ -27,11 +43,20 @@ move_aside() {
 }
 
 snapshot() {
+  ensure_rollback_root
   [[ ! -e "$backup/manifest.tsv" ]] || { echo "rollback snapshot already exists: $backup" >&2; exit 1; }
+  if [[ -d "$root/$credential_parent" && ! -L "$root/$credential_parent" ]]; then
+    credential_parent_state=present
+  elif [[ ! -e "$root/$credential_parent" && ! -L "$root/$credential_parent" ]]; then
+    credential_parent_state=absent
+  else
+    echo "unsafe credential parent: $root/$credential_parent" >&2; exit 1
+  fi
   mkdir -p "$backup/files"
   : >"$backup/manifest.tsv"
+  printf '%s\n' "$credential_parent_state" >"$backup/prior.credential-parent"
   local rel target
-  for rel in "${managed_paths[@]}" "$dropin_path" "$certification_path" "${snapshot_only_paths[@]}"; do
+  for rel in "${managed_paths[@]}" "$dropin_path" "$certification_path" "${snapshot_only_paths[@]}" "${credential_paths[@]}"; do
     target="$root/$rel"
     if [[ -e "$target" || -L "$target" ]]; then
       printf 'present\t%s\n' "$rel" >>"$backup/manifest.tsv"
@@ -94,7 +119,9 @@ case "$action" in
     systemctl daemon-reload
     ;;
   rollback)
+    ensure_rollback_root
     [[ -s "$backup/manifest.tsv" ]] || { echo "missing rollback manifest" >&2; exit 1; }
+    [[ -s "$backup/prior.credential-parent" ]] || { echo "missing credential parent state" >&2; exit 1; }
     mkdir -p "$backup/replaced"
     while IFS=$'\t' read -r state rel; do
       target="$root/$rel"
@@ -106,9 +133,14 @@ case "$action" in
         echo "invalid rollback manifest state: $state" >&2; exit 1
       fi
     done <"$backup/manifest.tsv"
+    if grep -qx absent "$backup/prior.credential-parent"; then
+      rmdir "$root/$credential_parent" || { echo "cannot restore absent credential parent: $root/$credential_parent" >&2; exit 1; }
+    elif ! grep -qx present "$backup/prior.credential-parent"; then
+      echo "invalid credential parent state" >&2; exit 1
+    fi
     systemctl daemon-reload
     grep -qx enabled "$backup/prior.enabled" && systemctl enable paperclip.service || systemctl disable paperclip.service
-    if grep -qx active "$backup/prior.active"; then systemctl start paperclip.service; else systemctl stop paperclip.service; fi
+    if grep -qx active "$backup/prior.active"; then systemctl restart paperclip.service; else systemctl stop paperclip.service; fi
     grep -qx enabled "$backup/prior.health-recovery-timer.enabled" && systemctl enable paperclip-health-recovery.timer || systemctl disable paperclip-health-recovery.timer
     if grep -qx active "$backup/prior.health-recovery-timer.active"; then systemctl start paperclip-health-recovery.timer; else systemctl stop paperclip-health-recovery.timer; fi
     ;;

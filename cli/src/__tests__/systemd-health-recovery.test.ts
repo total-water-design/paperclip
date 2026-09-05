@@ -103,6 +103,7 @@ case "$1" in
   disable) printf disabled >"$SYSTEMCTL_STATE/$2.enabled" ;;
   start) printf active >"$SYSTEMCTL_STATE/$2.active" ;;
   stop) printf inactive >"$SYSTEMCTL_STATE/$2.active" ;;
+  restart) printf active >"$SYSTEMCTL_STATE/$2.active" ;;
   *) exit 64 ;;
 esac
 `, { mode: 0o755 });
@@ -256,6 +257,11 @@ describe("systemd database-unhealthy health recovery", () => {
     expect(rollbackManifest).toContain("home/paperclip/.paperclip/cli/certification/current");
     expect(rollbackManifest).toContain("home/paperclip/.paperclip/cli/current");
     expect(rollbackManifest).toContain("home/paperclip/.paperclip/cli/install.json");
+    expect(rollbackManifest).toContain("absent\tetc/paperclip/recovery.token");
+    expect(rollbackManifest).toContain("absent\tetc/paperclip/recovery.env");
+    expect(fs.statSync(input.backup).mode & 0o777).toBe(0o700);
+    expect(fs.statSync(input.backup).uid).toBe(testUid);
+    expect(fs.statSync(input.backup).gid).toBe(testGid);
 
     const artifactRoot = path.join(input.root, "artifact");
     const artifactOutput = path.join(artifactRoot, "out");
@@ -304,6 +310,58 @@ describe("systemd database-unhealthy health recovery", () => {
     expect(fs.readFileSync(path.join(input.state, "paperclip-health-recovery.timer.enabled"), "utf8")).toBe("enabled");
     expect(fs.readFileSync(path.join(input.state, "paperclip-health-recovery.timer.active"), "utf8")).toBe("active");
     expect(fs.readFileSync(input.calls, "utf8")).toContain("daemon-reload");
+    expect(fs.readFileSync(input.calls, "utf8")).toContain("stop paperclip.service");
+  });
+
+  it("restores present recovery credentials byte-for-byte without disclosing them and restarts an active prior service", () => {
+    const input = installerFixture();
+    const credentialDirectory = path.join(input.target, "etc/paperclip");
+    const token = path.join(credentialDirectory, "recovery.token");
+    const recoveryEnv = path.join(credentialDirectory, "recovery.env");
+    const tokenSentinel = "rollback-token-sentinel-should-never-be-logged";
+    const envSentinel = "PAPERCLIP_RECOVERY_TOKEN=rollback-env-sentinel-should-never-be-logged";
+    fs.writeFileSync(token, `${tokenSentinel}\n`, { mode: 0o640 });
+    fs.writeFileSync(recoveryEnv, `${envSentinel}\n`, { mode: 0o640 });
+    fs.writeFileSync(path.join(input.state, "paperclip.service.active"), "active");
+    runInstaller(input, "install");
+    fs.writeFileSync(token, "candidate token\n"); fs.writeFileSync(recoveryEnv, "candidate env\n");
+    const result = spawnSync("bash", [installer, "rollback"], {
+      encoding: "utf8", cwd: repositoryRoot,
+      env: { ...process.env, PATH: `${input.bin}:${process.env.PATH}`, SYSTEMCTL_CALLS: input.calls, SYSTEMCTL_STATE: input.state, PAPERCLIP_INSTALL_ROOT: input.target, PAPERCLIP_ROLLBACK_ROOT: input.backup, PAPERCLIP_INSTALL_OWNER: testUid.toString(), PAPERCLIP_INSTALL_GROUP: testGid.toString() },
+    });
+    expect(result.status).toBe(0);
+    expect(`${result.stdout}${result.stderr}`).not.toContain(tokenSentinel);
+    expect(`${result.stdout}${result.stderr}`).not.toContain(envSentinel);
+    expect(fs.readFileSync(token, "utf8")).toBe(`${tokenSentinel}\n`);
+    expect(fs.readFileSync(recoveryEnv, "utf8")).toBe(`${envSentinel}\n`);
+    expect(fs.statSync(token).mode & 0o777).toBe(0o640);
+    expect(fs.readFileSync(input.calls, "utf8")).toContain("restart paperclip.service");
+  });
+
+  it("restores an initially absent credential parent exactly", () => {
+    const input = installerFixture();
+    fs.rmSync(path.join(input.target, "etc/paperclip"), { recursive: true });
+    runInstaller(input, "install");
+    expect(fs.existsSync(path.join(input.target, "etc/paperclip"))).toBe(true);
+    runInstaller(input, "rollback");
+    expect(fs.existsSync(path.join(input.target, "etc/paperclip"))).toBe(false);
+  });
+
+  it("rejects symlinked or preexisting unsafe rollback roots before writing snapshots", () => {
+    const symlinked = installerFixture();
+    const symlinkTarget = path.join(symlinked.root, "symlink-target"); fs.mkdirSync(symlinkTarget); fs.symlinkSync(symlinkTarget, symlinked.backup);
+    expect(() => runInstaller(symlinked, "install")).toThrow(/unsafe rollback root/);
+    expect(fs.readdirSync(symlinkTarget)).toEqual([]);
+
+    const wrongMode = installerFixture(); fs.mkdirSync(wrongMode.backup, { mode: 0o755 });
+    expect(() => runInstaller(wrongMode, "install")).toThrow(/unsafe rollback root mode/);
+    expect(fs.readdirSync(wrongMode.backup)).toEqual([]);
+
+    if (testUid === 0) {
+      const wrongOwner = installerFixture(); fs.mkdirSync(wrongOwner.backup, { mode: 0o700 }); fs.chownSync(wrongOwner.backup, 65534, 65534);
+      expect(() => runInstaller(wrongOwner, "install")).toThrow(/unsafe rollback root owner/);
+      expect(fs.readdirSync(wrongOwner.backup)).toEqual([]);
+    }
   });
 
   it("resolves packaged assets from the native global npm layout outside the current directory", () => {
