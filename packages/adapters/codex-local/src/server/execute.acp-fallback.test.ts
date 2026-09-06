@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { Server } from "node:http";
 import { fileURLToPath } from "node:url";
 import { runChildProcess } from "@paperclipai/adapter-utils/server-utils";
 
@@ -188,6 +189,22 @@ describe("codex_local ACP startup fallback", () => {
       "Local confined Paperclip bridge requires a host-side Paperclip API token.",
     );
     expect(runAdapterExecutionTargetProcess).not.toHaveBeenCalled();
+  });
+
+  it("closes the local bridge when post-bind setup fails before launch", async () => {
+    const activeServers = () => (process as typeof process & { _getActiveHandles(): unknown[] })
+      ._getActiveHandles()
+      .filter((handle): handle is Server => handle instanceof Server && handle.listening);
+    const before = activeServers();
+    ensureAdapterExecutionTargetRuntimeCommandInstalled.mockRejectedValueOnce(
+      new Error("forced post-bind setup failure"),
+    );
+    const ctx = buildContext({ networkScope: "allowlist", networkAllowlist: ["api.openai.com"] });
+
+    await expect(execute(ctx as never)).rejects.toThrow("forced post-bind setup failure");
+
+    expect(runAdapterExecutionTargetProcess).not.toHaveBeenCalled();
+    expect(activeServers()).toEqual(before);
   });
 
   it("keeps ACP fallback stdout byte-complete through confined allowlist backpressure", async () => {

@@ -802,6 +802,10 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   // here so the outer `finally` can remove it on every exit path (teardown and
   // error), never only the happy path.
   let stagedCodexHomeDir: string | null = null;
+  // The confined bridge binds inside the outer lifecycle below. Keep its
+  // handle at this scope so every later setup failure closes the listener,
+  // including failures before the Codex attempt's narrower try/finally.
+  let localConfinedPaperclipBridge: Awaited<ReturnType<typeof startLocalConfinedPaperclipBridge>> | null = null;
   try {
     for (const note of preparedRuntimeConfig.notes) {
       await onLog("stdout", `[paperclip] ${note}\n`);
@@ -1030,7 +1034,6 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     }
     const networkScope = parseLocalProcessNetworkScope(config.networkScope);
     const filesystemScope = parseLocalProcessFilesystemScope(config.filesystemScope);
-    let localConfinedPaperclipBridge: Awaited<ReturnType<typeof startLocalConfinedPaperclipBridge>> | null = null;
     if (executionTargetIsRemote && adapterExecutionTargetUsesPaperclipBridge(runtimeExecutionTarget)) {
       paperclipBridge = await startAdapterExecutionTargetPaperclipBridge({
         runId,
@@ -1630,9 +1633,6 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       if (paperclipBridge) {
         await paperclipBridge.stop();
       }
-      if (localConfinedPaperclipBridge) {
-        await localConfinedPaperclipBridge.stop();
-      }
       if (restoreRemoteWorkspace) {
         // This teardown runs in a `finally`, so a throw here replaces the
         // already-computed run result (`return toResult(...)`) and turns a
@@ -1660,6 +1660,9 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       }
     }
   } finally {
+    if (localConfinedPaperclipBridge) {
+      await localConfinedPaperclipBridge.stop();
+    }
     // Remove the staged CODEX_HOME allowlist temp dir on every exit path
     // (teardown AND error), never only the happy path. Cleanup failure is
     // logged, not fatal — a leaked temp dir must not crash the run.
