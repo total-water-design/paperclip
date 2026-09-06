@@ -20,6 +20,33 @@ snapshot_only_paths=(home/paperclip/.paperclip/cli/current home/paperclip/.paper
 credential_paths=(etc/paperclip/recovery.token etc/paperclip/recovery.env)
 credential_parent=etc/paperclip
 
+validate_sources() {
+  archive_source="${PAPERCLIP_CERTIFIED_ARCHIVE_SOURCE:-}"
+  manifest_source="${PAPERCLIP_CERTIFICATION_MANIFEST_SOURCE:-}"
+  [[ -n "$archive_source" && "$archive_source" = /* && -f "$archive_source" && ! -L "$archive_source" ]] || { echo "set PAPERCLIP_CERTIFIED_ARCHIVE_SOURCE to an absolute, regular, non-symlink certified archive" >&2; exit 1; }
+  [[ -n "$manifest_source" && "$manifest_source" = /* && -f "$manifest_source" && ! -L "$manifest_source" ]] || { echo "set PAPERCLIP_CERTIFICATION_MANIFEST_SOURCE to an absolute, regular, non-symlink certification manifest" >&2; exit 1; }
+}
+
+validate_staging_root() {
+  local canonical owner group mode cursor component
+  [[ "$root" = /* && "$root" != "/" ]] || { echo "stage-preflight requires an absolute, non-root PAPERCLIP_INSTALL_ROOT" >&2; exit 1; }
+  [[ -d "$root" && ! -L "$root" ]] || { echo "unsafe staging root: $root" >&2; exit 1; }
+  canonical="$(readlink -f -- "$root")"
+  [[ "$canonical" == "$root" ]] || { echo "staging root must be canonical: $root" >&2; exit 1; }
+  cursor=/
+  IFS=/ read -ra components <<<"${root#/}"
+  for component in "${components[@]}"; do
+    [[ -n "$component" ]] || continue
+    cursor="${cursor%/}/$component"
+    [[ ! -L "$cursor" ]] || { echo "staging root traversal contains a symlink: $cursor" >&2; exit 1; }
+  done
+  owner="$(stat -c '%U' "$root")"; group="$(stat -c '%G' "$root")"; mode="$(stat -c '%a' "$root")"
+  [[ "$owner" == "$install_owner" || "$(stat -c '%u' "$root")" == "$install_owner" ]] || { echo "unsafe staging root owner: $root" >&2; exit 1; }
+  [[ "$group" == "$install_group" || "$(stat -c '%g' "$root")" == "$install_group" ]] || { echo "unsafe staging root group: $root" >&2; exit 1; }
+  [[ "$mode" == 700 ]] || { echo "unsafe staging root mode: $root ($mode)" >&2; exit 1; }
+  [[ -z "$(find "$root" -mindepth 1 -maxdepth 1 -print -quit)" ]] || { echo "staging root must be empty: $root" >&2; exit 1; }
+}
+
 ensure_rollback_root() {
   local owner group
   if [[ -L "$backup" || ( -e "$backup" && ! -d "$backup" ) ]]; then
@@ -95,10 +122,6 @@ validate_install() {
 }
 
 install_files() {
-  local archive_source="${PAPERCLIP_CERTIFIED_ARCHIVE_SOURCE:-}"
-  local manifest_source="${PAPERCLIP_CERTIFICATION_MANIFEST_SOURCE:-}"
-  [[ -f "$archive_source" && ! -L "$archive_source" ]] || { echo "set PAPERCLIP_CERTIFIED_ARCHIVE_SOURCE to the certified archive" >&2; exit 1; }
-  [[ -f "$manifest_source" && ! -L "$manifest_source" ]] || { echo "set PAPERCLIP_CERTIFICATION_MANIFEST_SOURCE to its certification manifest" >&2; exit 1; }
   for i in "${!managed_paths[@]}"; do mkdir -p "$(dirname "$root/${managed_paths[$i]}")"; install -o "$install_owner" -g "$install_group" -m 0755 "${managed_srcs[$i]}" "$root/${managed_paths[$i]}"; done
   install -d -o "$install_owner" -g "$install_group" -m 0755 "$root/$dropin_path"
   for source in "$payload_root"/deploy/systemd/paperclip.service.d/*.conf; do install -o "$install_owner" -g "$install_group" -m 0644 "$source" "$root/$dropin_path/$(basename "$source")"; done
@@ -115,6 +138,7 @@ install_files() {
 
 case "$action" in
   install)
+    validate_sources
     snapshot
     mkdir -p "$backup/install-replaced"
     move_aside "$root/$dropin_path" "$backup/install-replaced/$dropin_path"
@@ -123,9 +147,8 @@ case "$action" in
     systemctl daemon-reload
     ;;
   stage-preflight)
-    [[ "$root" != "/" ]] || { echo "stage-preflight requires a non-root PAPERCLIP_INSTALL_ROOT" >&2; exit 1; }
-    [[ -d "$root" && ! -L "$root" ]] || { echo "unsafe staging root: $root" >&2; exit 1; }
-    [[ -z "$(find "$root" -mindepth 1 -maxdepth 1 -print -quit)" ]] || { echo "staging root must be empty: $root" >&2; exit 1; }
+    validate_sources
+    validate_staging_root
     install_files
     ;;
   rollback)
