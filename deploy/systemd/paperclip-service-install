@@ -94,29 +94,39 @@ validate_install() {
   [[ -f "$root/$certification_path/paperclipai.tgz" && ! -L "$root/$certification_path/paperclipai.tgz" ]] || { echo "unsafe certified archive" >&2; exit 1; }
 }
 
+install_files() {
+  local archive_source="${PAPERCLIP_CERTIFIED_ARCHIVE_SOURCE:-}"
+  local manifest_source="${PAPERCLIP_CERTIFICATION_MANIFEST_SOURCE:-}"
+  [[ -f "$archive_source" && ! -L "$archive_source" ]] || { echo "set PAPERCLIP_CERTIFIED_ARCHIVE_SOURCE to the certified archive" >&2; exit 1; }
+  [[ -f "$manifest_source" && ! -L "$manifest_source" ]] || { echo "set PAPERCLIP_CERTIFICATION_MANIFEST_SOURCE to its certification manifest" >&2; exit 1; }
+  for i in "${!managed_paths[@]}"; do mkdir -p "$(dirname "$root/${managed_paths[$i]}")"; install -o "$install_owner" -g "$install_group" -m 0755 "${managed_srcs[$i]}" "$root/${managed_paths[$i]}"; done
+  install -d -o "$install_owner" -g "$install_group" -m 0755 "$root/$dropin_path"
+  for source in "$payload_root"/deploy/systemd/paperclip.service.d/*.conf; do install -o "$install_owner" -g "$install_group" -m 0644 "$source" "$root/$dropin_path/$(basename "$source")"; done
+  install -d -o "$install_owner" -g "$install_group" -m 0755 "$root/$certification_path"
+  install -o "$install_owner" -g "$install_group" -m 0644 "$archive_source" "$root/$certification_path/paperclipai.tgz"
+  install -o "$install_owner" -g "$install_group" -m 0644 "$manifest_source" "$root/$certification_path/paperclipai.certification.json"
+  chmod 0644 "$root/etc/systemd/system/paperclip.service" "$root/etc/systemd/system/paperclip-health-recovery.service" "$root/etc/systemd/system/paperclip-health-recovery.timer"
+  chmod 0640 "$root/etc/paperclip/paperclip.env"
+  chmod 0644 "$root/usr/lib/paperclip/paperclip-artifact-identity.mjs"
+  chmod 0440 "$root/etc/sudoers.d/paperclip-recovery"
+  chmod 0750 "$root/usr/local/lib/paperclip/paperclip-recovery" "$root/usr/lib/paperclip/paperclip-recovery-token-provision"
+  validate_install
+}
+
 case "$action" in
   install)
-    archive_source="${PAPERCLIP_CERTIFIED_ARCHIVE_SOURCE:-}"
-    manifest_source="${PAPERCLIP_CERTIFICATION_MANIFEST_SOURCE:-}"
-    [[ -f "$archive_source" && ! -L "$archive_source" ]] || { echo "set PAPERCLIP_CERTIFIED_ARCHIVE_SOURCE to the certified archive" >&2; exit 1; }
-    [[ -f "$manifest_source" && ! -L "$manifest_source" ]] || { echo "set PAPERCLIP_CERTIFICATION_MANIFEST_SOURCE to its certification manifest" >&2; exit 1; }
     snapshot
-    for i in "${!managed_paths[@]}"; do mkdir -p "$(dirname "$root/${managed_paths[$i]}")"; install -o "$install_owner" -g "$install_group" -m 0755 "${managed_srcs[$i]}" "$root/${managed_paths[$i]}"; done
     mkdir -p "$backup/install-replaced"
     move_aside "$root/$dropin_path" "$backup/install-replaced/$dropin_path"
-    install -d -o "$install_owner" -g "$install_group" -m 0755 "$root/$dropin_path"
-    for source in "$payload_root"/deploy/systemd/paperclip.service.d/*.conf; do install -o "$install_owner" -g "$install_group" -m 0644 "$source" "$root/$dropin_path/$(basename "$source")"; done
     move_aside "$root/$certification_path" "$backup/install-replaced/$certification_path"
-    install -d -o "$install_owner" -g "$install_group" -m 0755 "$root/$certification_path"
-    install -o "$install_owner" -g "$install_group" -m 0644 "$archive_source" "$root/$certification_path/paperclipai.tgz"
-    install -o "$install_owner" -g "$install_group" -m 0644 "$manifest_source" "$root/$certification_path/paperclipai.certification.json"
-    chmod 0644 "$root/etc/systemd/system/paperclip.service" "$root/etc/systemd/system/paperclip-health-recovery.service" "$root/etc/systemd/system/paperclip-health-recovery.timer"
-    chmod 0640 "$root/etc/paperclip/paperclip.env"
-    chmod 0644 "$root/usr/lib/paperclip/paperclip-artifact-identity.mjs"
-    chmod 0440 "$root/etc/sudoers.d/paperclip-recovery"
-    chmod 0750 "$root/usr/local/lib/paperclip/paperclip-recovery" "$root/usr/lib/paperclip/paperclip-recovery-token-provision"
-    validate_install
+    install_files
     systemctl daemon-reload
+    ;;
+  stage-preflight)
+    [[ "$root" != "/" ]] || { echo "stage-preflight requires a non-root PAPERCLIP_INSTALL_ROOT" >&2; exit 1; }
+    [[ -d "$root" && ! -L "$root" ]] || { echo "unsafe staging root: $root" >&2; exit 1; }
+    [[ -z "$(find "$root" -mindepth 1 -maxdepth 1 -print -quit)" ]] || { echo "staging root must be empty: $root" >&2; exit 1; }
+    install_files
     ;;
   rollback)
     ensure_rollback_root
@@ -144,5 +154,5 @@ case "$action" in
     grep -qx enabled "$backup/prior.health-recovery-timer.enabled" && systemctl enable paperclip-health-recovery.timer || systemctl disable paperclip-health-recovery.timer
     if grep -qx active "$backup/prior.health-recovery-timer.active"; then systemctl start paperclip-health-recovery.timer; else systemctl stop paperclip-health-recovery.timer; fi
     ;;
-  *) echo "usage: $0 {install|rollback}" >&2; exit 1 ;;
+  *) echo "usage: $0 {install|stage-preflight|rollback}" >&2; exit 1 ;;
 esac
