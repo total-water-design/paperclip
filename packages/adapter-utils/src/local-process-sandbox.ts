@@ -74,7 +74,6 @@ const SYSTEM_COMPAT_SYMLINKS = [
 ] as const;
 
 const PROXY_ENV_KEYS = ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"] as const;
-const SANDBOX_PROXY_PORT = 31_337;
 const UNIX_SOCKET_PATH_MAX_BYTES = 107;
 const NETWORK_PROXY_TEMP_PREFIX = "paperclip-network-sandbox-";
 
@@ -384,7 +383,16 @@ const server = net.createServer((client) => {
   client.on("error", close);
   upstream.on("error", close);
 });
-server.listen(${SANDBOX_PROXY_PORT}, "127.0.0.1", () => {
+server.listen(0, "127.0.0.1", () => {
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    process.stderr.write("[paperclip] unable to resolve confined proxy address\\n");
+    process.exit(126);
+  }
+  const proxyUrl = "http://127.0.0.1:" + address.port;
+  for (const key of ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"]) {
+    process.env[key] = proxyUrl;
+  }
   // Keep the final command off the bridge's inherited open file descriptions.
   // A fresh pipe gives the child blocking fd 1/2 even when Bubblewrap's ends
   // carry O_NONBLOCK; Node drains those pipes without exposing EAGAIN to Codex.
@@ -578,14 +586,6 @@ export async function buildLocalProcessSandboxSpawnTarget(input: {
     env.NO_PROXY = "";
     env.no_proxy = "";
   }
-  if (networkScope === "allowlist") {
-    const proxyUrl = `http://127.0.0.1:${SANDBOX_PROXY_PORT}`;
-    env.HTTP_PROXY = proxyUrl;
-    env.HTTPS_PROXY = proxyUrl;
-    env.http_proxy = proxyUrl;
-    env.https_proxy = proxyUrl;
-  }
-
   // This wrapper is intentionally inside Bubblewrap. It observes the exact fd
   // flags that the eventual Codex process would inherit; its final libuv spawn
   // maps blocking descriptors into Codex. Direct runChildProcess calls bypass it.

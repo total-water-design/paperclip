@@ -232,6 +232,17 @@ describe("local process sandbox", () => {
     const writerScript = `const fs=require("node:fs");const chunk=${JSON.stringify(chunk)};` +
       `try { for(let i=0;i<${repetitions};i++) fs.writeSync(1,chunk); } ` +
       `catch(error) { fs.writeSync(2,"failed printing to stdout: Resource temporarily unavailable (os error 11)\\n"); process.exit(101); }`;
+    // The fake Bubblewrap cannot create a network namespace. Occupying the old
+    // fixed bridge port reproduces validator/runtime collisions without
+    // changing the production confinement path.
+    const occupiedPort = net.createServer();
+    const ownsOccupiedPort = await new Promise<boolean>((resolve, reject) => {
+      occupiedPort.once("error", (error: NodeJS.ErrnoException) => {
+        if (error.code === "EADDRINUSE") resolve(false);
+        else reject(error);
+      });
+      occupiedPort.listen(31_337, "127.0.0.1", () => resolve(true));
+    });
     const result = await runChildProcess(
       "confined-allowlist-high-volume-stdio",
       process.execPath,
@@ -251,7 +262,9 @@ describe("local process sandbox", () => {
           await new Promise((resolve) => setTimeout(resolve, 5));
         },
       },
-    );
+    ).finally(() => ownsOccupiedPort
+      ? new Promise<void>((resolve) => occupiedPort.close(() => resolve()))
+      : undefined);
 
     expect(Buffer.byteLength(expected)).toBeGreaterThan(64 * 1024);
     expect(result.exitCode, result.stderr).toBe(0);
