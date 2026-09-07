@@ -256,6 +256,7 @@ import {
   observeCrossIssueInfluence,
   type CrossIssueInfluenceKind,
 } from "../services/cross-issue-influence-limit.js";
+import { bindHeartbeatRunToCheckedOutIssue } from "../services/heartbeat-run-issue-attribution.js";
 
 const MAX_ISSUE_COMMENT_LIMIT = 500;
 const updateIssueRouteSchema = updateIssueSchema.extend({
@@ -11073,6 +11074,15 @@ export function issueRoutes(
         return;
       }
       throw error;
+    }
+    if (req.actor.type === "agent" && checkoutRunId) {
+      const boundRun = await bindHeartbeatRunToCheckedOutIssue(db, {
+        companyId: issue.companyId,
+        agentId: req.actor.agentId!,
+        runId: checkoutRunId,
+        issueId: issue.id,
+      });
+      if (!boundRun) throw crossIssueInfluenceRunContextError();
     }
     const actor = getActorInfo(req);
     if (updated?.harnessKind === "skill_test") {
