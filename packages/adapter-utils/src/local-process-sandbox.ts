@@ -329,6 +329,7 @@ async function startNetworkAllowlistProxy(
     request.pipe(upstream);
   });
   server.on("connect", (request, clientSocket, head) => {
+    clientSocket.on("error", () => clientSocket.destroy());
     const separator = request.url?.lastIndexOf(":") ?? -1;
     const hostname = separator > 0 ? request.url!.slice(0, separator).replace(/^\[|\]$/g, "") : "";
     const port = separator > 0 ? request.url!.slice(separator + 1) : "443";
