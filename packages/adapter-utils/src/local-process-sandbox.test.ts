@@ -484,6 +484,56 @@ describe("local process sandbox", () => {
     }
   });
 
+  it("exposes only the parent control proxy inside the outer namespace", async () => {
+    const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-network-split-"));
+    cleanup.push(workspace);
+    const server = http.createServer((_request, response) => response.end("reachable"));
+    const controlServer = http.createServer((_request, response) => response.end("control"));
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    await new Promise<void>((resolve) => controlServer.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    const controlAddress = controlServer.address();
+    if (!address || typeof address === "string" || !controlAddress || typeof controlAddress === "string") {
+      throw new Error("Expected TCP test server addresses.");
+    }
+    const targetPort = String(address.port);
+    const controlPort = String(controlAddress.port);
+    const target = await buildLocalProcessSandboxSpawnTarget({
+      executable: process.execPath,
+      args: ["-e", "process.exit(0)"],
+      cwd: workspace,
+      options: {
+        workspaceDir: workspace,
+        networkScope: "allowlist",
+        networkAllowlist: [`127.0.0.1:${targetPort}`],
+        networkControlPlaneAllowlist: [`127.0.0.1:${controlPort}`],
+      },
+    });
+    const bridgeIndex = target.args.findIndex((value) => value.endsWith("/bridge.cjs"));
+    const controlSocketPath = target.args[bridgeIndex + 1];
+    const connect = (socketPath: string, port: string) => new Promise<string>((resolve, reject) => {
+      const socket = net.createConnection(socketPath, () => {
+        socket.end(`CONNECT 127.0.0.1:${port} HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\n\r\n`);
+      });
+      let response = "";
+      socket.setEncoding("utf8");
+      socket.on("data", (chunk) => { response += chunk; });
+      socket.on("end", () => resolve(response));
+      socket.on("error", reject);
+    });
+
+    try {
+      await expect(connect(controlSocketPath, controlPort)).resolves.toContain("200 Connection Established");
+      await expect(connect(controlSocketPath, targetPort)).resolves.toContain("200 Connection Established");
+      await expect(connect(controlSocketPath, "9")).resolves.toContain("403 Forbidden");
+      expect(target.args.filter((value) => value.endsWith(".sock"))).toEqual([controlSocketPath]);
+    } finally {
+      await target.cleanup?.();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await new Promise<void>((resolve) => controlServer.close(() => resolve()));
+    }
+  });
+
   it("fails clearly when Bubblewrap is unavailable", async () => {
     const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-fs-sandbox-missing-"));
     cleanup.push(workspace);
@@ -502,6 +552,61 @@ describe("local process sandbox", () => {
       }),
     ).rejects.toThrow("requires Bubblewrap");
   });
+
+  it.runIf(Boolean(process.env.PAPERCLIP_TEST_BWRAP))(
+    "keeps the outer control listener unreachable to a Codex sandbox child while commissioned egress works",
+    async () => {
+      const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-codex-network-child-"));
+      cleanup.push(workspace);
+      const targetServer = http.createServer((_request, response) => response.end("commissioned-target"));
+      await new Promise<void>((resolve) => targetServer.listen(0, "127.0.0.1", resolve));
+      const address = targetServer.address();
+      if (!address || typeof address === "string") throw new Error("Expected TCP test server address.");
+      const script = `
+const net = require("node:net");
+const { spawnSync } = require("node:child_process");
+const direct = net.connect(31337, "127.0.0.1");
+direct.on("connect", () => { console.error("control proxy reachable"); process.exit(91); });
+direct.on("error", () => {
+  const result = spawnSync("curl", ["-fsS", "http://127.0.0.1:${address.port}/"], { encoding: "utf8" });
+  if (result.status !== 0 || result.stdout !== "commissioned-target") process.exit(92);
+  console.log("CONTROL_DENIED_TARGET_ALLOWED");
+});
+setTimeout(() => process.exit(93), 5000);
+`;
+      let output = "";
+      try {
+        const result = await runChildProcess(
+          "codex-managed-network-child",
+          process.env.PAPERCLIP_TEST_CODEX_COMMAND || "codex",
+          [
+            "sandbox",
+            "-c", 'sandbox_mode="workspace-write"',
+            "-c", "sandbox_workspace_write.network_access=true",
+            "-c", 'features.network_proxy={enabled=true,enable_socks5=false,allow_upstream_proxy=true,domains={"127.0.0.1"="allow"}}',
+            "--", process.execPath, "-e", script,
+          ],
+          {
+            cwd: workspace,
+            env: {},
+            timeoutSec: 15,
+            graceSec: 1,
+            localProcessSandbox: {
+              workspaceDir: workspace,
+              networkScope: "allowlist",
+              networkAllowlist: [`127.0.0.1:${address.port}`],
+              networkControlPlaneAllowlist: ["127.0.0.1:9"],
+            },
+            onLog: async (_stream, text) => { output += text; },
+          },
+        );
+        expect(result.exitCode, output).toBe(0);
+        expect(output).toContain("CONTROL_DENIED_TARGET_ALLOWED");
+      } finally {
+        await new Promise<void>((resolve) => targetServer.close(() => resolve()));
+      }
+    },
+  );
 
   it.runIf(Boolean(process.env.PAPERCLIP_TEST_BWRAP))(
     "prevents reads outside the workspace while allowing workspace writes",
