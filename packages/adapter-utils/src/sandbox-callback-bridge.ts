@@ -102,6 +102,8 @@ export const DEFAULT_SANDBOX_CALLBACK_BRIDGE_ROUTE_ALLOWLIST: readonly SandboxCa
   { method: "GET", path: /^\/api\/agents\/me$/ },
   { method: "GET", path: /^\/api\/agents\/me\/inbox-lite$/ },
   { method: "GET", path: /^\/api\/agents\/me\/inbox\/mine$/ },
+  { method: "GET", path: /^\/api\/agents\/me\/secrets$/ },
+  { method: "POST", path: /^\/api\/agents\/me\/secrets\/[^/]+\/value$/ },
   { method: "GET", path: /^\/api\/agents\/[^/]+$/ },
   { method: "GET", path: /^\/api\/agents\/[^/]+\/skills$/ },
   { method: "POST", path: /^\/api\/agents\/[^/]+\/skills\/sync$/ },

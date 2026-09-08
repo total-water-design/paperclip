@@ -1409,6 +1409,39 @@ describe("sandbox callback bridge", () => {
     }
   });
 
+  it("permits only the API-only agent self-secret read routes", () => {
+    const allowed: Array<{ method: string; path: string }> = [
+      { method: "GET", path: "/api/agents/me/secrets" },
+      { method: "POST", path: "/api/agents/me/secrets/github_token/value" },
+    ];
+    for (const request of allowed) {
+      expect(authorizeSandboxCallbackBridgeRequestWithRoutes(request)).toBeNull();
+    }
+
+    const denied: Array<{ method: string; path: string }> = [
+      // Adjacent company-wide and arbitrary secret surfaces stay unavailable.
+      { method: "GET", path: "/api/companies/co-1/secrets" },
+      { method: "POST", path: "/api/companies/co-1/secrets/github_token/value" },
+      { method: "POST", path: "/api/secrets/github_token/value" },
+      { method: "POST", path: "/api/agents/agent-1/secrets/github_token/value" },
+      // The bridge grants no self-secret creation, update, or deletion route.
+      { method: "POST", path: "/api/agents/me/secrets" },
+      { method: "PATCH", path: "/api/agents/me/secrets/github_token" },
+      { method: "DELETE", path: "/api/agents/me/secrets/github_token" },
+      // Missing, empty, nested, or trailing path segments fail closed.
+      { method: "POST", path: "/api/agents/me/secrets/github_token" },
+      { method: "POST", path: "/api/agents/me/secrets//value" },
+      { method: "POST", path: "/api/agents/me/secrets/github/token/value" },
+      { method: "POST", path: "/api/agents/me/secrets/github_token/value/extra" },
+      { method: "GET", path: "/api/agents/me/secrets/" },
+    ];
+    for (const request of denied) {
+      expect(authorizeSandboxCallbackBridgeRequestWithRoutes(request)).toBe(
+        `Route not allowed: ${request.method} ${request.path}`,
+      );
+    }
+  });
+
   it("marks command-managed bridge operations with the bridge execution channel", async () => {
     const runner = {
       execute: vi.fn(async () => ({
