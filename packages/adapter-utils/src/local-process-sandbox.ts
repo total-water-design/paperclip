@@ -27,6 +27,8 @@ export interface LocalProcessSandboxOptions {
   homeDir?: string | null;
   networkScope?: LocalProcessNetworkScope | null;
   networkAllowlist?: string[];
+  /** Agent-provider endpoints available to the parent process, but not to task tools. */
+  networkControlPlaneAllowlist?: string[];
   networkTrustedUrls?: string[];
   command?: string;
 }
@@ -373,18 +375,19 @@ async function createNetworkProxyBridge(): Promise<string> {
   const source = `
 const net = require("node:net");
 const { spawn } = require("node:child_process");
-const socketPath = process.argv[2];
+const controlSocketPath = process.argv[2];
 const executable = process.argv[3];
 const args = process.argv.slice(4);
-const server = net.createServer((client) => {
+const listen = (port, socketPath) => net.createServer((client) => {
   const upstream = net.connect(socketPath);
   client.pipe(upstream);
   upstream.pipe(client);
   const close = () => { client.destroy(); upstream.destroy(); };
   client.on("error", close);
   upstream.on("error", close);
-});
-server.listen(${SANDBOX_PROXY_PORT}, "127.0.0.1", () => {
+}).listen(port, "127.0.0.1");
+const controlServer = listen(${SANDBOX_PROXY_PORT}, controlSocketPath);
+controlServer.on("listening", () => {
   // Keep the final command off the bridge's inherited open file descriptions.
   // A fresh pipe gives the child blocking fd 1/2 even when Bubblewrap's ends
   // carry O_NONBLOCK; Node drains those pipes without exposing EAGAIN to Codex.
@@ -424,7 +427,7 @@ server.listen(${SANDBOX_PROXY_PORT}, "127.0.0.1", () => {
   process.on("SIGINT", () => forward("SIGINT"));
   child.on("close", async (code, signal) => {
     await forwarded;
-    server.close(() => {
+    controlServer.close(() => {
     if (signal) process.kill(process.pid, signal);
     else process.exitCode = code == null ? 1 : code;
     });
@@ -533,7 +536,7 @@ export async function buildLocalProcessSandboxSpawnTarget(input: {
       const bridgePath = path.join(tempDir, "bridge.cjs");
       await fs.writeFile(bridgePath, await createNetworkProxyBridge(), { mode: 0o500 });
       const proxy = await startNetworkAllowlistProxy(
-        input.options.networkAllowlist ?? [],
+        [...(input.options.networkAllowlist ?? []), ...(input.options.networkControlPlaneAllowlist ?? [])],
         input.options.networkTrustedUrls ?? [],
         socketPath,
       ).catch(async (error) => {
@@ -556,7 +559,7 @@ export async function buildLocalProcessSandboxSpawnTarget(input: {
       const bridgePath = path.join(tempDir, "bridge.cjs");
       await fs.writeFile(bridgePath, await createNetworkProxyBridge(), { mode: 0o500 });
       const proxy = await startNetworkAllowlistProxy(
-        input.options.networkAllowlist ?? [],
+        [...(input.options.networkAllowlist ?? []), ...(input.options.networkControlPlaneAllowlist ?? [])],
         input.options.networkTrustedUrls ?? [],
         socketPath,
       ).catch(async (error) => {
