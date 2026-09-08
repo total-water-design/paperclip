@@ -87,6 +87,7 @@ import {
   resolveCodexAuthPrecedence,
 } from "./auth-precedence.js";
 import { prepareCodexRuntimeConfig } from "./runtime-config.js";
+import { resolveCodexModelTransportUrls } from "./model-transport.js";
 import { resolveCodexDesiredSkillNames } from "./skills.js";
 import { buildCodexExecArgs } from "./codex-args.js";
 import { SANDBOX_INSTALL_COMMAND } from "../index.js";
@@ -1010,6 +1011,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
             networkTrustedUrls: [
               paperclipBaseEnv.PAPERCLIP_API_URL,
               ...runtimeMcpGateways.map((gateway) => gateway.endpointPath),
+              ...resolveCodexModelTransportUrls(effectiveEnv, billingType),
             ],
             command: asString(config.filesystemSandboxCommand, "bwrap"),
           }
