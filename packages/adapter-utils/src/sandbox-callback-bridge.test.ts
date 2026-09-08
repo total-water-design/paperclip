@@ -1304,6 +1304,11 @@ describe("sandbox callback bridge", () => {
       { method: "GET", path: "/api/agents/me" },
       { method: "GET", path: "/api/agents/me/inbox-lite" },
       { method: "GET", path: "/api/agents/me/inbox/mine" },
+      { method: "GET", path: "/api/agents/me/secrets" },
+      {
+        method: "POST",
+        path: "/api/agents/me/secrets/deployment-reader/value",
+      },
       { method: "GET", path: "/api/agents/agent-1" },
       { method: "GET", path: "/api/agents/agent-1/skills" },
       { method: "POST", path: "/api/agents/agent-1/skills/sync" },
@@ -1401,6 +1406,9 @@ describe("sandbox callback bridge", () => {
       { method: "POST", path: "/api/companies/co-1/logo" },
       { method: "GET", path: "/api/companies/co-1/secrets" },
       { method: "PATCH", path: "/api/secrets/secret-1" },
+      { method: "POST", path: "/api/agents/me/secrets" },
+      { method: "GET", path: "/api/agents/me/secrets/key/value" },
+      { method: "POST", path: "/api/agents/me/secrets/key/value/extra" },
     ];
     for (const request of denied) {
       expect(authorizeSandboxCallbackBridgeRequestWithRoutes(request)).toBe(

@@ -102,6 +102,11 @@ export const DEFAULT_SANDBOX_CALLBACK_BRIDGE_ROUTE_ALLOWLIST: readonly SandboxCa
   { method: "GET", path: /^\/api\/agents\/me$/ },
   { method: "GET", path: /^\/api\/agents\/me\/inbox-lite$/ },
   { method: "GET", path: /^\/api\/agents\/me\/inbox\/mine$/ },
+  // Agent-secret access remains binding- and run-JWT-authorized by the API.
+  // The bridge only exposes the metadata list and one bound value lookup; it
+  // does not expose any company-secret management or mutation route.
+  { method: "GET", path: /^\/api\/agents\/me\/secrets$/ },
+  { method: "POST", path: /^\/api\/agents\/me\/secrets\/[^/]+\/value$/ },
   { method: "GET", path: /^\/api\/agents\/[^/]+$/ },
   { method: "GET", path: /^\/api\/agents\/[^/]+\/skills$/ },
   { method: "POST", path: /^\/api\/agents\/[^/]+\/skills\/sync$/ },
