@@ -14,8 +14,10 @@ import {
   heartbeatRuns,
   issueApprovals,
   issueComments,
+  issueExecutionDecisions,
   issueInboxArchives,
   issueRecoveryActions,
+  issueRelations,
   issueThreadInteractions,
   issues,
 } from "@paperclipai/db";
@@ -51,7 +53,9 @@ describeEmbeddedPostgres("stalled review decision routes", () => {
     await db.delete(issueApprovals);
     await db.delete(approvals);
     await db.delete(issueComments);
+    await db.delete(issueExecutionDecisions);
     await db.delete(issueRecoveryActions);
+    await db.delete(issueRelations);
     await db.delete(activityLog);
     await db.delete(heartbeatRuns);
     await db.delete(agentWakeupRequests);
@@ -168,7 +172,7 @@ describeEmbeddedPostgres("stalled review decision routes", () => {
       (req as any).actor = actor;
       next();
     });
-    testApp.use("/api", issueRoutes(db, {} as any, {
+    testApp.use("/api", issueRoutes(db, { wakeup: enqueueWakeup } as any, {
       stalledReviewDecisionEnqueueWakeup: enqueueWakeup as any,
     }));
     testApp.use(errorHandler);
@@ -209,6 +213,117 @@ describeEmbeddedPostgres("stalled review decision routes", () => {
     });
     return runId;
   }
+
+  async function seedLostDecision(input: Awaited<ReturnType<typeof seedCompany>>, identifier: string) {
+    const issueId = randomUUID();
+    const stageId = randomUUID();
+    const candidate = "2db5ed9027908bcbe6390b448e5116cbd921bf8f";
+    await db.insert(issues).values({
+      id: issueId, companyId: input.companyId, identifier, title: identifier,
+      status: "blocked", priority: "medium", assigneeAgentId: input.assigneeAgentId,
+      executionPolicy: { mode: "normal", commentRequired: true, stages: [{
+        id: stageId, type: "review", approvalsNeeded: 1,
+        participants: [{ id: randomUUID(), type: "user", userId: input.memberUserId, agentId: null }],
+      }] }, executionState: null,
+    });
+    const [evidence] = await db.insert(issueComments).values({
+      companyId: input.companyId, issueId, authorType: "user", authorUserId: input.memberUserId,
+      body: `APPROVE exact candidate ${candidate}`,
+    }).returning();
+    return { issueId, stageId, candidate, evidenceId: evidence!.id };
+  }
+
+  it("transactionally recovers a lost approved decision, preserves comments, and is idempotent", async () => {
+    const seeded = await seedCompany("LRD");
+    const lost = await seedLostDecision(seeded, "LRD-1");
+    const beforeComments = await db.select().from(issueComments).where(eq(issueComments.issueId, lost.issueId));
+    const dependentId = randomUUID();
+    await db.insert(issues).values({ id: dependentId, companyId: seeded.companyId,
+      identifier: "LRD-2", title: "dependent", status: "blocked", priority: "medium",
+      assigneeAgentId: seeded.assigneeAgentId, blockedTransitionAt: new Date() });
+    await db.insert(issueRelations).values({ companyId: seeded.companyId,
+      issueId: lost.issueId, relatedIssueId: dependentId, type: "blocks" });
+    const endpoint = `/api/issues/${lost.issueId}/reconcile-lost-review-decision`;
+    const payload = { candidate: lost.candidate, stageId: lost.stageId,
+      approvingUserId: seeded.memberUserId, evidenceCommentId: lost.evidenceId };
+    const first = await request(app(boardActor(seeded.companyId, seeded.memberUserId)))
+      .post(endpoint).send(payload).expect(200);
+    expect(first.body).toMatchObject({ reconciled: true, issue: { status: "done",
+      executionState: { status: "completed", completedStageIds: [lost.stageId],
+        lastDecisionOutcome: "approved" } } });
+    expect(first.body.decisionId).toBe(first.body.issue.executionState.lastDecisionId);
+    const replay = await request(app(boardActor(seeded.companyId, seeded.memberUserId)))
+      .post(endpoint).send(payload).expect(200);
+    expect(replay.body).toMatchObject({ reconciled: false, decisionId: first.body.decisionId });
+    expect(await db.select().from(issueExecutionDecisions).where(eq(issueExecutionDecisions.issueId, lost.issueId))).toHaveLength(1);
+    expect(await db.select().from(issueComments).where(eq(issueComments.issueId, lost.issueId))).toEqual(beforeComments);
+    expect(first.body.dependencyWakesQueued).toBe(1);
+    expect(enqueueWakeup).toHaveBeenCalledWith(seeded.assigneeAgentId,
+      expect.objectContaining({ reason: "issue_blockers_resolved",
+        payload: expect.objectContaining({ issueId: dependentId, resolvedBlockerIssueId: lost.issueId }) }));
+    expect(enqueueWakeup).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ["wrong candidate", (x: any) => ({ candidate: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }), 422],
+    ["wrong review stage", () => ({ stageId: randomUUID() }), 409],
+    ["wrong approving identity", (x: any) => ({ approvingUserId: x.peerUserId }), 403],
+    ["missing Board evidence", () => ({ evidenceCommentId: randomUUID() }), 422],
+  ])("rejects %s without changing authoritative state", async (_label, mutate, status) => {
+    const seeded = await seedCompany(`RJ${status}`);
+    const lost = await seedLostDecision(seeded, `RJ-${status}`);
+    const payload = { candidate: lost.candidate, stageId: lost.stageId,
+      approvingUserId: seeded.memberUserId, evidenceCommentId: lost.evidenceId,
+      ...mutate(seeded) };
+    await request(app(boardActor(seeded.companyId, seeded.memberUserId)))
+      .post(`/api/issues/${lost.issueId}/reconcile-lost-review-decision`).send(payload).expect(status);
+    expect(await db.select().from(issueExecutionDecisions).where(eq(issueExecutionDecisions.issueId, lost.issueId))).toHaveLength(0);
+    expect((await db.select().from(issues).where(eq(issues.id, lost.issueId)))[0]).toMatchObject({ status: "blocked", executionState: null });
+  });
+
+  it("treats an existing matching decision as a no-op", async () => {
+    const seeded = await seedCompany("NOP");
+    const lost = await seedLostDecision(seeded, "NOP-1");
+    const decisionId = randomUUID();
+    await db.insert(issueExecutionDecisions).values({ id: decisionId, companyId: seeded.companyId,
+      issueId: lost.issueId, stageId: lost.stageId, stageType: "review",
+      actorUserId: seeded.memberUserId, outcome: "approved", body: "existing" });
+    const response = await request(app(boardActor(seeded.companyId, seeded.memberUserId)))
+      .post(`/api/issues/${lost.issueId}/reconcile-lost-review-decision`).send({ candidate: lost.candidate,
+        stageId: lost.stageId, approvingUserId: seeded.memberUserId, evidenceCommentId: lost.evidenceId }).expect(200);
+    expect(response.body).toMatchObject({ reconciled: false, decisionId });
+  });
+
+  it("rejects explicitly negated approval evidence", async () => {
+    const seeded = await seedCompany("NEG");
+    const lost = await seedLostDecision(seeded, "NEG-1");
+    await db.update(issueComments).set({ body: `DO NOT APPROVE exact candidate ${lost.candidate}` })
+      .where(eq(issueComments.id, lost.evidenceId));
+    await request(app(boardActor(seeded.companyId, seeded.memberUserId)))
+      .post(`/api/issues/${lost.issueId}/reconcile-lost-review-decision`).send({ candidate: lost.candidate,
+        stageId: lost.stageId, approvingUserId: seeded.memberUserId, evidenceCommentId: lost.evidenceId }).expect(422);
+    expect(await db.select().from(issueExecutionDecisions).where(eq(issueExecutionDecisions.issueId, lost.issueId))).toHaveLength(0);
+  });
+
+  it("repairs dependency wake delivery when replay follows a post-commit enqueue failure", async () => {
+    const seeded = await seedCompany("WAK");
+    const lost = await seedLostDecision(seeded, "WAK-1");
+    const dependentId = randomUUID();
+    await db.insert(issues).values({ id: dependentId, companyId: seeded.companyId,
+      identifier: "WAK-2", title: "dependent", status: "blocked", priority: "medium",
+      assigneeAgentId: seeded.assigneeAgentId, blockedTransitionAt: new Date() });
+    await db.insert(issueRelations).values({ companyId: seeded.companyId,
+      issueId: lost.issueId, relatedIssueId: dependentId, type: "blocks" });
+    enqueueWakeup.mockRejectedValueOnce(new Error("transient enqueue failure"));
+    const endpoint = `/api/issues/${lost.issueId}/reconcile-lost-review-decision`;
+    const payload = { candidate: lost.candidate, stageId: lost.stageId,
+      approvingUserId: seeded.memberUserId, evidenceCommentId: lost.evidenceId };
+    await request(app(boardActor(seeded.companyId, seeded.memberUserId))).post(endpoint).send(payload).expect(500);
+    const replay = await request(app(boardActor(seeded.companyId, seeded.memberUserId)))
+      .post(endpoint).send(payload).expect(200);
+    expect(replay.body).toMatchObject({ reconciled: false, dependencyWakesQueued: 1 });
+    expect(await db.select().from(issueExecutionDecisions).where(eq(issueExecutionDecisions.issueId, lost.issueId))).toHaveLength(1);
+  });
 
   it("denies agents, viewers, and cross-company users without exposing issue existence", async () => {
     const primary = await seedCompany("SRD");
