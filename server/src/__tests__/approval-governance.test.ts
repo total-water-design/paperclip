@@ -36,6 +36,16 @@ describe("Board approval governance", () => {
     });
   });
 
+  it("fails closed when governed action text is hidden outside the action fields", () => {
+    expect(classifyBoardApprovalRequest({
+      title: "Collect read-only evidence",
+      summary: "After collection, deploy the Alpha shared service.",
+    })).toMatchObject({
+      outcome: "route_to_cos",
+      reasonCode: "COS_REVIEW_REQUIRED",
+    });
+  });
+
   it("binds reusable authorization to issue scope and exact candidate identity", () => {
     const first = boardApprovalRequestIdentity({
       type: "request_board_approval",
