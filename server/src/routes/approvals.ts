@@ -1,6 +1,6 @@
 import { Router, type Request } from "express";
 import { eq } from "drizzle-orm";
-import { heartbeatRuns, type Db } from "@paperclipai/db";
+import { agents, heartbeatRuns, type Db } from "@paperclipai/db";
 import {
   addApprovalCommentSchema,
   createApprovalSchema,
@@ -23,6 +23,10 @@ import { redactEventPayload } from "../redaction.js";
 import type { PluginWorkerManager } from "../services/plugin-worker-manager.js";
 import { issueService } from "../services/issues.js";
 import { REVIEW_PATH_RECOVERY_INSTRUCTION } from "../services/recovery/review-path-recovery.js";
+import {
+  boardApprovalRequestIdentity,
+  classifyBoardApprovalRequest,
+} from "../services/approval-governance.js";
 
 function redactApprovalPayload<T extends { payload: Record<string, unknown> }>(approval: T): T {
   return {
@@ -204,6 +208,15 @@ export function approvalRoutes(
     return false;
   }
 
+  async function isCosAgent(companyId: string, agentId: string): Promise<boolean> {
+    const row = await db
+      .select({ id: agents.id, companyId: agents.companyId, role: agents.role })
+      .from(agents)
+      .where(eq(agents.id, agentId))
+      .then((rows) => rows[0] ?? null);
+    return row?.id === agentId && row.companyId === companyId && row.role === "ceo";
+  }
+
   router.get("/companies/:companyId/approvals", async (req, res) => {
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);
@@ -242,7 +255,7 @@ export function approvalRoutes(
         : approvalInput.payload;
 
     const actor = getActorInfo(req);
-    const approval = await svc.create(companyId, {
+    const approvalData = {
       ...approvalInput,
       payload: normalizedPayload,
       requestedByUserId: actor.actorType === "user" ? actor.actorId : null,
@@ -253,7 +266,103 @@ export function approvalRoutes(
       decidedByUserId: null,
       decidedAt: null,
       updatedAt: new Date(),
-    });
+    };
+
+    if (approvalInput.type === "request_board_approval") {
+      const governance = classifyBoardApprovalRequest(normalizedPayload);
+      if (governance.outcome === "delegated") {
+        await logActivity(db, {
+          companyId,
+          actorType: actor.actorType,
+          actorId: actor.actorId,
+          agentId: actor.agentId,
+          action: "approval.delegated",
+          entityType: "issue",
+          entityId: uniqueIssueIds[0] ?? null,
+          details: { type: approvalInput.type, issueIds: uniqueIssueIds, reasonCode: governance.reasonCode },
+        });
+        res.status(200).json({
+          created: false,
+          reused: false,
+          delegated: true,
+          approval: null,
+          governance: {
+            ...governance,
+            instructions: "This routine action is already delegated to the accountable manager and COS. Continue without Board approval.",
+          },
+        });
+        return;
+      }
+      if (governance.outcome === "route_to_cos") {
+        res.status(422).json({
+          error: "Board approval reason is not established",
+          code: "cos_review_required",
+          governance: {
+            ...governance,
+            instructions: "Route the request to COS. Resubmit only after COS records one explicit governed reason.",
+          },
+        });
+        return;
+      }
+      if (
+        actor.actorType === "agent"
+        && (!actor.agentId || !(await isCosAgent(companyId, actor.agentId)))
+      ) {
+        res.status(422).json({
+          error: "Board approval requests must be routed through COS",
+          code: "cos_review_required",
+          governance: {
+            outcome: "route_to_cos",
+            reasonCode: "COS_REVIEW_REQUIRED",
+            source: "organizational_boundary",
+            proposedReasonCode: governance.reasonCode,
+            instructions: "Keep the issue with its accountable manager and route the bounded gate to COS.",
+          },
+        });
+        return;
+      }
+
+      const identity = boardApprovalRequestIdentity({
+        type: approvalInput.type,
+        payload: normalizedPayload,
+        issueIds: uniqueIssueIds,
+      });
+      const result = await svc.createOrReuseBoardApproval({
+        companyId,
+        data: approvalData,
+        issueIds: uniqueIssueIds,
+        linkedByAgentId: actor.actorType === "agent" ? actor.agentId : null,
+        linkedByUserId: actor.actorType === "user" ? actor.actorId : null,
+        fingerprint: identity.fingerprint,
+        reuseApprovedAuthorization: identity.exactIdentityEstablished,
+      });
+
+      await logActivity(db, {
+        companyId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        action: result.created ? "approval.created" : "approval.reused",
+        entityType: "approval",
+        entityId: result.approval.id,
+        details: {
+          type: result.approval.type,
+          issueIds: uniqueIssueIds,
+          governanceReason: governance.reasonCode,
+          exactIdentityEstablished: identity.exactIdentityEstablished,
+        },
+      });
+
+      res.status(result.created ? 201 : 200).json({
+        ...redactApprovalPayload(result.approval),
+        created: result.created,
+        reused: !result.created,
+        governance,
+      });
+      return;
+    }
+
+    const approval = await svc.create(companyId, approvalData);
 
     if (uniqueIssueIds.length > 0) {
       await issueApprovalsSvc.linkManyForApproval(approval.id, uniqueIssueIds, {
@@ -283,6 +392,47 @@ export function approvalRoutes(
     if (!(await assertApprovalAccessAllowed(req, res, approval.companyId))) return;
     const issues = await issueApprovalsSvc.listIssuesForApproval(id);
     res.json(issues);
+  });
+
+  router.post("/approvals/:id/cancel", validate(resolveApprovalSchema), async (req, res) => {
+    const id = req.params.id as string;
+    const approval = await requireApprovalAccess(req, id);
+    if (!approval) {
+      res.status(404).json({ error: "Approval not found" });
+      return;
+    }
+    if (!(await assertApprovalAccessAllowed(req, res, approval.companyId))) return;
+    if (!(await assertApprovalMutationAllowedByRunContext(req, res, approval.companyId))) return;
+
+    const actor = getActorInfo(req);
+    if (
+      actor.actorType === "agent"
+      && approval.requestedByAgentId !== actor.agentId
+      && (!actor.agentId || !(await isCosAgent(approval.companyId, actor.agentId)))
+    ) {
+      res.status(403).json({ error: "Only the requester, COS, or Board may cancel an approval" });
+      return;
+    }
+
+    const cancelled = await svc.cancel(id, req.body.decisionNote);
+    const current = cancelled ?? await svc.getById(id);
+    if (!current) {
+      res.status(404).json({ error: "Approval not found" });
+      return;
+    }
+    if (cancelled) {
+      await logActivity(db, {
+        companyId: approval.companyId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        action: "approval.cancelled",
+        entityType: "approval",
+        entityId: approval.id,
+        details: { type: approval.type, decisionNote: req.body.decisionNote ?? null },
+      });
+    }
+    res.json(redactApprovalPayload(current));
   });
 
   router.post("/approvals/:id/approve", validate(resolveApprovalSchema), async (req, res) => {

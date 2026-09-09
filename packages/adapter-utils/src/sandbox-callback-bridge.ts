@@ -138,6 +138,7 @@ export const DEFAULT_SANDBOX_CALLBACK_BRIDGE_ROUTE_ALLOWLIST: readonly SandboxCa
   { method: "POST", path: /^\/api\/issues\/[^/]+\/release$/ },
   { method: "PATCH", path: /^\/api\/issues\/[^/]+$/ },
   { method: "GET", path: /^\/api\/issues\/[^/]+\/approvals$/ },
+  { method: "DELETE", path: /^\/api\/issues\/[^/]+\/approvals\/[^/]+$/ },
 
   // Work products: publish branch/commit/artifact metadata for completed work.
   { method: "GET", path: /^\/api\/issues\/[^/]+\/work-products$/ },
@@ -169,6 +170,7 @@ export const DEFAULT_SANDBOX_CALLBACK_BRIDGE_ROUTE_ALLOWLIST: readonly SandboxCa
   { method: "GET", path: /^\/api\/approvals\/[^/]+\/issues$/ },
   { method: "GET", path: /^\/api\/approvals\/[^/]+\/comments$/ },
   { method: "POST", path: /^\/api\/approvals\/[^/]+\/comments$/ },
+  { method: "POST", path: /^\/api\/approvals\/[^/]+\/cancel$/ },
   { method: "POST", path: /^\/api\/companies\/[^/]+\/approvals$/ },
 
   // Execution workspaces and runtime services (start/stop/restart dev servers)
