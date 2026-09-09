@@ -3265,6 +3265,58 @@ describe("sandbox callback bridge", () => {
     expect(seenBodies[0]?.equals(bodyBytes)).toBe(true);
   }, 15_000);
 
+  it.each([
+    ["small populated read", "/api/issues/issue-1", JSON.stringify({ id: "issue-1", status: "in_progress" })],
+    ["large populated read", "/api/companies/company-1/issues", JSON.stringify(Array.from({ length: 4_000 }, (_, index) => ({
+      id: `issue-${index}`,
+      title: "populated response framing regression ".repeat(3),
+    })))],
+  ])("preserves complete %s responses across HTTP/1 chunked to HTTP/2 framing", async (_name, route, body) => {
+    const bridgeToken = createSandboxCallbackBridgeToken();
+    const gateway = await startHttp2GatewayForTest({
+      bridgeToken,
+      forwardRequest: async () => ({
+        status: 200,
+        headers: { "content-type": "application/json", "transfer-encoding": "chunked", connection: "keep-alive" },
+        body,
+      }),
+    });
+
+    const response = await fetch(`${gateway.baseUrl}${route}`, {
+      headers: { authorization: `Bearer ${bridgeToken}` },
+    });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("transfer-encoding")).toBeNull();
+    expect(response.headers.get("content-length")).toBe(String(Buffer.byteLength(body)));
+    await expect(response.text()).resolves.toBe(body);
+  }, 15_000);
+
+  it.each([
+    ["checkout", "/api/issues/issue-1/checkout"],
+    ["comment", "/api/issues/issue-1/comments"],
+  ])("returns an intact run-scoped %s mutation response", async (_name, route) => {
+    const bridgeToken = createSandboxCallbackBridgeToken();
+    let calls = 0;
+    const body = JSON.stringify({ ok: true, mutationId: route });
+    const gateway = await startHttp2GatewayForTest({
+      bridgeToken,
+      forwardRequest: async () => {
+        calls += 1;
+        return { status: 201, headers: { "transfer-encoding": "chunked", connection: "keep-alive" }, body };
+      },
+    });
+
+    const response = await fetch(`${gateway.baseUrl}${route}`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${bridgeToken}`, "content-type": "application/json" },
+      body: JSON.stringify({ runId: "run-1" }),
+    });
+    expect(response.status).toBe(201);
+    expect(response.headers.get("content-length")).toBe(String(Buffer.byteLength(body)));
+    await expect(response.text()).resolves.toBe(body);
+    expect(calls).toBe(1);
+  }, 15_000);
+
   it("forwards malformed UTF-8 bytes to the HTTP/2 host handler unchanged", async () => {
     const bridgeToken = createSandboxCallbackBridgeToken();
     const seenBodies: Buffer[] = [];

@@ -520,6 +520,18 @@ export interface Http2BridgeForwardResult {
   body?: Buffer | string;
 }
 
+// RFC 9113 forbids connection-specific HTTP/1 response fields in HTTP/2.
+// Forwarded control-plane responses can legitimately use chunked HTTP/1
+// framing; carrying that field into stream.respond() makes Node reject the
+// entire response before it writes headers.
+const HTTP2_FORBIDDEN_RESPONSE_HEADERS = new Set([
+  "connection",
+  "keep-alive",
+  "proxy-connection",
+  "transfer-encoding",
+  "upgrade",
+]);
+
 /**
  * The one canonically-parsed, route-authorized, header-sanitized request the
  * server hands to the forward handler.
@@ -860,9 +872,13 @@ export function createHttp2BridgeServer(options: CreateHttp2BridgeServerOptions)
       }
 
       if (stream.destroyed || stream.closed) return;
-      const responseHeaders: http2.OutgoingHttpHeaders = { ":status": result.status };
+      const responseHeaders: http2.OutgoingHttpHeaders = {
+        ":status": result.status,
+        "content-length": Buffer.byteLength(result.body ?? ""),
+      };
       for (const [key, value] of Object.entries(result.headers ?? {})) {
-        if (key.toLowerCase() === "content-length") continue;
+        const normalizedKey = key.toLowerCase();
+        if (normalizedKey === "content-length" || HTTP2_FORBIDDEN_RESPONSE_HEADERS.has(normalizedKey)) continue;
         responseHeaders[key] = value;
       }
       try {

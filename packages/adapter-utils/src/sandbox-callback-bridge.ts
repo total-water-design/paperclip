@@ -2500,9 +2500,19 @@ function runHttp2Gateway() {
       }
       res.statusCode = typeof response.status === "number" ? response.status : 200;
       for (const [key, value] of Object.entries(response.headers || {})) {
-        if (typeof value !== "string" || key.toLowerCase() === "content-length") continue;
+        const normalizedKey = key.toLowerCase();
+        if (
+          typeof value !== "string" ||
+          normalizedKey === "content-length" ||
+          normalizedKey === "connection" ||
+          normalizedKey === "keep-alive" ||
+          normalizedKey === "proxy-connection" ||
+          normalizedKey === "transfer-encoding" ||
+          normalizedKey === "upgrade"
+        ) continue;
         res.setHeader(key, value);
       }
+      res.setHeader("content-length", Buffer.byteLength(response.body));
       res.end(response.body);
     } catch (error) {
       writeJsonResponse(res, 502, { error: error instanceof Error ? error.message : String(error) });
