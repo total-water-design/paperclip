@@ -6,6 +6,8 @@ const mockApprovalService = vi.hoisted(() => ({
   list: vi.fn(),
   getById: vi.fn(),
   create: vi.fn(),
+  createOrReuseBoardApproval: vi.fn(),
+  cancel: vi.fn(),
   approve: vi.fn(),
   reject: vi.fn(),
   requestRevision: vi.fn(),
@@ -78,7 +80,11 @@ function createRouteDb(contextSnapshot: Record<string, unknown> = {}, runId = "r
       from: vi.fn(() => ({
         where: vi.fn(() => ({
           then: async (resolve: (rows: unknown[]) => unknown) => resolve(
-            Object.keys(selection).includes("contextSnapshot") ? runRows : [],
+            Object.keys(selection).includes("contextSnapshot")
+              ? runRows
+              : Object.keys(selection).includes("role")
+                ? [{ id: agentId, companyId: "company-1", role: contextSnapshot.agentRole ?? "ceo" }]
+                : [],
           ),
         })),
       })),
@@ -121,6 +127,8 @@ describe("approval routes idempotent retries", () => {
     mockApprovalService.list.mockReset();
     mockApprovalService.getById.mockReset();
     mockApprovalService.create.mockReset();
+    mockApprovalService.createOrReuseBoardApproval.mockReset();
+    mockApprovalService.cancel.mockReset();
     mockApprovalService.approve.mockReset();
     mockApprovalService.reject.mockReset();
     mockApprovalService.requestRevision.mockReset();
@@ -322,8 +330,8 @@ describe("approval routes idempotent retries", () => {
     );
   });
 
-  it("lets agents create generic issue-linked board approval requests", async () => {
-    mockApprovalService.create.mockResolvedValue({
+  it("lets COS create a governed issue-linked Board approval request", async () => {
+    const createdApproval = {
       id: "approval-1",
       companyId: "company-1",
       type: "request_board_approval",
@@ -336,6 +344,10 @@ describe("approval routes idempotent retries", () => {
       decidedAt: null,
       createdAt: new Date("2026-04-06T00:00:00.000Z"),
       updatedAt: new Date("2026-04-06T00:00:00.000Z"),
+    };
+    mockApprovalService.createOrReuseBoardApproval.mockResolvedValue({
+      approval: createdApproval,
+      created: true,
     });
 
     const res = await request(await createAgentApp())
@@ -355,11 +367,13 @@ describe("approval routes idempotent retries", () => {
       status: "pending",
     });
     expect(mockSecretService.normalizeHireApprovalPayloadForPersistence).not.toHaveBeenCalled();
-    expect(mockIssueApprovalService.linkManyForApproval).toHaveBeenCalledWith(
-      "approval-1",
-      ["00000000-0000-0000-0000-000000000001"],
-      { agentId: "agent-1", userId: null },
-    );
+    expect(mockApprovalService.createOrReuseBoardApproval).toHaveBeenCalledWith(expect.objectContaining({
+      companyId: "company-1",
+      issueIds: ["00000000-0000-0000-0000-000000000001"],
+      linkedByAgentId: "agent-1",
+      reuseApprovedAuthorization: false,
+    }));
+    expect(mockIssueApprovalService.linkManyForApproval).not.toHaveBeenCalled();
     expect(mockLogActivity).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
@@ -369,6 +383,171 @@ describe("approval routes idempotent retries", () => {
         action: "approval.created",
       }),
     );
+  });
+
+  it("delegates the repeated TOT-3098 read-only topology request and creates zero approvals", async () => {
+    const app = await createAgentApp();
+    const body = {
+      type: "request_board_approval",
+      issueIds: ["00000000-0000-0000-0000-000000000001"],
+      payload: {
+        title: "Authorize bounded read-only staged-host topology collection",
+        summary: "Collect effective unit topology, candidate, rollback, process, listener, and health identities. No host mutation is authorized.",
+        recommendedAction: "Approve bounded read-only collection for exact remediation diagnosis.",
+        risks: ["Host remains uncertified pending fresh independent validation."],
+      },
+    };
+
+    const first = await request(app).post("/api/companies/company-1/approvals").send(body);
+    const repeated = await request(app).post("/api/companies/company-1/approvals").send(body);
+
+    expect(first.status, JSON.stringify(first.body)).toBe(200);
+    expect(repeated.status, JSON.stringify(repeated.body)).toBe(200);
+    expect(first.body).toMatchObject({ created: false, delegated: true, approval: null });
+    expect(repeated.body).toMatchObject({ created: false, delegated: true, approval: null });
+    expect(mockApprovalService.create).not.toHaveBeenCalled();
+    expect(mockApprovalService.createOrReuseBoardApproval).not.toHaveBeenCalled();
+    expect(mockIssueApprovalService.linkManyForApproval).not.toHaveBeenCalled();
+  });
+
+  it("does not let a Board session create a routine approval record", async () => {
+    const res = await request(await createApp())
+      .post("/api/companies/company-1/approvals")
+      .send({
+        type: "request_board_approval",
+        issueIds: ["00000000-0000-0000-0000-000000000001"],
+        payload: { title: "Collect read-only workspace topology evidence" },
+      });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body).toMatchObject({ created: false, delegated: true, approval: null });
+    expect(mockApprovalService.create).not.toHaveBeenCalled();
+    expect(mockApprovalService.createOrReuseBoardApproval).not.toHaveBeenCalled();
+  });
+
+  it("reuses an equivalent pending deployment approval instead of creating another", async () => {
+    const approval = {
+      id: "approval-1",
+      companyId: "company-1",
+      type: "request_board_approval",
+      requestedByAgentId: "agent-1",
+      requestedByUserId: null,
+      status: "pending",
+      payload: { title: "Approve production deployment" },
+      decisionNote: null,
+      decidedByUserId: null,
+      decidedAt: null,
+      createdAt: new Date("2026-04-06T00:00:00.000Z"),
+      updatedAt: new Date("2026-04-06T00:00:00.000Z"),
+    };
+    mockApprovalService.createOrReuseBoardApproval.mockResolvedValue({ approval, created: false });
+
+    const res = await request(await createAgentApp())
+      .post("/api/companies/company-1/approvals")
+      .send({
+        type: "request_board_approval",
+        issueIds: ["00000000-0000-0000-0000-000000000001"],
+        payload: { title: "Approve production deployment" },
+      });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body).toMatchObject({ id: "approval-1", created: false, reused: true });
+    expect(mockApprovalService.create).not.toHaveBeenCalled();
+    expect(mockIssueApprovalService.linkManyForApproval).not.toHaveBeenCalled();
+  });
+
+  it("routes an unclassified request to COS instead of creating a Board approval", async () => {
+    const res = await request(await createAgentApp())
+      .post("/api/companies/company-1/approvals")
+      .send({
+        type: "request_board_approval",
+        payload: { title: "Please decide what to do next" },
+      });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(422);
+    expect(res.body).toMatchObject({ code: "cos_review_required" });
+    expect(mockApprovalService.create).not.toHaveBeenCalled();
+    expect(mockApprovalService.createOrReuseBoardApproval).not.toHaveBeenCalled();
+  });
+
+  it("routes a hidden governed action to COS instead of delegating it", async () => {
+    const res = await request(await createAgentApp())
+      .post("/api/companies/company-1/approvals")
+      .send({
+        type: "request_board_approval",
+        payload: {
+          title: "Collect read-only evidence",
+          summary: "After collection, deploy the Alpha shared service.",
+        },
+      });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(422);
+    expect(res.body).toMatchObject({ code: "cos_review_required" });
+    expect(mockApprovalService.create).not.toHaveBeenCalled();
+    expect(mockApprovalService.createOrReuseBoardApproval).not.toHaveBeenCalled();
+  });
+
+  it("routes a manager's valid human gate through COS instead of creating it directly", async () => {
+    const res = await request(await createAgentApp({ contextSnapshot: { agentRole: "manager" } }))
+      .post("/api/companies/company-1/approvals")
+      .send({
+        type: "request_board_approval",
+        payload: { title: "Approve production deployment" },
+      });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(422);
+    expect(res.body).toMatchObject({
+      code: "cos_review_required",
+      governance: { proposedReasonCode: "DEPLOYMENT" },
+    });
+    expect(mockApprovalService.create).not.toHaveBeenCalled();
+    expect(mockApprovalService.createOrReuseBoardApproval).not.toHaveBeenCalled();
+  });
+
+  it("lets COS cancel a manager's redundant pending approval", async () => {
+    const pending = {
+      id: "approval-9",
+      companyId: "company-1",
+      type: "request_board_approval",
+      status: "pending",
+      payload: { title: "Read-only topology" },
+      requestedByAgentId: "manager-1",
+    };
+    mockApprovalService.getById.mockResolvedValue(pending);
+    mockApprovalService.cancel.mockResolvedValue({
+      ...pending,
+      status: "cancelled",
+      decisionNote: "Routine action delegated to manager/COS.",
+    });
+
+    const res = await request(await createAgentApp())
+      .post("/api/approvals/approval-9/cancel")
+      .send({ decisionNote: "Routine action delegated to manager/COS." });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body).toMatchObject({ id: "approval-9", status: "cancelled" });
+    expect(mockApprovalService.cancel).toHaveBeenCalledWith(
+      "approval-9",
+      "Routine action delegated to manager/COS.",
+    );
+  });
+
+  it("prevents a non-requester manager from cancelling another manager's approval", async () => {
+    mockApprovalService.getById.mockResolvedValue({
+      id: "approval-10",
+      companyId: "company-1",
+      type: "request_board_approval",
+      status: "pending",
+      payload: {},
+      requestedByAgentId: "manager-2",
+    });
+
+    const res = await request(await createAgentApp({ contextSnapshot: { agentRole: "manager" } }))
+      .post("/api/approvals/approval-10/cancel")
+      .send({ decisionNote: "Not mine" });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(403);
+    expect(mockApprovalService.cancel).not.toHaveBeenCalled();
   });
 
   it("blocks status-only recovery runs from creating approvals", async () => {

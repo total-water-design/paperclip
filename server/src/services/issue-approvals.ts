@@ -41,6 +41,20 @@ export function issueApprovalService(db: Db) {
   }
 
   return {
+    getLinkedApproval: async (issueId: string, approvalId: string) => {
+      return db
+        .select({
+          id: approvals.id,
+          companyId: approvals.companyId,
+          requestedByAgentId: approvals.requestedByAgentId,
+          requestedByUserId: approvals.requestedByUserId,
+        })
+        .from(issueApprovals)
+        .innerJoin(approvals, eq(issueApprovals.approvalId, approvals.id))
+        .where(and(eq(issueApprovals.issueId, issueId), eq(issueApprovals.approvalId, approvalId)))
+        .then((rows) => rows[0] ?? null);
+    },
+
     listApprovalsForIssue: async (issueId: string) => {
       const issue = await getIssue(issueId);
       if (!issue) throw notFound("Issue not found");
