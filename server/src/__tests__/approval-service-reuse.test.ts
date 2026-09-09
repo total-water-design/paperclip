@@ -141,4 +141,63 @@ describeEmbeddedPostgres("approval service semantic reuse", () => {
     expect(result).toMatchObject({ created: false, approval: { id: legacy.id } });
     expect(await db.select().from(approvals)).toHaveLength(1);
   });
+
+  it("requires action, bounded scope, and immutable identity to reuse an approved authorization", async () => {
+    const { company, agent, issue } = await seed();
+    const approvedPayload = {
+      action: "deploy",
+      environment: "alpha",
+      candidateSha: "0123456789abcdef0123456789abcdef01234567",
+      idempotencyKey: "original-request",
+    };
+    const approved = await db.insert(approvals).values({
+      companyId: company.id,
+      type: "request_board_approval",
+      requestedByAgentId: agent.id,
+      status: "approved",
+      payload: approvedPayload,
+    }).returning().then((rows) => rows[0]!);
+    await db.insert(issueApprovals).values({
+      companyId: company.id,
+      issueId: issue.id,
+      approvalId: approved.id,
+      linkedByAgentId: agent.id,
+    });
+
+    const request = async (payload: Record<string, unknown>) => {
+      const identity = boardApprovalRequestIdentity({
+        type: "request_board_approval",
+        payload,
+        issueIds: [issue.id],
+      });
+      return approvalService(db).createOrReuseBoardApproval({
+        companyId: company.id,
+        data: {
+          type: "request_board_approval",
+          requestedByAgentId: agent.id,
+          status: "pending",
+          payload,
+        },
+        issueIds: [issue.id],
+        linkedByAgentId: agent.id,
+        fingerprint: identity.fingerprint,
+        reuseApprovedAuthorization: identity.exactIdentityEstablished,
+      });
+    };
+
+    const keyOnly = await request({ idempotencyKey: "original-request" });
+    expect(keyOnly.created).toBe(true);
+    expect(keyOnly.approval.id).not.toBe(approved.id);
+
+    const exact = await request({ ...approvedPayload, idempotencyKey: "new-request" });
+    expect(exact).toMatchObject({ created: false, approval: { id: approved.id } });
+
+    const differentSha = await request({
+      ...approvedPayload,
+      idempotencyKey: "another-request",
+      candidateSha: "abcdef0123456789abcdef0123456789abcdef01",
+    });
+    expect(differentSha.created).toBe(true);
+    expect(differentSha.approval.id).not.toBe(approved.id);
+  });
 });

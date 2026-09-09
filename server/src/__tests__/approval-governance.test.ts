@@ -82,4 +82,38 @@ describe("Board approval governance", () => {
     expect(same.fingerprint).toBe(first.fingerprint);
     expect(differentSha.fingerprint).not.toBe(first.fingerprint);
   });
+
+  it("does not establish approved authorization identity from an idempotency key alone", () => {
+    const identity = boardApprovalRequestIdentity({
+      type: "request_board_approval",
+      issueIds: ["issue-1"],
+      payload: { idempotencyKey: "deploy-once" },
+    });
+    expect(identity.exactIdentityEstablished).toBe(false);
+  });
+
+  it("does not treat an abbreviated candidate hash as immutable authorization identity", () => {
+    const identity = boardApprovalRequestIdentity({
+      type: "request_board_approval",
+      issueIds: ["issue-1"],
+      payload: { action: "deploy", scope: "alpha", candidateSha: "0123456" },
+    });
+    expect(identity.exactIdentityEstablished).toBe(false);
+  });
+
+  it("ignores request deduplication keys once exact approved identity is established", () => {
+    const payload = {
+      action: "deploy",
+      target: "alpha",
+      candidateSha: "0123456789abcdef0123456789abcdef01234567",
+    };
+    const first = boardApprovalRequestIdentity({
+      type: "request_board_approval", issueIds: ["issue-1"], payload: { ...payload, idempotencyKey: "request-1" },
+    });
+    const repeated = boardApprovalRequestIdentity({
+      type: "request_board_approval", issueIds: ["issue-1"], payload: { ...payload, idempotencyKey: "request-2" },
+    });
+    expect(first.exactIdentityEstablished).toBe(true);
+    expect(repeated.fingerprint).toBe(first.fingerprint);
+  });
 });

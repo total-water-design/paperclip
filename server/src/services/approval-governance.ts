@@ -54,6 +54,15 @@ const EXACT_IDENTITY_KEYS = [
   "scopeKey",
 ] as const;
 
+const IMMUTABLE_IDENTITY_KEYS = [
+  "sha",
+  "candidateSha",
+  "headSha",
+  "commitSha",
+  "artifactDigest",
+  "artifactSha256",
+] as const;
+
 const STRUCTURED_IDENTITY_KEYS = [
   "action",
   "scope",
@@ -154,21 +163,28 @@ export function boardApprovalRequestIdentity(input: {
   const digests = Array.from(new Set(
     payloadText(input.payload).match(/\b[0-9a-f]{7,64}\b/gi)?.map((value) => value.toLowerCase()) ?? [],
   )).sort();
-  const hasExplicitIdentity = Object.keys(explicitIdentity).length > 0;
-  const hasActionScope = (
-    input.payload.action !== undefined
-    && (input.payload.scope !== undefined || input.payload.target !== undefined || input.payload.environment !== undefined)
-  );
-  const exactIdentityEstablished = hasExplicitIdentity || (hasActionScope && digests.length > 0);
+  const hasAction = normalizedText(input.payload.action).length > 0;
+  const hasBoundedScope = [input.payload.scope, input.payload.target, input.payload.environment]
+    .some((value) => {
+      if (typeof value === "string") return value.trim().length > 0;
+      if (Array.isArray(value)) return value.length > 0;
+      return Boolean(value && typeof value === "object" && Object.keys(value).length > 0);
+    });
+  const hasImmutableIdentity = IMMUTABLE_IDENTITY_KEYS.some((key) => {
+    const value = input.payload[key];
+    return typeof value === "string" && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(value.trim());
+  });
+  const exactIdentityEstablished = hasAction && hasBoundedScope && hasImmutableIdentity;
+  const identityPayload = exactIdentityEstablished
+    ? { structuredIdentity }
+    : { explicitIdentity, structuredIdentity, digests };
   const canonical = JSON.stringify(stableValue({
     version: 1,
     type: input.type,
     title: normalizedText(input.payload.title),
     recommendedAction: normalizedText(input.payload.recommendedAction),
     issueIds: Array.from(new Set(input.issueIds)).sort(),
-    explicitIdentity,
-    structuredIdentity,
-    digests,
+    ...identityPayload,
   }));
 
   return {
