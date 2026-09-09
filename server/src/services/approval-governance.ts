@@ -122,7 +122,14 @@ export function classifyBoardApprovalRequest(
     }
   }
 
-  if (ROUTINE_ACTION_RE.test(payloadText(payload))) {
+  const allPayloadText = payloadText(payload);
+  for (const gate of BOARD_GATE_PATTERNS) {
+    if (gate.pattern.test(allPayloadText)) {
+      return { outcome: "route_to_cos", reasonCode: "COS_REVIEW_REQUIRED", source: "inferred" };
+    }
+  }
+
+  if (ROUTINE_ACTION_RE.test(allPayloadText)) {
     return { outcome: "delegated", reasonCode: "ROUTINE_DELEGATED_ACTION", source: "inferred" };
   }
 

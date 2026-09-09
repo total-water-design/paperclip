@@ -470,6 +470,23 @@ describe("approval routes idempotent retries", () => {
     expect(mockApprovalService.createOrReuseBoardApproval).not.toHaveBeenCalled();
   });
 
+  it("routes a hidden governed action to COS instead of delegating it", async () => {
+    const res = await request(await createAgentApp())
+      .post("/api/companies/company-1/approvals")
+      .send({
+        type: "request_board_approval",
+        payload: {
+          title: "Collect read-only evidence",
+          summary: "After collection, deploy the Alpha shared service.",
+        },
+      });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(422);
+    expect(res.body).toMatchObject({ code: "cos_review_required" });
+    expect(mockApprovalService.create).not.toHaveBeenCalled();
+    expect(mockApprovalService.createOrReuseBoardApproval).not.toHaveBeenCalled();
+  });
+
   it("routes a manager's valid human gate through COS instead of creating it directly", async () => {
     const res = await request(await createAgentApp({ contextSnapshot: { agentRole: "manager" } }))
       .post("/api/companies/company-1/approvals")
