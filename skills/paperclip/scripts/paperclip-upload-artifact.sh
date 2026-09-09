@@ -152,6 +152,46 @@ upload_file() {
   rm -f "$response_file"
 }
 
+sha256_file() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
+
+upload_file_bounded_json() {
+  local api_base="$1" path="$2" content_type="$3" issue_id="$4"
+  local chunk_size=131072 total_bytes whole_sha declaration transfer_id total_chunks index chunk_file
+  total_bytes="$(wc -c < "$path" | tr -d ' ')"
+  whole_sha="$(sha256_file "$path")"
+  declaration="$(jq -nc --arg filename "$(basename "$path")" --arg contentType "$content_type" \
+    --argjson totalBytes "$total_bytes" --arg sha256 "$whole_sha" --argjson chunkSize "$chunk_size" \
+    '{originalFilename:$filename,contentType:$contentType,totalBytes:$totalBytes,sha256:$sha256,chunkSize:$chunkSize}')"
+  declaration="$(request_json POST "$api_base/issues/$issue_id/attachment-transfers" "$declaration")"
+  transfer_id="$(jq -r '.id // empty' <<<"$declaration")"
+  total_chunks="$(jq -r '.totalChunks // 0' <<<"$declaration")"
+  if [[ -z "$transfer_id" || "$total_chunks" -le 0 ]]; then
+    printf 'Transfer declaration did not return a valid transfer.\n' >&2
+    exit 1
+  fi
+  chunk_file="$(mktemp "${PAPERCLIP_RUN_SCRATCH_DIR:-${PAPERCLIP_SCRATCH_DIR:-${TMPDIR:-/tmp}}}/paperclip-artifact-chunk.XXXXXX")"
+  trap 'rm -f "$chunk_file"' RETURN
+  for ((index=0; index<total_chunks; index+=1)); do
+    dd if="$path" of="$chunk_file" bs="$chunk_size" skip="$index" count=1 status=none
+    local chunk_bytes chunk_sha chunk_base64 payload
+    chunk_bytes="$(wc -c < "$chunk_file" | tr -d ' ')"
+    chunk_sha="$(sha256_file "$chunk_file")"
+    chunk_base64="$(base64 < "$chunk_file" | tr -d '\n')"
+    payload="$(jq -nc --argjson byteCount "$chunk_bytes" --arg sha256 "$chunk_sha" --arg dataBase64 "$chunk_base64" \
+      '{byteCount:$byteCount,sha256:$sha256,dataBase64:$dataBase64}')"
+    request_json PUT "$api_base/issues/$issue_id/attachment-transfers/$transfer_id/chunks/$index" "$payload" >/dev/null
+  done
+  request_json POST "$api_base/issues/$issue_id/attachment-transfers/$transfer_id/publish" '{}'
+  rm -f "$chunk_file"
+  trap - RETURN
+}
+
 file_path=""
 issue_id="${PAPERCLIP_TASK_ID:-}"
 company_id="${PAPERCLIP_COMPANY_ID:-}"
@@ -281,12 +321,19 @@ if [[ -z "$issue_id" || -z "$company_id" ]]; then
   exit 1
 fi
 
-api_base="${PAPERCLIP_API_URL%/}/api"
+api_base="${PAPERCLIP_API_URL%/}"
+if [[ "$api_base" != */api ]]; then
+  api_base="$api_base/api"
+fi
 attachment="$(
-  upload_file \
-    "$api_base/companies/$company_id/issues/$issue_id/attachments" \
-    "$file_path" \
-    "$content_type"
+  if [[ -n "${PAPERCLIP_API_BRIDGE_MODE:-}" ]]; then
+    upload_file_bounded_json "$api_base" "$file_path" "$content_type" "$issue_id"
+  else
+    upload_file \
+      "$api_base/companies/$company_id/issues/$issue_id/attachments" \
+      "$file_path" \
+      "$content_type"
+  fi
 )"
 
 work_product="null"

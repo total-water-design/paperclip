@@ -12,6 +12,13 @@ scripts/paperclip-upload-artifact.sh path/to/output.webm \
 
 The helper uses `PAPERCLIP_API_URL`, `PAPERCLIP_API_KEY`, `PAPERCLIP_COMPANY_ID`, `PAPERCLIP_TASK_ID`, and `PAPERCLIP_RUN_ID`. It uploads the file as an issue attachment, creates an attachment-backed artifact work product by default, and prints issue-safe markdown links for your final comment.
 
+When `PAPERCLIP_API_BRIDGE_MODE` is present, the helper automatically uses the
+confined-run transport. It declares the exact byte count, content type, and
+SHA-256, sends base64 in ordered 128 KiB JSON chunks, and publishes only after
+the server verifies every chunk and the assembled file. The normal multipart
+path remains unchanged for direct API connections. Transfers expire after 24
+hours and never expose a sandbox path to the host.
+
 ## Workspace-Only File References
 
 Use a workspace-only reference only when the file should stay in the project or

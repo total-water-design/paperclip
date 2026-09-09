@@ -257,6 +257,18 @@ import {
   type CrossIssueInfluenceKind,
 } from "../services/cross-issue-influence-limit.js";
 import { bindHeartbeatRunToCheckedOutIssue } from "../services/heartbeat-run-issue-attribution.js";
+import {
+  ATTACHMENT_TRANSFER_CHUNK_BYTES,
+  assembleAttachmentTransfer,
+  attachmentTransferExpired,
+  claimAttachmentTransfer,
+  createAttachmentTransfer,
+  readAttachmentTransfer,
+  releaseAttachmentTransferClaim,
+  removeAttachmentTransfer,
+  resolveDefaultAttachmentTransferRoot,
+  writeAttachmentTransferChunk,
+} from "../services/issue-attachment-transfers.js";
 
 const MAX_ISSUE_COMMENT_LIMIT = 500;
 const updateIssueRouteSchema = updateIssueSchema.extend({
@@ -277,6 +289,21 @@ const inboxArchiveBodySchema = z.object({
 }).strict().default({});
 const externalObjectSummariesSchema = z.object({
   issueIds: z.array(z.string().guid()).max(1000),
+}).strict();
+
+const attachmentTransferDeclarationSchema = z.object({
+  originalFilename: z.string().trim().min(1).max(255).nullable().optional(),
+  contentType: z.string().trim().min(1).max(255),
+  totalBytes: z.number().int().positive().max(MAX_ATTACHMENT_BYTES),
+  sha256: z.string().regex(/^[0-9a-f]{64}$/i).transform((value) => value.toLowerCase()),
+  chunkSize: z.number().int().positive().max(ATTACHMENT_TRANSFER_CHUNK_BYTES).optional(),
+  issueCommentId: z.string().guid().nullable().optional(),
+}).strict();
+
+const attachmentTransferChunkSchema = z.object({
+  byteCount: z.number().int().positive().max(ATTACHMENT_TRANSFER_CHUNK_BYTES),
+  sha256: z.string().regex(/^[0-9a-f]{64}$/i).transform((value) => value.toLowerCase()),
+  dataBase64: z.string().min(1).max(Math.ceil(ATTACHMENT_TRANSFER_CHUNK_BYTES / 3) * 4 + 4),
 }).strict();
 
 const promoteLowTrustOutputSchema = z.object({
@@ -2815,9 +2842,11 @@ export function issueRoutes(
       proposalId: string;
       actor: { agentId?: string | null; userId?: string | null };
     }) => Promise<unknown>;
+    attachmentTransferRoot?: string;
   } = {},
 ) {
   const router = Router();
+  const attachmentTransferRoot = opts.attachmentTransferRoot ?? resolveDefaultAttachmentTransferRoot();
   const svc = issueService(db);
   const runRedactions = createRunSecretRedactionRegistry(db);
   const access = accessService(db);
@@ -13017,6 +13046,178 @@ export function issueRoutes(
     if (!(await assertIssueReadAllowed(req, res, issue))) return;
     const attachments = await svc.listAttachments(issueId);
     res.json(attachments.map(withContentPath));
+  });
+
+  async function authorizeAttachmentTransfer(req: Request, res: Response, transferId?: string) {
+    const issueId = req.params.issueId as string;
+    const issue = await getAccessibleResource(req, res, getIssueById(req, issueId), "Issue not found");
+    if (!issue) return null;
+    if (!(await assertAgentIssueMutationAllowed(req, res, issue))) return null;
+    if (!(await assertDeliverableMutationAllowedByRunContext(req, res, issue))) return null;
+    const actor = getActorInfo(req);
+    if (actor.actorType !== "agent" || !actor.agentId || !actor.runId) {
+      res.status(403).json({ error: "Attachment transfers require run-bound agent authentication" });
+      return null;
+    }
+    const [run] = await db.select({
+      id: heartbeatRuns.id,
+      companyId: heartbeatRuns.companyId,
+      agentId: heartbeatRuns.agentId,
+      contextSnapshot: heartbeatRuns.contextSnapshot,
+      status: heartbeatRuns.status,
+    }).from(heartbeatRuns).where(eq(heartbeatRuns.id, actor.runId)).limit(1);
+    const runIssueId = typeof run?.contextSnapshot?.issueId === "string"
+      ? run.contextSnapshot.issueId
+      : typeof run?.contextSnapshot?.taskId === "string" ? run.contextSnapshot.taskId : null;
+    if (!run || run.companyId !== issue.companyId || run.agentId !== actor.agentId || runIssueId !== issue.id || run.status !== "running") {
+      res.status(403).json({ error: "Attachment transfer run is not active for this agent and issue" });
+      return null;
+    }
+    if (!transferId) return { issue, actor };
+    let manifest;
+    try {
+      manifest = await readAttachmentTransfer(attachmentTransferRoot, transferId);
+    } catch {
+      res.status(404).json({ error: "Attachment transfer not found" });
+      return null;
+    }
+    if (manifest.companyId !== issue.companyId || manifest.issueId !== issue.id || manifest.agentId !== actor.agentId || manifest.runId !== actor.runId) {
+      res.status(404).json({ error: "Attachment transfer not found" });
+      return null;
+    }
+    if (attachmentTransferExpired(manifest)) {
+      await removeAttachmentTransfer(attachmentTransferRoot, manifest.id);
+      res.status(410).json({ error: "Attachment transfer expired" });
+      return null;
+    }
+    return { issue, actor, manifest };
+  }
+
+  router.post("/issues/:issueId/attachment-transfers", async (req, res) => {
+    const authorized = await authorizeAttachmentTransfer(req, res);
+    if (!authorized) return;
+    const parsed = attachmentTransferDeclarationSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(422).json({ error: "Invalid attachment transfer metadata", details: parsed.error.issues });
+      return;
+    }
+    const contentType = normalizeUploadAttachmentContentType({
+      contentType: parsed.data.contentType,
+      originalFilename: parsed.data.originalFilename,
+    });
+    const manifest = await createAttachmentTransfer(attachmentTransferRoot, {
+      companyId: authorized.issue.companyId,
+      issueId: authorized.issue.id,
+      agentId: authorized.actor.agentId!,
+      runId: authorized.actor.runId!,
+      originalFilename: parsed.data.originalFilename ?? null,
+      contentType,
+      totalBytes: parsed.data.totalBytes,
+      sha256: parsed.data.sha256,
+      chunkSize: parsed.data.chunkSize ?? ATTACHMENT_TRANSFER_CHUNK_BYTES,
+      issueCommentId: parsed.data.issueCommentId ?? null,
+    });
+    res.status(201).json(manifest);
+  });
+
+  router.get("/issues/:issueId/attachment-transfers/:transferId", async (req, res) => {
+    const authorized = await authorizeAttachmentTransfer(req, res, req.params.transferId as string);
+    if (!authorized) return;
+    res.json(authorized.manifest);
+  });
+
+  router.put("/issues/:issueId/attachment-transfers/:transferId/chunks/:chunkIndex", async (req, res) => {
+    const authorized = await authorizeAttachmentTransfer(req, res, req.params.transferId as string);
+    if (!authorized) return;
+    const indexRaw = req.params.chunkIndex as string;
+    if (!/^\d{1,5}$/.test(indexRaw)) {
+      res.status(422).json({ error: "Invalid attachment chunk index" });
+      return;
+    }
+    const parsed = attachmentTransferChunkSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(422).json({ error: "Invalid attachment chunk", details: parsed.error.issues });
+      return;
+    }
+    const bytes = Buffer.from(parsed.data.dataBase64, "base64");
+    if (bytes.toString("base64") !== parsed.data.dataBase64 || bytes.length !== parsed.data.byteCount) {
+      res.status(422).json({ error: "Attachment chunk byte count or base64 encoding does not match metadata" });
+      return;
+    }
+    const digest = createHash("sha256").update(bytes).digest("hex");
+    if (digest !== parsed.data.sha256) {
+      res.status(422).json({ error: "Attachment chunk sha256 does not match metadata" });
+      return;
+    }
+    try {
+      const manifest = await writeAttachmentTransferChunk(
+        attachmentTransferRoot,
+        authorized.manifest!,
+        Number(indexRaw),
+        bytes,
+      );
+      res.json({ ok: true, nextChunk: manifest.nextChunk, totalChunks: manifest.totalChunks });
+    } catch (error) {
+      res.status(409).json({ error: error instanceof Error ? error.message : "Attachment chunk rejected" });
+    }
+  });
+
+  router.post("/issues/:issueId/attachment-transfers/:transferId/publish", async (req, res) => {
+    const authorized = await authorizeAttachmentTransfer(req, res, req.params.transferId as string);
+    if (!authorized) return;
+    if (authorized.manifest!.nextChunk !== authorized.manifest!.totalChunks) {
+      res.status(409).json({ error: "Attachment transfer is incomplete", nextChunk: authorized.manifest!.nextChunk });
+      return;
+    }
+    const claimed = await claimAttachmentTransfer(attachmentTransferRoot, authorized.manifest!);
+    if (!claimed) {
+      res.status(409).json({ error: "Attachment transfer is not publishable" });
+      return;
+    }
+    try {
+      const assembled = await assembleAttachmentTransfer(attachmentTransferRoot, claimed);
+      if (assembled.byteCount !== claimed.totalBytes || assembled.sha256 !== claimed.sha256) {
+        await removeAttachmentTransfer(attachmentTransferRoot, claimed.id);
+        res.status(422).json({ error: "Attachment transfer byte count or sha256 verification failed" });
+        return;
+      }
+      const stored = await storage.putFile({
+        companyId: claimed.companyId,
+        namespace: `issues/${claimed.issueId}`,
+        originalFilename: claimed.originalFilename,
+        contentType: claimed.contentType,
+        body: assembled.bytes,
+      });
+      const attachment = await svc.createAttachment({
+        issueId: claimed.issueId,
+        issueCommentId: claimed.issueCommentId,
+        provider: stored.provider,
+        objectKey: stored.objectKey,
+        contentType: stored.contentType,
+        byteSize: stored.byteSize,
+        sha256: stored.sha256,
+        originalFilename: stored.originalFilename,
+        createdByAgentId: authorized.actor.agentId,
+        createdByUserId: null,
+      });
+      await logActivity(db, {
+        companyId: claimed.companyId,
+        actorType: authorized.actor.actorType,
+        actorId: authorized.actor.actorId,
+        agentId: authorized.actor.agentId,
+        runId: authorized.actor.runId,
+        agentApiKeyId: authorized.actor.agentApiKeyId,
+        action: "issue.attachment_added",
+        entityType: "issue",
+        entityId: claimed.issueId,
+        details: { attachmentId: attachment.id, transport: "bounded_json_chunks", byteSize: attachment.byteSize },
+      });
+      await removeAttachmentTransfer(attachmentTransferRoot, claimed.id);
+      res.status(201).json(withContentPath(attachment));
+    } catch (error) {
+      await releaseAttachmentTransferClaim(attachmentTransferRoot, claimed).catch(() => undefined);
+      throw error;
+    }
   });
 
   router.post("/companies/:companyId/issues/:issueId/attachments", async (req, res) => {

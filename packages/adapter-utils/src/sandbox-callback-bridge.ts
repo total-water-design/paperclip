@@ -138,6 +138,13 @@ export const DEFAULT_SANDBOX_CALLBACK_BRIDGE_ROUTE_ALLOWLIST: readonly SandboxCa
   { method: "POST", path: /^\/api\/issues\/[^/]+\/release$/ },
   { method: "PATCH", path: /^\/api\/issues\/[^/]+$/ },
   { method: "GET", path: /^\/api\/issues\/[^/]+\/approvals$/ },
+  // Confined runs cannot send multipart bodies or expose a host-readable file
+  // path. This narrow issue-scoped JSON route carries bounded, hash-verified
+  // attachment chunks and nothing else.
+  { method: "POST", path: /^\/api\/issues\/[^/]+\/attachment-transfers$/ },
+  { method: "GET", path: /^\/api\/issues\/[^/]+\/attachment-transfers\/[^/]+$/ },
+  { method: "PUT", path: /^\/api\/issues\/[^/]+\/attachment-transfers\/[^/]+\/chunks\/\d+$/ },
+  { method: "POST", path: /^\/api\/issues\/[^/]+\/attachment-transfers\/[^/]+\/publish$/ },
 
   // Work products: publish branch/commit/artifact metadata for completed work.
   { method: "GET", path: /^\/api\/issues\/[^/]+\/work-products$/ },

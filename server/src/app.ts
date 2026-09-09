@@ -18,6 +18,10 @@ import {
   sweepAbandonedImportTransferSpools,
 } from "./services/company-import-transfers.js";
 import { companyTransferRunService } from "./services/company-transfer-runs.js";
+import {
+  resolveDefaultAttachmentTransferRoot,
+  sweepExpiredAttachmentTransfers,
+} from "./services/issue-attachment-transfers.js";
 import { healthRoutes } from "./routes/health.js";
 import { cloudRoutes } from "./routes/cloud.js";
 import { companyRoutes } from "./routes/companies.js";
@@ -848,6 +852,20 @@ export async function createApp(
     IMPORT_TRANSFER_SPOOL_SWEEP_INTERVAL_MS,
   );
   importTransferSweepTimer.unref?.();
+  const attachmentTransferRoot = resolveDefaultAttachmentTransferRoot();
+  const sweepAttachmentTransfers = () => {
+    void sweepExpiredAttachmentTransfers(attachmentTransferRoot)
+      .then((swept) => {
+        if (swept > 0) logger.info({ swept }, "swept expired attachment transfer spools");
+      })
+      .catch((err) => logger.error({ err }, "attachment transfer spool sweep failed"));
+  };
+  let attachmentTransferSweepTimer: ReturnType<typeof setInterval> | null = setInterval(
+    sweepAttachmentTransfers,
+    IMPORT_TRANSFER_SPOOL_SWEEP_INTERVAL_MS,
+  );
+  attachmentTransferSweepTimer.unref?.();
+  sweepAttachmentTransfers();
   // Startup only (never on the hourly interval — that would kill live
   // applies): apply jobs are in-memory in this single process, so any run
   // still "applying" now was interrupted by the previous shutdown and would
@@ -939,6 +957,10 @@ export async function createApp(
       if (importTransferSweepTimer) {
         clearInterval(importTransferSweepTimer);
         importTransferSweepTimer = null;
+      }
+      if (attachmentTransferSweepTimer) {
+        clearInterval(attachmentTransferSweepTimer);
+        attachmentTransferSweepTimer = null;
       }
       devWatcher?.close();
       viteHtmlRenderer?.dispose();

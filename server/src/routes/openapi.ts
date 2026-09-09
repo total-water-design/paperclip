@@ -1018,6 +1018,8 @@ const CREATED_OPERATIONS = new Set([
   "POST /api/issues/{id}/interactions",
   "POST /api/issues/{id}/comments",
   "POST /api/companies/{companyId}/issues/{issueId}/attachments",
+  "POST /api/issues/{issueId}/attachment-transfers",
+  "POST /api/issues/{issueId}/attachment-transfers/{transferId}/publish",
   "POST /api/companies/{companyId}/projects",
   "POST /api/projects/{id}/workspaces",
   "POST /api/companies/{companyId}/routines",
@@ -4967,6 +4969,42 @@ registry.registerPath({
   summary: "Upload an attachment to an issue",
   request: { params: z.object({ companyId: z.string(), issueId: z.string() }) },
   responses: { 200: r.ok(), 401: r.unauthorized },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/issues/{issueId}/attachment-transfers",
+  tags: ["issues"],
+  summary: "Declare a run-bound bounded attachment transfer",
+  request: { params: z.object({ issueId: z.string() }), body: jsonBody(z.record(z.string(), z.unknown())) },
+  responses: { 201: r.ok(), 401: r.unauthorized, 403: r.forbidden, 422: r.unprocessable },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/issues/{issueId}/attachment-transfers/{transferId}",
+  tags: ["issues"],
+  summary: "Read a run-bound attachment transfer",
+  request: { params: z.object({ issueId: z.string(), transferId: z.string() }) },
+  responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden, 404: r.notFound },
+});
+
+registry.registerPath({
+  method: "put",
+  path: "/api/issues/{issueId}/attachment-transfers/{transferId}/chunks/{chunkIndex}",
+  tags: ["issues"],
+  summary: "Upload one ordered hash-verified attachment chunk",
+  request: { params: z.object({ issueId: z.string(), transferId: z.string(), chunkIndex: z.string() }), body: jsonBody(z.record(z.string(), z.unknown())) },
+  responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden, 409: r.conflict, 422: r.unprocessable },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/issues/{issueId}/attachment-transfers/{transferId}/publish",
+  tags: ["issues"],
+  summary: "Verify and publish a completed attachment transfer",
+  request: { params: z.object({ issueId: z.string(), transferId: z.string() }) },
+  responses: { 201: r.ok(), 401: r.unauthorized, 403: r.forbidden, 409: r.conflict, 422: r.unprocessable },
 });
 
 registry.registerPath({
