@@ -121,6 +121,21 @@ request_json() {
   rm -f "$response_file"
 }
 
+active_transfer_abort_url=""
+
+cleanup_active_transfer() {
+  if [[ -z "$active_transfer_abort_url" || -z "${PAPERCLIP_API_KEY:-}" || -z "${PAPERCLIP_RUN_ID:-}" ]]; then
+    return
+  fi
+  curl -sS -X DELETE \
+    "$active_transfer_abort_url" \
+    -H "Authorization: Bearer $PAPERCLIP_API_KEY" \
+    -H "X-Paperclip-Run-Id: $PAPERCLIP_RUN_ID" \
+    >/dev/null 2>&1 || true
+}
+
+trap cleanup_active_transfer EXIT INT TERM
+
 upload_file() {
   local url="$1"
   local path="$2"
@@ -150,6 +165,85 @@ upload_file() {
 
   cat "$response_file"
   rm -f "$response_file"
+}
+
+upload_file_confined() {
+  local api_base="$1"
+  local company_id="$2"
+  local issue_id="$3"
+  local path="$4"
+  local content_type="$5"
+  local filename
+  local byte_size
+  local sha256
+  local begin_payload
+  local declaration
+  local transfer_id
+  local chunk_bytes
+  local index=0
+  local offset=0
+  local chunk_data
+  local chunk_payload
+  local transfer_base
+  local completed
+  local completed_bytes
+  local completed_sha256
+
+  require_command sha256sum
+  require_command awk
+  require_command wc
+  require_command dd
+  require_command base64
+  require_command tr
+
+  filename="$(basename "$path")"
+  byte_size="$(wc -c <"$path" | tr -d '[:space:]')"
+  sha256="$(sha256sum "$path" | awk '{print $1}')"
+  begin_payload="$(
+    jq -nc \
+      --arg originalFilename "$filename" \
+      --arg contentType "$content_type" \
+      --argjson byteSize "$byte_size" \
+      --arg sha256 "$sha256" \
+      '{originalFilename: $originalFilename, contentType: $contentType, byteSize: $byteSize, sha256: $sha256}'
+  )"
+  transfer_base="$api_base/companies/$company_id/issues/$issue_id/artifact-transfers"
+  declaration="$(request_json POST "$transfer_base" "$begin_payload")"
+  transfer_id="$(jq -r '.transferId // empty' <<<"$declaration")"
+  chunk_bytes="$(jq -r '.chunkBytes // 0' <<<"$declaration")"
+  if [[ -z "$transfer_id" || ! "$chunk_bytes" =~ ^[0-9]+$ || "$chunk_bytes" -lt 1 || "$chunk_bytes" -gt 131072 ]]; then
+    printf 'Artifact transfer declaration returned invalid bounds.\n' >&2
+    printf '%s\n' "$declaration" >&2
+    exit 1
+  fi
+
+  active_transfer_abort_url="$transfer_base/$transfer_id"
+  while [[ "$offset" -lt "$byte_size" ]]; do
+    chunk_data="$(
+      dd if="$path" bs="$chunk_bytes" skip="$index" count=1 status=none |
+        base64 |
+        tr -d '\n'
+    )"
+    chunk_payload="$(
+      jq -nc \
+        --argjson index "$index" \
+        --arg data "$chunk_data" \
+        '{index: $index, data: $data}'
+    )"
+    request_json POST "$transfer_base/$transfer_id/chunks" "$chunk_payload" >/dev/null
+    index=$((index + 1))
+    offset=$((offset + chunk_bytes))
+  done
+
+  completed="$(request_json POST "$transfer_base/$transfer_id/complete" '{}')"
+  completed_bytes="$(jq -r '.byteSize // -1' <<<"$completed")"
+  completed_sha256="$(jq -r '.sha256 // empty' <<<"$completed")"
+  if [[ "$completed_bytes" != "$byte_size" || "$completed_sha256" != "$sha256" ]]; then
+    printf 'Completed artifact response failed byte-size or SHA-256 verification.\n' >&2
+    exit 1
+  fi
+  active_transfer_abort_url=""
+  printf '%s' "$completed"
 }
 
 file_path=""
@@ -265,9 +359,10 @@ if [[ "$dry_run" == "1" ]]; then
     --arg summary "$summary" \
     --arg contentType "$content_type" \
     --arg status "$status" \
+    --arg transport "$([[ -n "${PAPERCLIP_API_BRIDGE_MODE:-}" ]] && printf confined_chunked_v1 || printf multipart)" \
     --argjson createWorkProduct "$create_work_product_json" \
     --argjson isPrimary "$is_primary_json" \
-    '{file: $file, issueId: $issueId, companyId: $companyId, title: $title, summary: $summary, contentType: $contentType, status: $status, createWorkProduct: $createWorkProduct, isPrimary: $isPrimary}'
+    '{file: $file, issueId: $issueId, companyId: $companyId, title: $title, summary: $summary, contentType: $contentType, status: $status, transport: $transport, createWorkProduct: $createWorkProduct, isPrimary: $isPrimary}'
   exit 0
 fi
 
@@ -282,12 +377,23 @@ if [[ -z "$issue_id" || -z "$company_id" ]]; then
 fi
 
 api_base="${PAPERCLIP_API_URL%/}/api"
-attachment="$(
-  upload_file \
-    "$api_base/companies/$company_id/issues/$issue_id/attachments" \
-    "$file_path" \
-    "$content_type"
-)"
+if [[ -n "${PAPERCLIP_API_BRIDGE_MODE:-}" ]]; then
+  attachment="$(
+    upload_file_confined \
+      "$api_base" \
+      "$company_id" \
+      "$issue_id" \
+      "$file_path" \
+      "$content_type"
+  )"
+else
+  attachment="$(
+    upload_file \
+      "$api_base/companies/$company_id/issues/$issue_id/attachments" \
+      "$file_path" \
+      "$content_type"
+  )"
+fi
 
 work_product="null"
 if [[ "$create_work_product" == "1" ]]; then

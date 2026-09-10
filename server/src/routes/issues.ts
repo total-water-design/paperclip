@@ -31,6 +31,8 @@ import {
 import {
   addIssueCommentSchema,
   acceptIssueThreadInteractionSchema,
+  appendConfinedArtifactChunkSchema,
+  beginConfinedArtifactTransferSchema,
   attachmentArtifactWorkProductMetadataSchema,
   cancelIssueThreadInteractionSchema,
   withdrawIssueThreadInteractionSchema,
@@ -178,6 +180,11 @@ import {
   normalizeUploadAttachmentContentType,
   SVG_CONTENT_TYPE,
 } from "../attachment-types.js";
+import {
+  ConfinedArtifactTransferError,
+  ConfinedArtifactTransferStore,
+  type ConfinedArtifactTransferBinding,
+} from "../services/confined-artifact-transfers.js";
 import { queueIssueAssignmentWakeup } from "../services/issue-assignment-wakeup.js";
 import { createSecretProposalsService } from "../services/secret-proposals.js";
 import { notifySecretProposalResolution } from "../services/secret-proposal-notifications.js";
@@ -2825,6 +2832,9 @@ export function issueRoutes(
   const heartbeat = heartbeatService(db, {
     pluginWorkerManager: opts.pluginWorkerManager,
   });
+  const confinedArtifactTransfers = new ConfinedArtifactTransferStore({
+    maxBytes: MAX_ATTACHMENT_BYTES,
+  });
   const enqueueStalledReviewDecisionWakeup = opts.stalledReviewDecisionEnqueueWakeup ?? heartbeat.wakeup;
   const enqueueRecoveryActionWakeup = opts.recoveryActionEnqueueWakeup ?? heartbeat.wakeup;
   const feedback = feedbackService(db);
@@ -4870,6 +4880,70 @@ export function issueRoutes(
       .then((rows) => rows[0] ?? null);
     if (!run || run.companyId !== companyId || run.agentId !== req.actor.agentId) return null;
     return run;
+  }
+
+  async function requireConfinedArtifactTransferBinding(
+    req: Request,
+    res: Response,
+    issue: { id: string; companyId: string },
+  ): Promise<ConfinedArtifactTransferBinding | null> {
+    if (req.actor.type !== "agent" || !req.actor.agentId) {
+      res.status(403).json({
+        error: "Confined artifact transfers require authenticated agent-run credentials",
+        details: { code: "confined_artifact_agent_required" },
+      });
+      return null;
+    }
+    const runId = req.actor.runId?.trim();
+    if (!runId) {
+      res.status(403).json({
+        error: "The authenticated agent run is not active and bound to this issue",
+        details: { code: "confined_artifact_run_binding_denied" },
+      });
+      return null;
+    }
+    const run = await db
+      .select({
+        id: heartbeatRuns.id,
+        companyId: heartbeatRuns.companyId,
+        agentId: heartbeatRuns.agentId,
+        status: heartbeatRuns.status,
+        contextSnapshot: heartbeatRuns.contextSnapshot,
+      })
+      .from(heartbeatRuns)
+      .where(and(
+        eq(heartbeatRuns.id, runId),
+        eq(heartbeatRuns.companyId, issue.companyId),
+        eq(heartbeatRuns.agentId, req.actor.agentId),
+      ))
+      .then((rows) => rows[0] ?? null);
+    const context = run?.contextSnapshot && typeof run.contextSnapshot === "object" && !Array.isArray(run.contextSnapshot)
+      ? run.contextSnapshot as Record<string, unknown>
+      : {};
+    const boundIssueId =
+      (typeof context.issueId === "string" && context.issueId.trim()) ||
+      (typeof context.taskId === "string" && context.taskId.trim()) ||
+      null;
+    if (!run || run.status !== "running" || boundIssueId !== issue.id) {
+      res.status(403).json({
+        error: "The authenticated agent run is not active and bound to this issue",
+        details: { code: "confined_artifact_run_binding_denied" },
+      });
+      return null;
+    }
+    return {
+      companyId: issue.companyId,
+      runId: run.id,
+      agentId: req.actor.agentId,
+      issueId: issue.id,
+    };
+  }
+
+  function rethrowConfinedArtifactTransferError(error: unknown): never {
+    if (error instanceof ConfinedArtifactTransferError) {
+      throw new HttpError(error.status, error.message, { code: error.code });
+    }
+    throw error;
   }
 
   function readObject(value: unknown): Record<string, unknown> {
@@ -13018,6 +13092,170 @@ export function issueRoutes(
     const attachments = await svc.listAttachments(issueId);
     res.json(attachments.map(withContentPath));
   });
+
+  async function loadConfinedArtifactTransferIssue(req: Request, res: Response) {
+    const companyId = req.params.companyId as string;
+    const issueId = req.params.issueId as string;
+    assertCompanyAccess(req, companyId);
+    const issue = await svc.getById(issueId);
+    if (!issue || issue.companyId !== companyId) {
+      res.status(404).json({ error: "Issue not found" });
+      return null;
+    }
+    if (!(await assertAgentIssueMutationAllowed(req, res, issue))) return null;
+    if (!(await assertDeliverableMutationAllowedByRunContext(req, res, issue))) return null;
+    const binding = await requireConfinedArtifactTransferBinding(req, res, issue);
+    return binding ? { issue, binding } : null;
+  }
+
+  router.post("/companies/:companyId/issues/:issueId/artifact-transfers", async (req, res) => {
+    const scoped = await loadConfinedArtifactTransferIssue(req, res);
+    if (!scoped) return;
+    const parsed = beginConfinedArtifactTransferSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid artifact transfer declaration", details: parsed.error.issues });
+      return;
+    }
+    const contentType = normalizeUploadAttachmentContentType({
+      contentType: normalizeContentType(parsed.data.contentType),
+      originalFilename: parsed.data.originalFilename,
+    });
+    const transfer = await confinedArtifactTransfers.begin({
+      ...scoped.binding,
+      originalFilename: parsed.data.originalFilename,
+      contentType,
+      byteSize: parsed.data.byteSize,
+      sha256: parsed.data.sha256,
+    }).catch(rethrowConfinedArtifactTransferError);
+
+    const actor = getActorInfo(req);
+    await logActivity(db, {
+      companyId: scoped.binding.companyId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      agentApiKeyId: actor.agentApiKeyId,
+      action: "issue.attachment_transfer_started",
+      entityType: "issue",
+      entityId: scoped.issue.id,
+      details: {
+        transferId: transfer.transferId,
+        originalFilename: parsed.data.originalFilename,
+        contentType,
+        byteSize: parsed.data.byteSize,
+        sha256: parsed.data.sha256.toLowerCase(),
+        expiresAt: transfer.expiresAt,
+      },
+    });
+    res.status(201).json(transfer);
+  });
+
+  router.post(
+    "/companies/:companyId/issues/:issueId/artifact-transfers/:transferId/chunks",
+    async (req, res) => {
+      const scoped = await loadConfinedArtifactTransferIssue(req, res);
+      if (!scoped) return;
+      const parsed = appendConfinedArtifactChunkSchema.safeParse(req.body);
+      if (!parsed.success) {
+        await confinedArtifactTransfers
+          .abort(req.params.transferId as string, scoped.binding)
+          .catch(() => undefined);
+        res.status(400).json({ error: "Invalid artifact transfer chunk", details: parsed.error.issues });
+        return;
+      }
+      try {
+        const progress = await confinedArtifactTransfers.appendChunk(
+          req.params.transferId as string,
+          scoped.binding,
+          parsed.data,
+        );
+        res.json(progress);
+      } catch (error) {
+        rethrowConfinedArtifactTransferError(error);
+      }
+    },
+  );
+
+  router.post(
+    "/companies/:companyId/issues/:issueId/artifact-transfers/:transferId/complete",
+    async (req, res) => {
+      const scoped = await loadConfinedArtifactTransferIssue(req, res);
+      if (!scoped) return;
+
+      const completed = await confinedArtifactTransfers.complete(
+        req.params.transferId as string,
+        scoped.binding,
+      ).catch(rethrowConfinedArtifactTransferError);
+
+      const stored = await storage.putFile({
+        companyId: scoped.binding.companyId,
+        namespace: `issues/${scoped.issue.id}`,
+        originalFilename: completed.originalFilename,
+        contentType: completed.contentType,
+        body: completed.body,
+      });
+      if (stored.byteSize !== completed.byteSize || stored.sha256.toLowerCase() !== completed.sha256) {
+        await storage.deleteObject(scoped.binding.companyId, stored.objectKey).catch(() => undefined);
+        throw new HttpError(500, "Stored artifact failed integrity verification");
+      }
+
+      const actor = getActorInfo(req);
+      let attachment;
+      try {
+        attachment = await svc.createAttachment({
+          issueId: scoped.issue.id,
+          issueCommentId: null,
+          provider: stored.provider,
+          objectKey: stored.objectKey,
+          contentType: stored.contentType,
+          byteSize: stored.byteSize,
+          sha256: stored.sha256,
+          originalFilename: stored.originalFilename,
+          createdByAgentId: actor.agentId,
+          createdByUserId: null,
+        });
+      } catch (error) {
+        await storage.deleteObject(scoped.binding.companyId, stored.objectKey).catch(() => undefined);
+        throw error;
+      }
+
+      await logActivity(db, {
+        companyId: scoped.binding.companyId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+        agentApiKeyId: actor.agentApiKeyId,
+        action: "issue.attachment_added",
+        entityType: "issue",
+        entityId: scoped.issue.id,
+        details: {
+          attachmentId: attachment.id,
+          originalFilename: attachment.originalFilename,
+          contentType: attachment.contentType,
+          byteSize: attachment.byteSize,
+          transport: "confined_chunked_v1",
+          sha256: attachment.sha256,
+        },
+      });
+      res.status(201).json(withContentPath(attachment));
+    },
+  );
+
+  router.delete(
+    "/companies/:companyId/issues/:issueId/artifact-transfers/:transferId",
+    async (req, res) => {
+      const scoped = await loadConfinedArtifactTransferIssue(req, res);
+      if (!scoped) return;
+      try {
+        await confinedArtifactTransfers.abort(req.params.transferId as string, scoped.binding);
+      } catch (error) {
+        rethrowConfinedArtifactTransferError(error);
+      }
+      res.status(204).end();
+    },
+  );
 
   router.post("/companies/:companyId/issues/:issueId/attachments", async (req, res) => {
     const companyId = req.params.companyId as string;

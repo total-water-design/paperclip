@@ -154,7 +154,15 @@ function createStorageService(body = Buffer.from("test")): TestStorageService {
   };
 }
 
-async function createApp(storage: StorageService, options?: { companyIds?: string[]; source?: string }) {
+async function createApp(
+  storage: StorageService,
+  options?: {
+    companyIds?: string[];
+    source?: string;
+    actor?: Record<string, unknown>;
+    db?: unknown;
+  },
+) {
   const [{ errorHandler }, { issueRoutes }] = await Promise.all([
     vi.importActual<typeof import("../middleware/index.js")>("../middleware/index.js"),
     vi.importActual<typeof import("../routes/issues.js")>("../routes/issues.js"),
@@ -162,7 +170,7 @@ async function createApp(storage: StorageService, options?: { companyIds?: strin
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
-    (req as any).actor = {
+    (req as any).actor = options?.actor ?? {
       type: "board",
       userId: "local-board",
       companyIds: options?.companyIds ?? ["company-1"],
@@ -171,7 +179,7 @@ async function createApp(storage: StorageService, options?: { companyIds?: strin
     };
     next();
   });
-  app.use("/api", issueRoutes({} as any, storage));
+  app.use("/api", issueRoutes((options?.db ?? {}) as any, storage));
   app.use(errorHandler);
   return app;
 }
@@ -457,6 +465,255 @@ describe("issue attachment routes", () => {
     // The deployment cap is the only limit left. The route no longer reads a
     // per-company override, so it never loads the company to size an upload.
     expect(mockCompanyService.getById).not.toHaveBeenCalled();
+  });
+
+  it("publishes exact confined bytes and an attachment-backed work product for the bound run", async () => {
+    const bytes = Buffer.from([0, 255, 10, 13, 128, 1]);
+    const digest = (await import("node:crypto")).createHash("sha256").update(bytes).digest("hex");
+    const issueId = "11111111-1111-4111-8111-111111111111";
+    const runId = "33333333-3333-4333-8333-333333333333";
+    const agentId = "44444444-4444-4444-8444-444444444444";
+    const run = {
+      id: runId,
+      companyId: "company-1",
+      agentCompanyId: "company-1",
+      agentId,
+      status: "running",
+      contextSnapshot: { issueId },
+    };
+    const query: any = {};
+    query.where = vi.fn(async () => [run]);
+    query.innerJoin = vi.fn(() => query);
+    const db = {
+      select: vi.fn(() => ({
+        from: vi.fn(() => query),
+      })),
+    };
+    const storage = createStorageService();
+    storage.putFile = vi.fn(async (input: Parameters<StorageService["putFile"]>[0]) => {
+      storage.__calls.putFile = input;
+      return {
+        provider: "local_disk" as const,
+        objectKey: `${input.namespace}/stored.bin`,
+        contentType: input.contentType,
+        byteSize: input.body.length,
+        sha256: (await import("node:crypto")).createHash("sha256").update(input.body).digest("hex"),
+        originalFilename: input.originalFilename,
+      };
+    });
+    mockIssueService.createAttachment.mockImplementation(async (input: any) => ({
+      ...makeAttachment(input.contentType, input.originalFilename ?? "artifact.bin"),
+      ...input,
+      id: "22222222-2222-4222-8222-222222222222",
+      companyId: "company-1",
+      byteSize: bytes.length,
+      sha256: digest,
+    }));
+    mockIssueService.getAttachmentById.mockImplementation(async () => ({
+      ...makeAttachment("application/x-test", "evidence.bin"),
+      id: "22222222-2222-4222-8222-222222222222",
+      issueId,
+      byteSize: bytes.length,
+      sha256: digest,
+    }));
+    mockWorkProductService.createForIssue.mockResolvedValue({
+      id: "work-product-1",
+      issueId,
+      companyId: "company-1",
+      type: "artifact",
+      provider: "paperclip",
+      title: "Evidence",
+      metadata: null,
+    });
+    const actor = {
+      type: "agent",
+      agentId,
+      companyId: "company-1",
+      runId,
+      source: "agent_jwt",
+      keyScope: null,
+    };
+    const app = await createApp(storage, { actor, db });
+
+    const declaration = await request(app)
+      .post(`/api/companies/company-1/issues/${issueId}/artifact-transfers`)
+      .send({
+        originalFilename: "evidence.bin",
+        contentType: "application/x-test",
+        byteSize: bytes.length,
+        sha256: digest,
+      });
+    expect(declaration.status).toBe(201);
+
+    const chunk = await request(app)
+      .post(
+        `/api/companies/company-1/issues/${issueId}/artifact-transfers/${declaration.body.transferId}/chunks`,
+      )
+      .send({ index: 0, data: bytes.toString("base64") });
+    expect(chunk.status).toBe(200);
+
+    const completed = await request(app)
+      .post(
+        `/api/companies/company-1/issues/${issueId}/artifact-transfers/${declaration.body.transferId}/complete`,
+      )
+      .send({});
+    expect(completed.status).toBe(201);
+    expect(storage.__calls.putFile?.body).toEqual(bytes);
+    expect(storage.__calls.putFile?.contentType).toBe("application/x-test");
+    expect(storage.__calls.putFile?.originalFilename).toBe("evidence.bin");
+    expect(mockIssueService.createAttachment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        issueId,
+        byteSize: bytes.length,
+        sha256: digest,
+        contentType: "application/x-test",
+        originalFilename: "evidence.bin",
+        createdByAgentId: agentId,
+      }),
+    );
+
+    const workProduct = await request(app)
+      .post(`/api/issues/${issueId}/work-products`)
+      .send({
+        type: "artifact",
+        provider: "paperclip",
+        title: "Evidence",
+        createdByRunId: runId,
+        metadata: { attachmentId: completed.body.id },
+      });
+    expect(workProduct.status).toBe(201);
+    expect(mockWorkProductService.createForIssue).toHaveBeenCalledWith(
+      issueId,
+      "company-1",
+      expect.objectContaining({
+        type: "artifact",
+        provider: "paperclip",
+        createdByRunId: runId,
+        metadata: expect.objectContaining({
+          attachmentId: "22222222-2222-4222-8222-222222222222",
+          contentType: "application/x-test",
+          byteSize: bytes.length,
+        }),
+      }),
+    );
+  });
+
+  it("conceals an issue id that belongs to another company", async () => {
+    mockIssueService.getById.mockResolvedValue({
+      id: "11111111-1111-4111-8111-111111111111",
+      companyId: "company-2",
+      projectId: null,
+      parentId: null,
+      status: "todo",
+      assigneeAgentId: null,
+      assigneeUserId: null,
+      identifier: "OTHER-1",
+    });
+    const actor = {
+      type: "agent",
+      agentId: "44444444-4444-4444-8444-444444444444",
+      companyId: "company-1",
+      runId: "33333333-3333-4333-8333-333333333333",
+      source: "agent_jwt",
+    };
+    const app = await createApp(createStorageService(), { actor, db: {} });
+    const res = await request(app)
+      .post("/api/companies/company-1/issues/11111111-1111-4111-8111-111111111111/artifact-transfers")
+      .send({
+        originalFilename: "evidence.bin",
+        contentType: "application/octet-stream",
+        byteSize: 1,
+        sha256: "a".repeat(64),
+      });
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBe("Issue not found");
+  });
+
+  it.each([
+    ["board actor", { type: "board", userId: "local-board", companyIds: ["company-1"], source: "local_implicit" }, {
+      id: "33333333-3333-4333-8333-333333333333",
+      companyId: "company-1",
+      agentId: "44444444-4444-4444-8444-444444444444",
+      status: "running",
+      contextSnapshot: { issueId: "11111111-1111-4111-8111-111111111111" },
+    }],
+    ["wrong company", {
+      type: "agent",
+      agentId: "44444444-4444-4444-8444-444444444444",
+      companyId: "company-2",
+      runId: "33333333-3333-4333-8333-333333333333",
+      source: "agent_jwt",
+    }, {
+      id: "33333333-3333-4333-8333-333333333333",
+      companyId: "company-2",
+      agentId: "44444444-4444-4444-8444-444444444444",
+      status: "running",
+      contextSnapshot: { issueId: "11111111-1111-4111-8111-111111111111" },
+    }],
+    ["missing run", {
+      type: "agent",
+      agentId: "44444444-4444-4444-8444-444444444444",
+      companyId: "company-1",
+      runId: "33333333-3333-4333-8333-333333333333",
+      source: "agent_jwt",
+    }, null],
+    ["wrong agent", {
+      type: "agent",
+      agentId: "44444444-4444-4444-8444-444444444444",
+      companyId: "company-1",
+      runId: "33333333-3333-4333-8333-333333333333",
+      source: "agent_jwt",
+    }, {
+      id: "33333333-3333-4333-8333-333333333333",
+      companyId: "company-1",
+      agentId: "55555555-5555-4555-8555-555555555555",
+      status: "running",
+      contextSnapshot: { issueId: "11111111-1111-4111-8111-111111111111" },
+    }],
+    ["wrong issue", {
+      type: "agent",
+      agentId: "44444444-4444-4444-8444-444444444444",
+      companyId: "company-1",
+      runId: "33333333-3333-4333-8333-333333333333",
+      source: "agent_jwt",
+    }, {
+      id: "33333333-3333-4333-8333-333333333333",
+      companyId: "company-1",
+      agentId: "44444444-4444-4444-8444-444444444444",
+      status: "running",
+      contextSnapshot: { issueId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" },
+    }],
+    ["expired run", {
+      type: "agent",
+      agentId: "44444444-4444-4444-8444-444444444444",
+      companyId: "company-1",
+      runId: "33333333-3333-4333-8333-333333333333",
+      source: "agent_jwt",
+    }, {
+      id: "33333333-3333-4333-8333-333333333333",
+      companyId: "company-1",
+      agentId: "44444444-4444-4444-8444-444444444444",
+      status: "succeeded",
+      contextSnapshot: { issueId: "11111111-1111-4111-8111-111111111111" },
+    }],
+  ])("rejects confined transfer declaration for %s", async (_label, actor, run) => {
+    const db = {
+      select: vi.fn(() => ({
+        from: vi.fn(() => ({
+          where: vi.fn(async () => run ? [run] : []),
+        })),
+      })),
+    };
+    const app = await createApp(createStorageService(), { actor, db });
+    const res = await request(app)
+      .post("/api/companies/company-1/issues/11111111-1111-4111-8111-111111111111/artifact-transfers")
+      .send({
+        originalFilename: "evidence.bin",
+        contentType: "application/octet-stream",
+        byteSize: 1,
+        sha256: "a".repeat(64),
+      });
+    expect(res.status).toBe(403);
   });
 
   it("serves html attachments as downloads with nosniff", async () => {

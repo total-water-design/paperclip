@@ -2588,3 +2588,13 @@ export {
   isPaperclipDevRunnerCommand,
   rewriteUrlHostToLoopback,
 } from "./runtime-exposure/loopback-bind.js";
+
+export {
+  CONFINED_ARTIFACT_TRANSFER_CHUNK_BYTES,
+  CONFINED_ARTIFACT_TRANSFER_MAX_BASE64_CHARS,
+  CONFINED_ARTIFACT_TRANSFER_TTL_MS,
+  appendConfinedArtifactChunkSchema,
+  beginConfinedArtifactTransferSchema,
+  type AppendConfinedArtifactChunkRequest,
+  type BeginConfinedArtifactTransferRequest,
+} from "./confined-artifact-transfer.js";

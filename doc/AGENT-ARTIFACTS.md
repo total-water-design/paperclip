@@ -22,10 +22,17 @@ environment:
 - `PAPERCLIP_TASK_ID`
 - `PAPERCLIP_RUN_ID`
 
-It uploads the file to
-`POST /api/companies/{companyId}/issues/{issueId}/attachments` and creates an
-artifact work product on `POST /api/issues/{issueId}/work-products` by default.
-The command prints issue-safe markdown links for the final task comment.
+Outside a confined runtime, it uploads the file to
+`POST /api/companies/{companyId}/issues/{issueId}/attachments`. When
+`PAPERCLIP_API_BRIDGE_MODE` is set by a confined `local_proxy_v1` run, it
+selects the JSON-only `confined_chunked_v1` declaration/chunk/complete routes
+instead. The confined path sends at most 128 KiB decoded per request and the
+server verifies declared byte count and SHA-256 before creating the attachment.
+The ordinary multipart route remains outside the callback-bridge allowlist.
+
+Both paths create an artifact work product on
+`POST /api/issues/{issueId}/work-products` by default. The command prints
+issue-safe markdown links for the final task comment.
 
 ## Uploaded Artifacts vs Workspace Files
 
@@ -115,7 +122,7 @@ skills/paperclip/scripts/paperclip-upload-artifact.sh render.bin \
 
 ## Direct API Pattern
 
-If the helper is unavailable, use the same API shape:
+Outside a confined run, if the helper is unavailable, use the multipart API shape below. Confined runs must use the installed helper because the multipart route is intentionally unavailable:
 
 ```sh
 curl -sS -X POST \

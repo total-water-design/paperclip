@@ -12,6 +12,8 @@ scripts/paperclip-upload-artifact.sh path/to/output.webm \
 
 The helper uses `PAPERCLIP_API_URL`, `PAPERCLIP_API_KEY`, `PAPERCLIP_COMPANY_ID`, `PAPERCLIP_TASK_ID`, and `PAPERCLIP_RUN_ID`. It uploads the file as an issue attachment, creates an attachment-backed artifact work product by default, and prints issue-safe markdown links for your final comment.
 
+When `PAPERCLIP_API_BRIDGE_MODE` is set (a confined `local_proxy_v1` run), the helper automatically uses the supported `confined_chunked_v1` path. It declares the exact byte count and SHA-256, sends ordered base64 JSON chunks of at most 128 KiB decoded, and asks the server to verify and publish the attachment. Do not call the multipart attachment route from a confined run; that route is intentionally absent from the callback-bridge allowlist.
+
 ## Workspace-Only File References
 
 Use a workspace-only reference only when the file should stay in the project or
@@ -60,7 +62,7 @@ curl -sS -X POST \
   --data-binary @workspace-file-work-product.json
 ```
 
-If the helper is unavailable, use the Paperclip API directly:
+Outside a confined run, if the helper is unavailable, use the multipart Paperclip API directly. Confined runs must use the installed helper because the multipart route is intentionally unavailable:
 
 ```bash
 curl -sS -X POST \

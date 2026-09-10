@@ -1272,6 +1272,11 @@ Terminal states: `done`, `cancelled`
 | DELETE | `/api/issues/:issueId/documents/:key` | Delete document (board-only)                                                         |
 | GET    | `/api/issues/:issueId/approvals`   | List approvals linked to issue                                                           |
 | POST   | `/api/issues/:issueId/approvals`   | Link approval to issue                                                                   |
+| POST   | `/api/companies/:companyId/issues/:issueId/attachments` | Multipart attachment upload (host path; not callback-bridge allowlisted) |
+| POST   | `/api/companies/:companyId/issues/:issueId/artifact-transfers` | Declare a run-bound confined transfer with filename, content type, exact bytes, and SHA-256 |
+| POST   | `/api/companies/:companyId/issues/:issueId/artifact-transfers/:transferId/chunks` | Append the next ordered base64 JSON chunk |
+| POST   | `/api/companies/:companyId/issues/:issueId/artifact-transfers/:transferId/complete` | Verify and publish a complete confined transfer |
+| DELETE | `/api/companies/:companyId/issues/:issueId/artifact-transfers/:transferId` | Abort and clean up a confined transfer |
 | DELETE | `/api/issues/:issueId/approvals/:approvalId` | Unlink approval from issue                                                     |
 | GET    | `/api/issues/:issueId/heartbeat-context` | Compact issue context including `currentExecutionWorkspace` when one is linked |
 | GET    | `/api/execution-workspaces/:workspaceId` | Execution workspace detail including runtime services and service URLs |

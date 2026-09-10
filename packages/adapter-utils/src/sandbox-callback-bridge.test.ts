@@ -10,6 +10,7 @@ import { getActiveStepContext, measureStartupStep } from "./acpx-engine/startup-
 import { prepareCommandManagedRuntime } from "./command-managed-runtime.js";
 import {
   authorizeSandboxCallbackBridgeRequestWithRoutes,
+  DEFAULT_SANDBOX_CALLBACK_BRIDGE_MAX_BODY_BYTES,
   createCommandManagedSandboxCallbackBridgeQueueClient,
   createFileSystemSandboxCallbackBridgeQueueClient,
   createSandboxCallbackBridgeAsset,
@@ -1299,6 +1300,17 @@ describe("sandbox callback bridge", () => {
     await expect(readFile(remotePath, "utf8")).rejects.toThrow();
   });
 
+  it("keeps a maximum confined artifact chunk inside the callback body limit", () => {
+    const body = JSON.stringify({
+      index: 0,
+      // Keep this value synchronized with the shared confined transport contract.
+      data: Buffer.alloc(128 * 1024).toString("base64"),
+    });
+    expect(Buffer.byteLength(body, "utf8")).toBeLessThan(
+      DEFAULT_SANDBOX_CALLBACK_BRIDGE_MAX_BODY_BYTES,
+    );
+  });
+
   it("permits the documented heartbeat surface and denies unrelated routes", () => {
     const allowed: Array<{ method: string; path: string }> = [
       { method: "GET", path: "/api/agents/me" },
@@ -1348,6 +1360,19 @@ describe("sandbox callback bridge", () => {
       { method: "GET", path: "/api/issues/issue-1/work-products" },
       { method: "POST", path: "/api/issues/issue-1/work-products" },
       { method: "PATCH", path: "/api/work-products/wp-1" },
+      { method: "POST", path: "/api/companies/co-1/issues/issue-1/artifact-transfers" },
+      {
+        method: "POST",
+        path: "/api/companies/co-1/issues/issue-1/artifact-transfers/transfer-1/chunks",
+      },
+      {
+        method: "POST",
+        path: "/api/companies/co-1/issues/issue-1/artifact-transfers/transfer-1/complete",
+      },
+      {
+        method: "DELETE",
+        path: "/api/companies/co-1/issues/issue-1/artifact-transfers/transfer-1",
+      },
       { method: "GET", path: "/api/issues/issue-1/interactions" },
       { method: "GET", path: "/api/issues/issue-1/interactions/inter-1" },
       { method: "POST", path: "/api/issues/issue-1/interactions" },
@@ -1401,6 +1426,16 @@ describe("sandbox callback bridge", () => {
       { method: "DELETE", path: "/api/issues/issue-1/documents/plan" },
       { method: "DELETE", path: "/api/issues/issue-1/approvals/ap-1" },
       { method: "DELETE", path: "/api/work-products/wp-1" },
+      { method: "POST", path: "/api/companies/co-1/issues/issue-1/attachments" },
+      { method: "GET", path: "/api/companies/co-1/issues/issue-1/artifact-transfers" },
+      {
+        method: "POST",
+        path: "/api/companies/co-1/issues/issue-1/artifact-transfers/transfer-1/chunks/extra",
+      },
+      {
+        method: "POST",
+        path: "/api/companies/co-1/issues/issue-1/artifact-transfers/transfer-1/complete/extra",
+      },
       { method: "POST", path: "/api/approvals/ap-1/approve" },
       { method: "POST", path: "/api/approvals/ap-1/reject" },
       { method: "POST", path: "/api/companies/co-1/logo" },

@@ -144,6 +144,13 @@ export const DEFAULT_SANDBOX_CALLBACK_BRIDGE_ROUTE_ALLOWLIST: readonly SandboxCa
   { method: "POST", path: /^\/api\/issues\/[^/]+\/work-products$/ },
   { method: "PATCH", path: /^\/api\/work-products\/[^/]+$/ },
 
+  // Confined artifact upload: JSON-only, bounded chunks. The ordinary
+  // multipart attachment route remains outside the sandbox bridge.
+  { method: "POST", path: /^\/api\/companies\/[^/]+\/issues\/[^/]+\/artifact-transfers$/ },
+  { method: "POST", path: /^\/api\/companies\/[^/]+\/issues\/[^/]+\/artifact-transfers\/[^/]+\/chunks$/ },
+  { method: "POST", path: /^\/api\/companies\/[^/]+\/issues\/[^/]+\/artifact-transfers\/[^/]+\/complete$/ },
+  { method: "DELETE", path: /^\/api\/companies\/[^/]+\/issues\/[^/]+\/artifact-transfers\/[^/]+$/ },
+
   // Issue-thread interactions (create, resolve, verdict, and withdraw)
   { method: "GET", path: /^\/api\/issues\/[^/]+\/interactions(?:\/[^/]+)?$/ },
   { method: "POST", path: /^\/api\/issues\/[^/]+\/interactions$/ },
