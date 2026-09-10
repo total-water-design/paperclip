@@ -159,6 +159,38 @@ describe("Board approval governance", () => {
     expect(different.openDeduplicationKey).not.toBe(first.openDeduplicationKey);
   });
 
+  it("fails closed when a generic structured action masks different action-bearing text", () => {
+    const first = boardApprovalRequestIdentity({
+      type: "request_board_approval",
+      issueIds: ["issue-1"],
+      payload: {
+        action: "deploy",
+        title: "Deploy service A",
+        recommendedAction: "Deploy digest aaa to production",
+      },
+    });
+    const differentTitle = boardApprovalRequestIdentity({
+      type: "request_board_approval",
+      issueIds: ["issue-1"],
+      payload: {
+        action: "deploy",
+        title: "Deploy service B",
+        recommendedAction: "Deploy digest aaa to production",
+      },
+    });
+    const differentRecommendation = boardApprovalRequestIdentity({
+      type: "request_board_approval",
+      issueIds: ["issue-1"],
+      payload: {
+        action: "deploy",
+        title: "Deploy service A",
+        recommendedAction: "Deploy digest bbb to production",
+      },
+    });
+    expect(differentTitle.openDeduplicationKey).not.toBe(first.openDeduplicationKey);
+    expect(differentRecommendation.openDeduplicationKey).not.toBe(first.openDeduplicationKey);
+  });
+
   it("uses the named operational records as immutable identity fixtures", () => {
     const duplicateA = boardApprovalRequestIdentity({
       type: "request_board_approval",
@@ -166,6 +198,7 @@ describe("Board approval governance", () => {
       payload: {
         title: "Authorize bounded read-only staged-host topology collection",
         summary: "fixture 544365d1-e653-4c55-a290-fca919ffbf1f",
+        recommendedAction: "Approve bounded read-only collection for diagnosis.",
       },
     });
     const duplicateB = boardApprovalRequestIdentity({
@@ -174,6 +207,7 @@ describe("Board approval governance", () => {
       payload: {
         title: "Authorize bounded read-only staged-host topology collection",
         summary: "fixture d93fefee-488a-4d93-a43a-7199d88d0ab9 with reworded support",
+        recommendedAction: "Approve this bounded collection for exact remediation diagnosis.",
       },
     });
     const stale = boardApprovalRequestIdentity({

@@ -81,11 +81,9 @@ const STRUCTURED_IDENTITY_KEYS = [
 // reusing an older approval. Only presentation text and per-attempt transport
 // identifiers are non-governing.
 const NON_GOVERNING_OPEN_KEYS = new Set([
-  "title",
   "summary",
   "description",
   "details",
-  "recommendedAction",
   "justification",
   "notes",
   "risks",
@@ -242,9 +240,22 @@ export function openBoardApprovalDeduplicationKey(input: {
   payload: Record<string, unknown>;
   issueIds: string[];
 }): string {
+  const hasStructuredAction = [
+    input.payload.action,
+    input.payload.governedAction,
+    input.payload.operation,
+  ].some((value) => normalizedText(value).length > 0);
   const effectiveScope = Object.fromEntries(
     Object.entries(input.payload)
-      .filter(([key, value]) => !NON_GOVERNING_OPEN_KEYS.has(key) && value !== undefined)
+      .filter(([key, value]) => {
+        if (value === undefined || NON_GOVERNING_OPEN_KEYS.has(key)) return false;
+        // A title or recommendation is the legacy governed-action source when
+        // no structured action exists. When a caller supplies a structured
+        // action, retain both fields as fail-closed action qualifiers so a
+        // generic action cannot hide a materially different request.
+        if (!hasStructuredAction && (key === "title" || key === "recommendedAction")) return false;
+        return true;
+      })
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([key, value]) => [key, normalizedStableValue(value)]),
   );
