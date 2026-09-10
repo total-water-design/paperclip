@@ -82,7 +82,8 @@ describeEmbeddedPostgres("approval service semantic reuse", () => {
       },
       issueIds: [issue.id],
       linkedByAgentId: agent.id,
-      fingerprint: identity.fingerprint,
+      openDeduplicationKey: identity.openDeduplicationKey,
+      authorizationFingerprint: identity.authorizationFingerprint,
       reuseApprovedAuthorization: identity.exactIdentityEstablished,
     };
 
@@ -134,7 +135,8 @@ describeEmbeddedPostgres("approval service semantic reuse", () => {
       },
       issueIds: [issue.id],
       linkedByAgentId: agent.id,
-      fingerprint: identity.fingerprint,
+      openDeduplicationKey: identity.openDeduplicationKey,
+      authorizationFingerprint: identity.authorizationFingerprint,
       reuseApprovedAuthorization: identity.exactIdentityEstablished,
     });
 
@@ -180,7 +182,8 @@ describeEmbeddedPostgres("approval service semantic reuse", () => {
         },
         issueIds: [issue.id],
         linkedByAgentId: agent.id,
-        fingerprint: identity.fingerprint,
+        openDeduplicationKey: identity.openDeduplicationKey,
+        authorizationFingerprint: identity.authorizationFingerprint,
         reuseApprovedAuthorization: identity.exactIdentityEstablished,
       });
     };
@@ -199,5 +202,151 @@ describeEmbeddedPostgres("approval service semantic reuse", () => {
     });
     expect(differentSha.created).toBe(true);
     expect(differentSha.approval.id).not.toBe(approved.id);
+  });
+
+  it("enforces one keyed open Board approval at the database boundary", async () => {
+    const { company, agent } = await seed();
+    const key = "a".repeat(64);
+    await db.insert(approvals).values({
+      companyId: company.id,
+      type: "request_board_approval",
+      requestedByAgentId: agent.id,
+      status: "pending",
+      payload: { title: "Authorize production deployment" },
+      openDeduplicationKey: key,
+    });
+    await expect(db.insert(approvals).values({
+      companyId: company.id,
+      type: "request_board_approval",
+      requestedByAgentId: agent.id,
+      status: "revision_requested",
+      payload: { title: "Authorize production deployment again" },
+      openDeduplicationKey: key,
+    })).rejects.toThrow();
+  });
+
+  it("returns the oldest canonical legacy record for the named duplicate pair", async () => {
+    const { company, agent, issue } = await seed();
+    const payloads = [
+      {
+        id: "544365d1-e653-4c55-a290-fca919ffbf1f",
+        title: "Authorize bounded read-only staged-host topology collection",
+        summary: "Original operational fixture wording",
+      },
+      {
+        id: "d93fefee-488a-4d93-a43a-7199d88d0ab9",
+        title: "Authorize bounded read-only staged-host topology collection",
+        summary: "Reworded operational fixture support",
+      },
+    ];
+    for (const [index, payload] of payloads.entries()) {
+      const row = await db.insert(approvals).values({
+        id: payload.id,
+        companyId: company.id,
+        type: "request_board_approval",
+        requestedByAgentId: agent.id,
+        status: "pending",
+        payload,
+        createdAt: new Date(Date.UTC(2026, 0, index + 1)),
+      }).returning().then((rows) => rows[0]!);
+      await db.insert(issueApprovals).values({
+        companyId: company.id,
+        issueId: issue.id,
+        approvalId: row.id,
+        linkedByAgentId: agent.id,
+      });
+    }
+    const payload = {
+      title: "Authorize bounded read-only staged-host topology collection",
+      summary: "A third wording must not create a third open record",
+    };
+    const identity = boardApprovalRequestIdentity({
+      type: "request_board_approval",
+      payload,
+      issueIds: [issue.id],
+    });
+    const result = await approvalService(db).createOrReuseBoardApproval({
+      companyId: company.id,
+      data: { type: "request_board_approval", requestedByAgentId: agent.id, status: "pending", payload },
+      issueIds: [issue.id],
+      linkedByAgentId: agent.id,
+      openDeduplicationKey: identity.openDeduplicationKey,
+      authorizationFingerprint: identity.authorizationFingerprint,
+      reuseApprovedAuthorization: false,
+    });
+    expect(result).toMatchObject({ created: false, approval: { id: payloads[0]!.id } });
+    expect(await db.select().from(approvals)).toHaveLength(2);
+  });
+
+  it("cancels the named stale fixture once without writing Board decision fields", async () => {
+    const { company, agent } = await seed();
+    const stale = await db.insert(approvals).values({
+      id: "eb43b4e8-65c0-4cc8-b2c6-917ccf71c1fc",
+      companyId: company.id,
+      type: "request_board_approval",
+      requestedByAgentId: agent.id,
+      status: "revision_requested",
+      payload: { title: "Authorize bounded TOT-1912 smoke probes" },
+      decisionNote: "Board requested revision",
+      decidedByUserId: "board-user",
+      decidedAt: new Date("2026-01-01T00:00:00Z"),
+    }).returning().then((rows) => rows[0]!);
+    const results = await Promise.all([
+      approvalService(db).cancel(stale.id, "Stale request", { agentId: agent.id }),
+      approvalService(db).cancel(stale.id, "Stale request", { agentId: agent.id }),
+    ]);
+    expect(results.filter((result) => result.applied)).toHaveLength(1);
+    expect(results.every((result) => result.approval.status === "cancelled")).toBe(true);
+    const current = await db.select().from(approvals).then((rows) => rows[0]!);
+    expect(current).toMatchObject({
+      cancellationReason: "Stale request",
+      cancelledByAgentId: agent.id,
+      decisionNote: "Board requested revision",
+      decidedByUserId: "board-user",
+    });
+    expect(current.cancelledAt).toBeInstanceOf(Date);
+    expect(current.decidedAt?.toISOString()).toBe("2026-01-01T00:00:00.000Z");
+  });
+
+  it("does not let cancellation override an approved decision", async () => {
+    const { company, agent } = await seed();
+    const approved = await db.insert(approvals).values({
+      companyId: company.id,
+      type: "request_board_approval",
+      requestedByAgentId: agent.id,
+      status: "approved",
+      payload: {},
+    }).returning().then((rows) => rows[0]!);
+    await expect(approvalService(db).cancel(approved.id, "Too late", { agentId: agent.id }))
+      .rejects.toThrow("Only pending or revision requested approvals can be cancelled");
+  });
+
+  it("rejects resubmission that would collide with a canonical open request", async () => {
+    const { company, agent, issue } = await seed();
+    const payload = { title: "Authorize production deployment", environment: "alpha" };
+    const rows = await db.insert(approvals).values([
+      {
+        companyId: company.id,
+        type: "request_board_approval",
+        requestedByAgentId: agent.id,
+        status: "revision_requested",
+        payload: { title: "Needs revision" },
+      },
+      {
+        companyId: company.id,
+        type: "request_board_approval",
+        requestedByAgentId: agent.id,
+        status: "pending",
+        payload,
+      },
+    ]).returning();
+    await db.insert(issueApprovals).values(rows.map((approval) => ({
+      companyId: company.id,
+      issueId: issue.id,
+      approvalId: approval.id,
+      linkedByAgentId: agent.id,
+    })));
+    await expect(approvalService(db).resubmit(rows[0]!.id, payload))
+      .rejects.toThrow(`Equivalent open Board approval ${rows[1]!.id} already exists`);
   });
 });
