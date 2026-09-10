@@ -25,6 +25,10 @@ const mockIssueApprovalService = vi.hoisted(() => ({
   linkManyForApproval: vi.fn(),
 }));
 
+const mockIssueService = vi.hoisted(() => ({
+  listReviewAttention: vi.fn(),
+}));
+
 const mockSecretService = vi.hoisted(() => ({
   normalizeHireApprovalPayloadForPersistence: vi.fn(),
 }));
@@ -43,6 +47,7 @@ function registerModuleMocks() {
     logActivity: mockLogActivity,
     secretService: () => mockSecretService,
   }));
+  vi.doMock("../services/issues.js", () => ({ issueService: () => mockIssueService }));
 }
 
 async function createApp(actorOverrides: Record<string, unknown> = {}) {
@@ -121,6 +126,7 @@ describe("approval routes idempotent retries", () => {
     vi.doUnmock("../services/index.js");
     vi.doUnmock("../routes/approvals.js");
     vi.doUnmock("../routes/authz.js");
+    vi.doUnmock("../services/issues.js");
     vi.doUnmock("../middleware/index.js");
     registerModuleMocks();
     vi.clearAllMocks();
@@ -138,6 +144,7 @@ describe("approval routes idempotent retries", () => {
     mockHeartbeatService.wakeup.mockReset();
     mockIssueApprovalService.listIssuesForApproval.mockReset();
     mockIssueApprovalService.linkManyForApproval.mockReset();
+    mockIssueService.listReviewAttention.mockReset();
     mockSecretService.normalizeHireApprovalPayloadForPersistence.mockReset();
     mockLogActivity.mockReset();
     mockAccessService.decide.mockReset();
@@ -149,6 +156,9 @@ describe("approval routes idempotent retries", () => {
     });
     mockHeartbeatService.wakeup.mockResolvedValue({ id: "wake-1" });
     mockIssueApprovalService.listIssuesForApproval.mockResolvedValue([{ id: "issue-1" }]);
+    mockIssueService.listReviewAttention.mockResolvedValue(new Map([
+      ["issue-1", { state: "stalled" }],
+    ]));
     mockLogActivity.mockResolvedValue(undefined);
   });
 
@@ -371,6 +381,8 @@ describe("approval routes idempotent retries", () => {
       companyId: "company-1",
       issueIds: ["00000000-0000-0000-0000-000000000001"],
       linkedByAgentId: "agent-1",
+      openDeduplicationKey: expect.stringMatching(/^[0-9a-f]{64}$/),
+      authorizationFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/),
       reuseApprovedAuthorization: false,
     }));
     expect(mockIssueApprovalService.linkManyForApproval).not.toHaveBeenCalled();
@@ -504,7 +516,9 @@ describe("approval routes idempotent retries", () => {
     expect(mockApprovalService.createOrReuseBoardApproval).not.toHaveBeenCalled();
   });
 
-  it("lets COS cancel a manager's redundant pending approval", async () => {
+  it.each(["ceo", "chief of staff", "chief-of-staff", "cos"])(
+    "lets COS role %s cancel a manager's redundant pending approval",
+    async (agentRole) => {
     const pending = {
       id: "approval-9",
       companyId: "company-1",
@@ -514,22 +528,68 @@ describe("approval routes idempotent retries", () => {
       requestedByAgentId: "manager-1",
     };
     mockApprovalService.getById.mockResolvedValue(pending);
-    mockApprovalService.cancel.mockResolvedValue({
+    const cancelled = {
       ...pending,
       status: "cancelled",
-      decisionNote: "Routine action delegated to manager/COS.",
+      cancellationReason: "Routine action delegated to manager/COS.",
+      cancelledByAgentId: "agent-1",
+      cancelledAt: new Date("2026-04-06T01:00:00.000Z"),
+    };
+    mockApprovalService.cancel.mockResolvedValue({
+      approval: cancelled,
+      applied: true,
     });
+    mockIssueApprovalService.listIssuesForApproval.mockResolvedValue([{
+      id: "issue-1",
+      assigneeAgentId: "manager-1",
+    }]);
 
-    const res = await request(await createAgentApp())
+    const res = await request(await createAgentApp({ contextSnapshot: { agentRole } }))
       .post("/api/approvals/approval-9/cancel")
       .send({ decisionNote: "Routine action delegated to manager/COS." });
 
     expect(res.status, JSON.stringify(res.body)).toBe(200);
-    expect(res.body).toMatchObject({ id: "approval-9", status: "cancelled" });
+    expect(res.body).toMatchObject({
+      id: "approval-9",
+      status: "cancelled",
+      cancellationApplied: true,
+    });
     expect(mockApprovalService.cancel).toHaveBeenCalledWith(
       "approval-9",
       "Routine action delegated to manager/COS.",
+      { agentId: "agent-1", userId: null },
     );
+    expect(mockLogActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      actorType: "agent",
+      action: "approval.cancelled",
+      details: expect.objectContaining({ grantsAuthorization: false }),
+    }));
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith("manager-1", expect.objectContaining({
+      reason: "approval_cancelled",
+      idempotencyKey: "approval-review-path:approval-9:issue-1:cancelled",
+      payload: expect.objectContaining({ grantsAuthorization: false }),
+    }));
+  });
+
+  it("treats repeated requester cancellation as an audited-side-effect no-op", async () => {
+    const cancelled = {
+      id: "approval-9",
+      companyId: "company-1",
+      type: "request_board_approval",
+      status: "cancelled",
+      payload: {},
+      requestedByAgentId: "agent-1",
+      cancellationReason: "Stale request",
+    };
+    mockApprovalService.getById.mockResolvedValue(cancelled);
+    mockApprovalService.cancel.mockResolvedValue({ approval: cancelled, applied: false });
+    const res = await request(await createAgentApp({ contextSnapshot: { agentRole: "manager" } }))
+      .post("/api/approvals/approval-9/cancel")
+      .send({ decisionNote: "Stale request" });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.cancellationApplied).toBe(false);
+    expect(mockLogActivity).not.toHaveBeenCalled();
+    expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
   });
 
   it("prevents a non-requester manager from cancelling another manager's approval", async () => {

@@ -76,6 +76,23 @@ const STRUCTURED_IDENTITY_KEYS = [
   "artifactSha256",
 ] as const;
 
+const OPEN_SCOPE_KEYS = [
+  "scope",
+  "target",
+  "environment",
+  "resource",
+  "resources",
+  "repository",
+  "ref",
+  "sha",
+  "candidateSha",
+  "headSha",
+  "commitSha",
+  "artifactDigest",
+  "artifactSha256",
+  "argumentsHash",
+] as const;
+
 function normalizedText(value: unknown): string {
   return typeof value === "string"
     ? value.trim().toLowerCase().replace(/[^a-z0-9:_./-]+/g, " ").replace(/\s+/g, " ")
@@ -90,6 +107,32 @@ function stableValue(value: unknown): unknown {
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([key, child]) => [key, stableValue(child)]),
   );
+}
+
+function normalizedStableValue(value: unknown): unknown {
+  if (typeof value === "string") return normalizedText(value);
+  if (Array.isArray(value)) {
+    return value
+      .map(normalizedStableValue)
+      .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+  }
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, child]) => [key, normalizedStableValue(child)]),
+  );
+}
+
+function normalizedGovernedAction(payload: Record<string, unknown>): string {
+  const value = [
+    payload.action,
+    payload.governedAction,
+    payload.operation,
+    payload.title,
+    payload.recommendedAction,
+  ].find((candidate) => normalizedText(candidate).length > 0);
+  return normalizedText(value).replace(/^(?:approve|authorize|request|allow|confirm)(?: the)?\s+/, "");
 }
 
 function payloadText(payload: Record<string, unknown>): string {
@@ -150,6 +193,7 @@ export function boardApprovalRequestIdentity(input: {
   payload: Record<string, unknown>;
   issueIds: string[];
 }) {
+  const openDeduplicationKey = openBoardApprovalDeduplicationKey(input);
   const explicitIdentity = Object.fromEntries(
     EXACT_IDENTITY_KEYS
       .filter((key) => input.payload[key] !== undefined)
@@ -179,16 +223,35 @@ export function boardApprovalRequestIdentity(input: {
     ? { structuredIdentity }
     : { explicitIdentity, structuredIdentity, digests };
   const canonical = JSON.stringify(stableValue({
-    version: 1,
+    version: 2,
     type: input.type,
-    title: normalizedText(input.payload.title),
-    recommendedAction: normalizedText(input.payload.recommendedAction),
     issueIds: Array.from(new Set(input.issueIds)).sort(),
     ...identityPayload,
   }));
 
   return {
-    fingerprint: createHash("sha256").update(canonical).digest("hex"),
+    openDeduplicationKey,
+    authorizationFingerprint: createHash("sha256").update(canonical).digest("hex"),
     exactIdentityEstablished,
   };
+}
+
+export function openBoardApprovalDeduplicationKey(input: {
+  type: string;
+  payload: Record<string, unknown>;
+  issueIds: string[];
+}): string {
+  const effectiveScope = Object.fromEntries(
+    OPEN_SCOPE_KEYS
+      .filter((key) => input.payload[key] !== undefined)
+      .map((key) => [key, normalizedStableValue(input.payload[key])]),
+  );
+  const canonical = JSON.stringify(stableValue({
+    version: 1,
+    type: input.type,
+    issueIds: Array.from(new Set(input.issueIds)).sort(),
+    governedAction: normalizedGovernedAction(input.payload),
+    effectiveScope,
+  }));
+  return createHash("sha256").update(canonical).digest("hex");
 }

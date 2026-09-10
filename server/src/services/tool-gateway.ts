@@ -7,7 +7,6 @@ import {
   approvals,
   documents,
   heartbeatRuns,
-  issueApprovals,
   issueDocuments,
   issueThreadInteractions,
   issues,
@@ -57,6 +56,8 @@ import { mcpHttpRequestHeaders, parseMcpHttpResponseBody } from "./mcp-http.js";
 import { assertPublicRemoteHttpEndpoint, parseRemoteHttpEndpoint } from "./remote-http-endpoint-guard.js";
 import { toolAccessPolicyService } from "./tool-access-policy.js";
 import { issueThreadInteractionService } from "./issue-thread-interactions.js";
+import { approvalService } from "./approvals.js";
+import { boardApprovalRequestIdentity } from "./approval-governance.js";
 import {
   createToolRuntimeSupervisor,
   ToolRuntimeSupervisorError,
@@ -773,6 +774,7 @@ export function createToolGatewayService(
   });
   const pluginToolDispatcher = options.pluginToolDispatcher;
   const interactions = issueThreadInteractionService(db);
+  const approvalSvc = approvalService(db);
   const policyService = toolAccessPolicyService(db);
   const secrets = secretService(db);
   const protocolLimits = mcpGatewayProtocolLimits(options.mcpGatewayProtocolLimits);
@@ -1618,39 +1620,41 @@ export function createToolGatewayService(
 
     let formalApprovalId: string | null = null;
     if (toolRequiresFormalApproval(input.tool)) {
-      const [approval] = await db
-        .insert(approvals)
-        .values({
-          companyId: input.session.companyId,
+      const payload = {
+        title: `Approve high-risk tool action: ${input.tool.name}`,
+        summary: `${input.tool.name} is classified as ${input.tool.risk} and requires formal board approval before execution.`,
+        recommendedAction: "Approve only if the reviewed arguments match the intended operation.",
+        action: `execute tool ${input.tool.name}`,
+        risks: [
+          "The tool may perform irreversible or externally visible side effects.",
+          "Execution will use the stored reviewed arguments exactly once.",
+        ],
+        source: "tool_gateway",
+        invocationId: input.invocation.id,
+        actionRequestId: actionRequest.id,
+        tool: input.tool.name,
+        risk: input.tool.risk,
+        argumentsHash: canonicalArgumentsHash,
+      };
+      const identity = boardApprovalRequestIdentity({
+        type: "request_board_approval",
+        payload,
+        issueIds: [input.session.issueId],
+      });
+      const result = await approvalSvc.createOrReuseBoardApproval({
+        companyId: input.session.companyId,
+        data: {
           type: "request_board_approval",
           requestedByAgentId: input.session.agentId,
-          payload: {
-            title: `Approve high-risk tool action: ${input.tool.name}`,
-            summary: `${input.tool.name} is classified as ${input.tool.risk} and requires formal board approval before execution.`,
-            recommendedAction: "Approve only if the reviewed arguments match the intended operation.",
-            risks: [
-              "The tool may perform irreversible or externally visible side effects.",
-              "Execution will use the stored reviewed arguments exactly once.",
-            ],
-            source: "tool_gateway",
-            invocationId: input.invocation.id,
-            actionRequestId: actionRequest.id,
-            tool: input.tool.name,
-            risk: input.tool.risk,
-            argumentsHash: canonicalArgumentsHash,
-          },
-        })
-        .returning();
-      formalApprovalId = approval.id;
-      await db
-        .insert(issueApprovals)
-        .values({
-          companyId: input.session.companyId,
-          issueId: input.session.issueId,
-          approvalId: approval.id,
-          linkedByAgentId: input.session.agentId,
-        })
-        .onConflictDoNothing();
+          payload,
+        },
+        issueIds: [input.session.issueId],
+        linkedByAgentId: input.session.agentId,
+        openDeduplicationKey: identity.openDeduplicationKey,
+        authorizationFingerprint: identity.authorizationFingerprint,
+        reuseApprovedAuthorization: false,
+      });
+      formalApprovalId = result.approval.id;
     }
 
     const interaction = await interactions.create(
