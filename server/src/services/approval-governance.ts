@@ -76,22 +76,23 @@ const STRUCTURED_IDENTITY_KEYS = [
   "artifactSha256",
 ] as const;
 
-const OPEN_SCOPE_KEYS = [
-  "scope",
-  "target",
-  "environment",
-  "resource",
-  "resources",
-  "repository",
-  "ref",
-  "sha",
-  "candidateSha",
-  "headSha",
-  "commitSha",
-  "artifactDigest",
-  "artifactSha256",
-  "argumentsHash",
-] as const;
+// The payload contract is open-ended. Preserve unknown fields in the effective
+// scope so a new authorization-relevant field fails closed instead of silently
+// reusing an older approval. Only presentation text and per-attempt transport
+// identifiers are non-governing.
+const NON_GOVERNING_OPEN_KEYS = new Set([
+  "title",
+  "summary",
+  "description",
+  "details",
+  "recommendedAction",
+  "justification",
+  "notes",
+  "risks",
+  "source",
+  "invocationId",
+  "actionRequestId",
+]);
 
 function normalizedText(value: unknown): string {
   return typeof value === "string"
@@ -242,9 +243,10 @@ export function openBoardApprovalDeduplicationKey(input: {
   issueIds: string[];
 }): string {
   const effectiveScope = Object.fromEntries(
-    OPEN_SCOPE_KEYS
-      .filter((key) => input.payload[key] !== undefined)
-      .map((key) => [key, normalizedStableValue(input.payload[key])]),
+    Object.entries(input.payload)
+      .filter(([key, value]) => !NON_GOVERNING_OPEN_KEYS.has(key) && value !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, value]) => [key, normalizedStableValue(value)]),
   );
   const canonical = JSON.stringify(stableValue({
     version: 1,

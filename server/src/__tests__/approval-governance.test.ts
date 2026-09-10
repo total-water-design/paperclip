@@ -137,6 +137,28 @@ describe("Board approval governance", () => {
     expect(same.openDeduplicationKey).toBe(first.openDeduplicationKey);
   });
 
+  it("fails closed when an unknown payload field changes effective scope", () => {
+    const first = boardApprovalRequestIdentity({
+      type: "request_board_approval",
+      issueIds: ["issue-1"],
+      payload: {
+        action: "deploy",
+        environment: "production",
+        deploymentWindow: "2026-09-10T12:00:00Z",
+      },
+    });
+    const different = boardApprovalRequestIdentity({
+      type: "request_board_approval",
+      issueIds: ["issue-1"],
+      payload: {
+        action: "deploy",
+        environment: "production",
+        deploymentWindow: "2026-09-11T12:00:00Z",
+      },
+    });
+    expect(different.openDeduplicationKey).not.toBe(first.openDeduplicationKey);
+  });
+
   it("uses the named operational records as immutable identity fixtures", () => {
     const duplicateA = boardApprovalRequestIdentity({
       type: "request_board_approval",
