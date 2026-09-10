@@ -227,26 +227,30 @@ describeEmbeddedPostgres("approval service semantic reuse", () => {
 
   it("returns the oldest canonical legacy record for the named duplicate pair", async () => {
     const { company, agent, issue } = await seed();
-    const payloads = [
+    const fixtures = [
       {
         id: "544365d1-e653-4c55-a290-fca919ffbf1f",
-        title: "Authorize bounded read-only staged-host topology collection",
-        summary: "Original operational fixture wording",
+        payload: {
+          title: "Authorize bounded read-only staged-host topology collection",
+          summary: "Original operational fixture wording",
+        },
       },
       {
         id: "d93fefee-488a-4d93-a43a-7199d88d0ab9",
-        title: "Authorize bounded read-only staged-host topology collection",
-        summary: "Reworded operational fixture support",
+        payload: {
+          title: "Authorize bounded read-only staged-host topology collection",
+          summary: "Reworded operational fixture support",
+        },
       },
     ];
-    for (const [index, payload] of payloads.entries()) {
+    for (const [index, fixture] of fixtures.entries()) {
       const row = await db.insert(approvals).values({
-        id: payload.id,
+        id: fixture.id,
         companyId: company.id,
         type: "request_board_approval",
         requestedByAgentId: agent.id,
         status: "pending",
-        payload,
+        payload: fixture.payload,
         createdAt: new Date(Date.UTC(2026, 0, index + 1)),
       }).returning().then((rows) => rows[0]!);
       await db.insert(issueApprovals).values({
@@ -274,7 +278,7 @@ describeEmbeddedPostgres("approval service semantic reuse", () => {
       authorizationFingerprint: identity.authorizationFingerprint,
       reuseApprovedAuthorization: false,
     });
-    expect(result).toMatchObject({ created: false, approval: { id: payloads[0]!.id } });
+    expect(result).toMatchObject({ created: false, approval: { id: fixtures[0]!.id } });
     expect(await db.select().from(approvals)).toHaveLength(2);
   });
 
