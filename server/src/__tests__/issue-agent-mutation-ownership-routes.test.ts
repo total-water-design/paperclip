@@ -16,6 +16,7 @@ const mockIssueService = vi.hoisted(() => ({
   assertCheckoutOwner: vi.fn(),
   create: vi.fn(),
   createChild: vi.fn(),
+  checkout: vi.fn(),
   decomposeAcceptedPlan: vi.fn(),
   getAttachmentById: vi.fn(),
   getByIdentifier: vi.fn(),
@@ -338,6 +339,13 @@ function createRunContextDb(
       from: vi.fn(() => buildQuery(selection)),
     })),
     insert: vi.fn(() => ({ values: vi.fn(async () => undefined) })),
+    update: vi.fn(() => ({
+      set: vi.fn(() => ({
+        where: vi.fn(() => ({
+          returning: vi.fn(() => Promise.resolve([{ id: runId }])),
+        })),
+      })),
+    })),
   };
   return dbStub;
 }
@@ -453,6 +461,7 @@ describe("agent issue mutation checkout ownership", () => {
     mockIssueService.assertCheckoutOwner.mockReset();
     mockIssueService.create.mockReset();
     mockIssueService.createChild.mockReset();
+    mockIssueService.checkout.mockReset();
     mockIssueService.decomposeAcceptedPlan.mockReset();
     mockIssueService.getAttachmentById.mockReset();
     mockIssueService.getByIdentifier.mockReset();
@@ -725,6 +734,25 @@ describe("agent issue mutation checkout ownership", () => {
       contentLength: 6,
     });
     mockStorageService.deleteObject.mockResolvedValue(undefined);
+  });
+
+  it("attributes a timer-started COS run when it checks out its assigned source issue", async () => {
+    const db = createRunContextDb({}, ownerAgentId, ownerRunId);
+    mockIssueService.getById.mockResolvedValue(makeIssue({ status: "todo" }));
+    mockIssueService.checkout.mockResolvedValue(makeIssue({
+      status: "in_progress",
+      checkoutRunId: ownerRunId,
+      executionRunId: ownerRunId,
+    }));
+
+    const response = await request(await createApp(ownerActor(), db))
+      .post(`/api/issues/${issueId}/checkout`)
+      .set("X-Paperclip-Run-Id", ownerRunId)
+      .send({ agentId: ownerAgentId, expectedStatuses: ["todo"] });
+
+    expect(response.status).toBe(200);
+    expect(response.body.checkoutRunId).toBe(ownerRunId);
+    expect(db.update).toHaveBeenCalledTimes(1);
   });
 
   it("denies company-wide issue list routes for task bridge keys", async () => {
