@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   addApprovalCommentSchema,
+  cancelApprovalSchema,
   requestApprovalRevisionSchema,
   resolveApprovalSchema,
 } from "./approval.js";
@@ -11,6 +12,13 @@ describe("approval validators", () => {
       .toBe("Looks good\n\nApproved.");
     expect(resolveApprovalSchema.parse({ decisionNote: "Decision\n\nApproved." }).decisionNote)
       .toBe("Decision\n\nApproved.");
+  });
+
+  it("requires a cancellation reason while accepting the legacy decisionNote field", () => {
+    expect(cancelApprovalSchema.parse({ reason: "Duplicate request" }).reason).toBe("Duplicate request");
+    expect(cancelApprovalSchema.parse({ decisionNote: "Stale request" }).decisionNote).toBe("Stale request");
+    expect(() => cancelApprovalSchema.parse({})).toThrow("Cancellation reason is required");
+    expect(() => cancelApprovalSchema.parse({ reason: "   " })).toThrow("Cancellation reason is required");
   });
 
   it("accepts null and omitted optional decision notes", () => {

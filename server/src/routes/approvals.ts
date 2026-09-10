@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { agents, heartbeatRuns, type Db } from "@paperclipai/db";
 import {
   addApprovalCommentSchema,
+  cancelApprovalSchema,
   createApprovalSchema,
   requestApprovalRevisionSchema,
   resolveApprovalSchema,
@@ -83,18 +84,25 @@ export function approvalRoutes(
     approvalStatus: string;
     companyId: string;
     linkedIssues: Awaited<ReturnType<typeof issueApprovalsSvc.listIssuesForApproval>>;
+    wakeIssueIds: Set<string>;
     lostIssueIds: Set<string>;
     alreadyWoken?: { agentId: string; issueId: string } | null;
-    requestedByUserId: string;
+    requestedByActor: { type: "user" | "agent"; id: string };
   }) {
     for (const issue of input.linkedIssues) {
-      if (!input.lostIssueIds.has(issue.id) || !issue.assigneeAgentId) continue;
+      if (!input.wakeIssueIds.has(issue.id) || !issue.assigneeAgentId) continue;
       if (
         input.alreadyWoken?.agentId === issue.assigneeAgentId
         && input.alreadyWoken.issueId === issue.id
       ) continue;
 
       const wakeReason = `approval_${input.approvalStatus}`;
+      const reviewPathContext = input.lostIssueIds.has(issue.id)
+        ? approvalReviewPathContext(input.approvalId)
+        : {};
+      const cancellationContext = input.approvalStatus === "cancelled"
+        ? { approvalCancellationReconciliation: true, grantsAuthorization: false }
+        : {};
       try {
         const wakeRun = await heartbeat.wakeup(issue.assigneeAgentId, {
           source: "automation",
@@ -105,10 +113,11 @@ export function approvalRoutes(
             approvalId: input.approvalId,
             approvalStatus: input.approvalStatus,
             issueId: issue.id,
-            ...approvalReviewPathContext(input.approvalId),
+            ...reviewPathContext,
+            ...cancellationContext,
           },
-          requestedByActorType: "user",
-          requestedByActorId: input.requestedByUserId,
+          requestedByActorType: input.requestedByActor.type,
+          requestedByActorId: input.requestedByActor.id,
           contextSnapshot: {
             source: `approval.${input.approvalStatus}`,
             approvalId: input.approvalId,
@@ -116,14 +125,15 @@ export function approvalRoutes(
             issueId: issue.id,
             taskId: issue.id,
             wakeReason,
-            ...approvalReviewPathContext(input.approvalId),
+            ...reviewPathContext,
+            ...cancellationContext,
           },
         });
 
         await logActivity(db, {
           companyId: input.companyId,
-          actorType: "user",
-          actorId: input.requestedByUserId,
+          actorType: input.requestedByActor.type,
+          actorId: input.requestedByActor.id,
           action: "approval.review_path_wakeup_queued",
           entityType: "approval",
           entityId: input.approvalId,
@@ -141,8 +151,8 @@ export function approvalRoutes(
         );
         await logActivity(db, {
           companyId: input.companyId,
-          actorType: "user",
-          actorId: input.requestedByUserId,
+          actorType: input.requestedByActor.type,
+          actorId: input.requestedByActor.id,
           action: "approval.review_path_wakeup_failed",
           entityType: "approval",
           entityId: input.approvalId,
@@ -214,7 +224,10 @@ export function approvalRoutes(
       .from(agents)
       .where(eq(agents.id, agentId))
       .then((rows) => rows[0] ?? null);
-    return row?.id === agentId && row.companyId === companyId && row.role === "ceo";
+    const role = row?.role.trim().toLowerCase().replace(/[ -]+/g, "_");
+    return row?.id === agentId
+      && row.companyId === companyId
+      && (role === "ceo" || role === "chief_of_staff" || role === "cos");
   }
 
   router.get("/companies/:companyId/approvals", async (req, res) => {
@@ -333,7 +346,8 @@ export function approvalRoutes(
         issueIds: uniqueIssueIds,
         linkedByAgentId: actor.actorType === "agent" ? actor.agentId : null,
         linkedByUserId: actor.actorType === "user" ? actor.actorId : null,
-        fingerprint: identity.fingerprint,
+        openDeduplicationKey: identity.openDeduplicationKey,
+        authorizationFingerprint: identity.authorizationFingerprint,
         reuseApprovedAuthorization: identity.exactIdentityEstablished,
       });
 
@@ -394,7 +408,7 @@ export function approvalRoutes(
     res.json(issues);
   });
 
-  router.post("/approvals/:id/cancel", validate(resolveApprovalSchema), async (req, res) => {
+  router.post("/approvals/:id/cancel", validate(cancelApprovalSchema), async (req, res) => {
     const id = req.params.id as string;
     const approval = await requireApprovalAccess(req, id);
     if (!approval) {
@@ -414,25 +428,41 @@ export function approvalRoutes(
       return;
     }
 
-    const cancelled = await svc.cancel(id, req.body.decisionNote);
-    const current = cancelled ?? await svc.getById(id);
-    if (!current) {
-      res.status(404).json({ error: "Approval not found" });
-      return;
-    }
-    if (cancelled) {
+    const reason = req.body.reason?.trim() || req.body.decisionNote?.trim() || "";
+    const { approval: current, applied } = await svc.cancel(id, reason, {
+      agentId: actor.agentId,
+      userId: actor.actorType === "user" ? actor.actorId : null,
+    });
+    if (applied) {
+      const linkedIssues = await issueApprovalsSvc.listIssuesForApproval(current.id);
+      const linkedIssueIds = linkedIssues.map((issue) => issue.id);
+      const lostReviewIssueIds = await lostReviewPathIssueIds(current.companyId, linkedIssues);
       await logActivity(db, {
-        companyId: approval.companyId,
+        companyId: current.companyId,
         actorType: actor.actorType,
         actorId: actor.actorId,
         agentId: actor.agentId,
         action: "approval.cancelled",
         entityType: "approval",
-        entityId: approval.id,
-        details: { type: approval.type, decisionNote: req.body.decisionNote ?? null },
+        entityId: current.id,
+        details: {
+          type: current.type,
+          cancellationReason: reason,
+          linkedIssueIds,
+          grantsAuthorization: false,
+        },
+      });
+      await queueAdditionalApprovalReviewPathWakes({
+        approvalId: current.id,
+        approvalStatus: current.status,
+        companyId: current.companyId,
+        linkedIssues,
+        wakeIssueIds: new Set(linkedIssueIds),
+        lostIssueIds: lostReviewIssueIds,
+        requestedByActor: { type: actor.actorType, id: actor.actorId },
       });
     }
-    res.json(redactApprovalPayload(current));
+    res.json({ ...redactApprovalPayload(current), cancellationApplied: applied });
   });
 
   router.post("/approvals/:id/approve", validate(resolveApprovalSchema), async (req, res) => {
@@ -540,11 +570,12 @@ export function approvalRoutes(
         approvalStatus: approval.status,
         companyId: approval.companyId,
         linkedIssues,
+        wakeIssueIds: lostReviewIssueIds,
         lostIssueIds: lostReviewIssueIds,
         alreadyWoken: primaryReviewPathWakeCovered && approval.requestedByAgentId && primaryIssueId
           ? { agentId: approval.requestedByAgentId, issueId: primaryIssueId }
           : null,
-        requestedByUserId: req.actor.userId ?? "board",
+        requestedByActor: { type: "user", id: req.actor.userId ?? "board" },
       });
     }
 
@@ -578,8 +609,9 @@ export function approvalRoutes(
         approvalStatus: approval.status,
         companyId: approval.companyId,
         linkedIssues,
+        wakeIssueIds: lostReviewIssueIds,
         lostIssueIds: lostReviewIssueIds,
-        requestedByUserId: req.actor.userId ?? "board",
+        requestedByActor: { type: "user", id: req.actor.userId ?? "board" },
       });
     }
 

@@ -8,9 +8,14 @@ export interface Approval {
   requestedByUserId: string | null;
   status: ApprovalStatus;
   payload: Record<string, unknown>;
+  openDeduplicationKey?: string | null;
   decisionNote: string | null;
   decidedByUserId: string | null;
   decidedAt: Date | null;
+  cancellationReason?: string | null;
+  cancelledByAgentId?: string | null;
+  cancelledByUserId?: string | null;
+  cancelledAt?: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }

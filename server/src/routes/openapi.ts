@@ -87,6 +87,7 @@ import {
   updateUserSecretValueSchema,
   // Approval
   createApprovalSchema,
+  cancelApprovalSchema,
   resolveApprovalSchema,
   requestApprovalRevisionSchema,
   resubmitApprovalSchema,
@@ -3351,7 +3352,7 @@ registry.registerPath({
   summary: "Cancel an open approval as its requester, COS, or Board",
   request: {
     params: z.object({ id: z.string() }),
-    body: jsonBody(resolveApprovalSchema),
+    body: jsonBody(cancelApprovalSchema),
   },
   responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 404: r.notFound },
 });
