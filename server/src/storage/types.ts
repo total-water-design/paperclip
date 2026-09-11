@@ -50,6 +50,16 @@ export interface PutFileInput {
   body: Buffer;
 }
 
+export interface PutVerifiedFileInput {
+  companyId: string;
+  namespace: string;
+  originalFilename: string | null;
+  contentType: string;
+  body: Readable;
+  byteSize: number;
+  sha256: string;
+}
+
 export interface PutFileResult {
   provider: StorageProviderId;
   objectKey: string;
@@ -62,6 +72,13 @@ export interface PutFileResult {
 export interface StorageService {
   provider: StorageProviderId;
   putFile(input: PutFileInput): Promise<PutFileResult>;
+  /**
+   * Store a bounded stream whose exact byte count and SHA-256 were already
+   * verified before publication. Production storage services always provide
+   * this method; it is optional only so older test/plugin mocks remain source
+   * compatible.
+   */
+  putVerifiedFile?(input: PutVerifiedFileInput): Promise<PutFileResult>;
   getObject(companyId: string, objectKey: string, options?: Pick<GetObjectInput, "range">): Promise<GetObjectResult>;
   headObject(companyId: string, objectKey: string): Promise<HeadObjectResult>;
   deleteObject(companyId: string, objectKey: string): Promise<void>;

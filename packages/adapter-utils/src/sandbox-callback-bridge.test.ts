@@ -162,7 +162,7 @@ describe("sandbox callback bridge", () => {
       path: string;
       query: string;
       headers: Record<string, string>;
-      body: string;
+      body: string | Buffer;
     }> = [];
 
     const worker = await startSandboxCallbackBridgeWorker({
@@ -3407,7 +3407,7 @@ describe("sandbox callback bridge", () => {
     const bridgeToken = createSandboxCallbackBridgeToken();
     const requestBodyText = JSON.stringify({ note: "café" });
 
-    const seenRequests: Array<{ body: string }> = [];
+    const seenRequests: Array<{ body: string | Buffer }> = [];
     const worker = await startSandboxCallbackBridgeWorker({
       client: createFileSystemSandboxCallbackBridgeQueueClient(),
       queueDir,
@@ -3445,5 +3445,69 @@ describe("sandbox callback bridge", () => {
     expect(seenRequests).toHaveLength(1);
     expect(typeof seenRequests[0]?.body).toBe("string");
     expect(seenRequests[0]?.body).toBe(requestBodyText);
+  });
+
+  it("forwards a bounded attachment chunk as exact binary bytes through the command-managed bridge", async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), "paperclip-bridge-binary-"));
+    cleanupDirs.push(rootDir);
+    const localWorkspaceDir = path.join(rootDir, "local-workspace");
+    const remoteWorkspaceDir = path.join(rootDir, "remote-workspace");
+    await mkdir(localWorkspaceDir, { recursive: true });
+    await mkdir(remoteWorkspaceDir, { recursive: true });
+
+    const runner = createExecRunner();
+    const bridgeAsset = await createSandboxCallbackBridgeAsset();
+    cleanupFns.push(bridgeAsset.cleanup);
+    const prepared = await prepareCommandManagedRuntime({
+      runner,
+      spec: { remoteCwd: remoteWorkspaceDir, timeoutMs: 30_000 },
+      adapterKey: "codex",
+      workspaceLocalDir: localWorkspaceDir,
+      assets: [{ key: "bridge", localDir: bridgeAsset.localDir }],
+    });
+    const queueDir = path.posix.join(prepared.runtimeRootDir, "paperclip-bridge");
+    const bridgeToken = createSandboxCallbackBridgeToken();
+    const bytes = Buffer.from([0, 255, 17, 0, 128, 65]);
+    const seenRequests: Array<{ path: string; contentType: string | undefined; body: string | Buffer }> = [];
+    const worker = await startSandboxCallbackBridgeWorker({
+      client: createFileSystemSandboxCallbackBridgeQueueClient(),
+      queueDir,
+      authorizeRequest: async () => null,
+      handleRequest: async (request) => {
+        seenRequests.push({ path: request.path, contentType: request.headers["content-type"], body: request.body });
+        return { status: 200, headers: {}, body: JSON.stringify({ ok: true }) };
+      },
+    });
+    cleanupFns.push(async () => {
+      await worker.stop();
+    });
+    const bridge = await startSandboxCallbackBridgeServer({
+      runner,
+      remoteCwd: remoteWorkspaceDir,
+      assetRemoteDir: prepared.assetDirs.bridge,
+      queueDir,
+      bridgeToken,
+      timeoutMs: 30_000,
+    });
+    cleanupFns.push(async () => {
+      await bridge.stop();
+    });
+
+    const response = await fetch(`${bridge.baseUrl}/api/issues/issue-1/attachment-transfers/transfer-1/chunks/0`, {
+      method: "PUT",
+      headers: {
+        authorization: `Bearer ${bridgeToken}`,
+        "content-type": "application/octet-stream",
+      },
+      body: new Uint8Array(bytes).buffer,
+    });
+    expect(response.status).toBe(200);
+    expect(seenRequests).toHaveLength(1);
+    expect(seenRequests[0]).toMatchObject({
+      path: "/api/issues/issue-1/attachment-transfers/transfer-1/chunks/0",
+      contentType: "application/octet-stream",
+    });
+    expect(Buffer.isBuffer(seenRequests[0]?.body)).toBe(true);
+    expect(seenRequests[0]?.body).toEqual(bytes);
   });
 });

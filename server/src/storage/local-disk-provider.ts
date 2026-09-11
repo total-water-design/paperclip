@@ -1,4 +1,5 @@
-import { createReadStream, promises as fs } from "node:fs";
+import { createReadStream, createWriteStream, promises as fs } from "node:fs";
+import { pipeline } from "node:stream/promises";
 import path from "node:path";
 import type { StorageProvider, GetObjectResult, HeadObjectResult } from "./types.js";
 import { notFound, badRequest } from "../errors.js";
@@ -47,8 +48,21 @@ export function createLocalDiskStorageProvider(baseDir: string): StorageProvider
       await fs.mkdir(dir, { recursive: true });
 
       const tempPath = `${targetPath}.tmp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      await fs.writeFile(tempPath, input.body);
-      await fs.rename(tempPath, targetPath);
+      try {
+        if (Buffer.isBuffer(input.body)) {
+          await fs.writeFile(tempPath, input.body);
+        } else {
+          await pipeline(input.body, createWriteStream(tempPath, { mode: 0o600, flags: "wx" }));
+          const written = await fs.stat(tempPath);
+          if (written.size !== input.contentLength) {
+            throw badRequest("Stored object byte count does not match declared content length");
+          }
+        }
+        await fs.rename(tempPath, targetPath);
+      } catch (error) {
+        await fs.rm(tempPath, { force: true }).catch(() => undefined);
+        throw error;
+      }
     },
 
     async getObject(input): Promise<GetObjectResult> {

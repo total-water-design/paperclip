@@ -14,10 +14,17 @@ The helper uses `PAPERCLIP_API_URL`, `PAPERCLIP_API_KEY`, `PAPERCLIP_COMPANY_ID`
 
 When `PAPERCLIP_API_BRIDGE_MODE` is present, the helper automatically uses the
 confined-run transport. It declares the exact byte count, content type, and
-SHA-256, sends base64 in ordered 128 KiB JSON chunks, and publishes only after
-the server verifies every chunk and the assembled file. The normal multipart
-path remains unchanged for direct API connections. Transfers expire after 24
-hours and never expose a sandbox path to the host.
+SHA-256 in a small JSON manifest, then streams the file in ordered 128 KiB
+`application/octet-stream` requests. Chunk bytes never enter a JSON or base64
+envelope. Each chunk carries its own exact byte count and SHA-256 headers; the
+server publishes only after verifying every chunk and the assembled file.
+
+The confined path accepts artifacts from 1 byte through 64 MiB. It works with
+both callback bridge modes: HTTP/2 forwards raw bytes directly, while the file
+queue uses a bounded binary sidecar whose size and SHA-256 are checked before
+forwarding. Existing JSON callbacks are unchanged. Transfers expire after 24
+hours and never expose a sandbox path to the host. The normal multipart path
+remains unchanged for direct API connections.
 
 ## Workspace-Only File References
 

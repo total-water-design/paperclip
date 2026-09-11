@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import { Router, type Request, type Response } from "express";
+import { createReadStream } from "node:fs";
+import { Router, raw, type Request, type Response } from "express";
 import multer from "multer";
 import { shouldDefaultTwdsIssueProject, TWDS_PROJECT_ID } from "../services/twds-issue-defaults.js";
 import { bindTwdsValidationGrantSuccessor } from "../services/validation-execution-grants.js";
@@ -259,6 +260,7 @@ import {
 import { bindHeartbeatRunToCheckedOutIssue } from "../services/heartbeat-run-issue-attribution.js";
 import {
   ATTACHMENT_TRANSFER_CHUNK_BYTES,
+  ATTACHMENT_TRANSFER_MAX_BYTES,
   assembleAttachmentTransfer,
   attachmentTransferExpired,
   claimAttachmentTransfer,
@@ -294,16 +296,10 @@ const externalObjectSummariesSchema = z.object({
 const attachmentTransferDeclarationSchema = z.object({
   originalFilename: z.string().trim().min(1).max(255).nullable().optional(),
   contentType: z.string().trim().min(1).max(255),
-  totalBytes: z.number().int().positive().max(MAX_ATTACHMENT_BYTES),
+  totalBytes: z.number().int().positive().max(ATTACHMENT_TRANSFER_MAX_BYTES),
   sha256: z.string().regex(/^[0-9a-f]{64}$/i).transform((value) => value.toLowerCase()),
   chunkSize: z.number().int().positive().max(ATTACHMENT_TRANSFER_CHUNK_BYTES).optional(),
   issueCommentId: z.string().guid().nullable().optional(),
-}).strict();
-
-const attachmentTransferChunkSchema = z.object({
-  byteCount: z.number().int().positive().max(ATTACHMENT_TRANSFER_CHUNK_BYTES),
-  sha256: z.string().regex(/^[0-9a-f]{64}$/i).transform((value) => value.toLowerCase()),
-  dataBase64: z.string().min(1).max(Math.ceil(ATTACHMENT_TRANSFER_CHUNK_BYTES / 3) * 4 + 4),
 }).strict();
 
 const promoteLowTrustOutputSchema = z.object({
@@ -13126,7 +13122,10 @@ export function issueRoutes(
     res.json(authorized.manifest);
   });
 
-  router.put("/issues/:issueId/attachment-transfers/:transferId/chunks/:chunkIndex", async (req, res) => {
+  router.put(
+    "/issues/:issueId/attachment-transfers/:transferId/chunks/:chunkIndex",
+    raw({ type: "application/octet-stream", limit: ATTACHMENT_TRANSFER_CHUNK_BYTES }),
+    async (req, res) => {
     const authorized = await authorizeAttachmentTransfer(req, res, req.params.transferId as string);
     if (!authorized) return;
     const indexRaw = req.params.chunkIndex as string;
@@ -13134,18 +13133,23 @@ export function issueRoutes(
       res.status(422).json({ error: "Invalid attachment chunk index" });
       return;
     }
-    const parsed = attachmentTransferChunkSchema.safeParse(req.body);
-    if (!parsed.success) {
-      res.status(422).json({ error: "Invalid attachment chunk", details: parsed.error.issues });
+    if ((req.get("content-type") ?? "").split(";", 1)[0]?.trim().toLowerCase() !== "application/octet-stream") {
+      res.status(415).json({ error: "Attachment chunks require Content-Type: application/octet-stream" });
       return;
     }
-    const bytes = Buffer.from(parsed.data.dataBase64, "base64");
-    if (bytes.toString("base64") !== parsed.data.dataBase64 || bytes.length !== parsed.data.byteCount) {
-      res.status(422).json({ error: "Attachment chunk byte count or base64 encoding does not match metadata" });
+    const bytes = req.body;
+    if (!Buffer.isBuffer(bytes) || bytes.length <= 0 || bytes.length > ATTACHMENT_TRANSFER_CHUNK_BYTES) {
+      res.status(422).json({ error: "Attachment chunk body must contain bounded binary bytes" });
+      return;
+    }
+    const declaredByteCount = req.get("x-paperclip-chunk-bytes") ?? "";
+    const declaredSha256 = (req.get("x-paperclip-chunk-sha256") ?? "").toLowerCase();
+    if (!/^\d{1,6}$/.test(declaredByteCount) || Number(declaredByteCount) !== bytes.length) {
+      res.status(422).json({ error: "Attachment chunk byte count does not match its binary body" });
       return;
     }
     const digest = createHash("sha256").update(bytes).digest("hex");
-    if (digest !== parsed.data.sha256) {
+    if (!/^[0-9a-f]{64}$/.test(declaredSha256) || digest !== declaredSha256) {
       res.status(422).json({ error: "Attachment chunk sha256 does not match metadata" });
       return;
     }
@@ -13156,7 +13160,13 @@ export function issueRoutes(
         Number(indexRaw),
         bytes,
       );
-      res.json({ ok: true, nextChunk: manifest.nextChunk, totalChunks: manifest.totalChunks });
+      res.json({
+        ok: true,
+        byteCount: bytes.length,
+        sha256: digest,
+        nextChunk: manifest.nextChunk,
+        totalChunks: manifest.totalChunks,
+      });
     } catch (error) {
       res.status(409).json({ error: error instanceof Error ? error.message : "Attachment chunk rejected" });
     }
@@ -13174,6 +13184,8 @@ export function issueRoutes(
       res.status(409).json({ error: "Attachment transfer is not publishable" });
       return;
     }
+    let stored: Awaited<ReturnType<NonNullable<typeof storage.putVerifiedFile>>> | null = null;
+    let attachmentCreated = false;
     try {
       const assembled = await assembleAttachmentTransfer(attachmentTransferRoot, claimed);
       if (assembled.byteCount !== claimed.totalBytes || assembled.sha256 !== claimed.sha256) {
@@ -13181,12 +13193,17 @@ export function issueRoutes(
         res.status(422).json({ error: "Attachment transfer byte count or sha256 verification failed" });
         return;
       }
-      const stored = await storage.putFile({
+      if (!storage.putVerifiedFile) {
+        throw new Error("Configured storage service does not support verified streaming uploads");
+      }
+      stored = await storage.putVerifiedFile({
         companyId: claimed.companyId,
         namespace: `issues/${claimed.issueId}`,
         originalFilename: claimed.originalFilename,
         contentType: claimed.contentType,
-        body: assembled.bytes,
+        body: createReadStream(assembled.filePath),
+        byteSize: assembled.byteCount,
+        sha256: assembled.sha256,
       });
       const attachment = await svc.createAttachment({
         issueId: claimed.issueId,
@@ -13200,6 +13217,7 @@ export function issueRoutes(
         createdByAgentId: authorized.actor.agentId,
         createdByUserId: null,
       });
+      attachmentCreated = true;
       await logActivity(db, {
         companyId: claimed.companyId,
         actorType: authorized.actor.actorType,
@@ -13210,12 +13228,27 @@ export function issueRoutes(
         action: "issue.attachment_added",
         entityType: "issue",
         entityId: claimed.issueId,
-        details: { attachmentId: attachment.id, transport: "bounded_json_chunks", byteSize: attachment.byteSize },
+        details: {
+          attachmentId: attachment.id,
+          transport: "bounded_binary_chunks",
+          byteSize: attachment.byteSize,
+          sha256: attachment.sha256,
+        },
       });
       await removeAttachmentTransfer(attachmentTransferRoot, claimed.id);
       res.status(201).json(withContentPath(attachment));
     } catch (error) {
-      await releaseAttachmentTransferClaim(attachmentTransferRoot, claimed).catch(() => undefined);
+      if (attachmentCreated) {
+        // The attachment commit may have succeeded even if a later response or
+        // activity step failed. Remove the spool so a caller cannot replay the
+        // publish and create a duplicate attachment.
+        await removeAttachmentTransfer(attachmentTransferRoot, claimed.id).catch(() => undefined);
+      } else {
+        if (stored) {
+          await storage.deleteObject(claimed.companyId, stored.objectKey).catch(() => undefined);
+        }
+        await releaseAttachmentTransferClaim(attachmentTransferRoot, claimed).catch(() => undefined);
+      }
       throw error;
     }
   });

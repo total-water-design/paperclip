@@ -3953,8 +3953,8 @@ export async function startAdapterExecutionTargetPaperclipBridge(input: {
       path: string;
       query: string;
       headers: Record<string, string>;
-      /** The file bridge passes the whole request body here as one string. */
-      body?: string;
+      /** JSON callbacks use a string; binary attachment chunks use exact bytes. */
+      body?: string | Buffer;
     },
     signal?: AbortSignal,
     options?: {
@@ -3984,15 +3984,20 @@ export async function startAdapterExecutionTargetPaperclipBridge(input: {
     // the forward budget here, whichever comes first.
     const timeoutSignal = AbortSignal.timeout(forwardTimeoutMs);
     const forwardSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
-    // Build the request-body init. A GET or a HEAD carries no body. The file
-    // bridge passes the whole body as one string.
+    // Build the request-body init. A GET or a HEAD carries no body. JSON
+    // callbacks stay strings; attachment chunks remain exact binary bytes.
     const forwardInit: RequestInit = {
       method,
       headers,
       signal: forwardSignal,
     };
-    if (method !== "GET" && method !== "HEAD" && typeof request.body === "string") {
-      forwardInit.body = request.body;
+    if (method !== "GET" && method !== "HEAD" && request.body !== undefined) {
+      // Node's Buffer is a Uint8Array at runtime, but the DOM RequestInit
+      // declaration used by this package does not accept Buffer directly.
+      // Copy into an ArrayBuffer so the raw chunk stays binary through fetch.
+      forwardInit.body = Buffer.isBuffer(request.body)
+        ? new Uint8Array(request.body).buffer
+        : request.body;
     }
     const response = await fetch(buildBridgeForwardUrl(hostApiUrl, request), forwardInit);
     if (emitDebugLog) {
@@ -4241,7 +4246,7 @@ export async function startAdapterExecutionTargetPaperclipBridge(input: {
                   path: request.pathname,
                   query: request.query,
                   headers: request.headers,
-                  body: request.body.toString("utf8"),
+                  body: request.body,
                 },
                 request.signal,
                 { suppressDebugLog: true },

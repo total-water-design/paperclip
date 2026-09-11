@@ -1,6 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
-import type { StorageService, StorageProvider, PutFileInput, PutFileResult } from "./types.js";
+import type {
+  StorageService,
+  StorageProvider,
+  PutFileInput,
+  PutFileResult,
+  PutVerifiedFileInput,
+} from "./types.js";
 import { badRequest, forbidden, unprocessable } from "../errors.js";
 
 const MAX_SEGMENT_LENGTH = 120;
@@ -87,6 +93,27 @@ function assertPutFileInput(input: PutFileInput): void {
   }
 }
 
+function assertPutVerifiedFileInput(input: PutVerifiedFileInput): void {
+  if (!input.companyId || input.companyId.trim().length === 0) {
+    throw unprocessable("companyId is required");
+  }
+  if (!input.namespace || input.namespace.trim().length === 0) {
+    throw unprocessable("namespace is required");
+  }
+  if (!input.contentType || input.contentType.trim().length === 0) {
+    throw unprocessable("contentType is required");
+  }
+  if (!input.body || typeof input.body.pipe !== "function") {
+    throw unprocessable("body must be a Readable stream");
+  }
+  if (!Number.isSafeInteger(input.byteSize) || input.byteSize <= 0) {
+    throw unprocessable("byteSize must be a positive safe integer");
+  }
+  if (!/^[0-9a-f]{64}$/.test(input.sha256)) {
+    throw unprocessable("sha256 must be a lowercase SHA-256 digest");
+  }
+}
+
 export function createStorageService(provider: StorageProvider): StorageService {
   return {
     provider: provider.id,
@@ -109,6 +136,27 @@ export function createStorageService(provider: StorageProvider): StorageService 
         contentType,
         byteSize,
         sha256: hashBuffer(input.body),
+        originalFilename: input.originalFilename,
+      };
+    },
+
+    async putVerifiedFile(input: PutVerifiedFileInput): Promise<PutFileResult> {
+      assertPutVerifiedFileInput(input);
+      const objectKey = buildObjectKey(input.companyId, input.namespace, input.originalFilename);
+      const contentType = input.contentType.trim().toLowerCase();
+      await provider.putObject({
+        objectKey,
+        body: input.body,
+        contentType,
+        contentLength: input.byteSize,
+      });
+
+      return {
+        provider: provider.id,
+        objectKey,
+        contentType,
+        byteSize: input.byteSize,
+        sha256: input.sha256,
         originalFilename: input.originalFilename,
       };
     },

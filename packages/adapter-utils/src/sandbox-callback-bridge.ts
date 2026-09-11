@@ -198,6 +198,10 @@ export const DEFAULT_SANDBOX_CALLBACK_BRIDGE_HEADER_ALLOWLIST = [
   "content-type",
   "if-match",
   "if-none-match",
+  // Used only by the exact binary attachment-chunk route. They carry no
+  // authority; the server recomputes both values from the received bytes.
+  "x-paperclip-chunk-bytes",
+  "x-paperclip-chunk-sha256",
 ] as const;
 
 export interface SandboxCallbackBridgeRequest {
@@ -211,8 +215,20 @@ export interface SandboxCallbackBridgeRequest {
    * payloads are intentionally out of scope for this queue protocol.
    */
   body: string;
+  /**
+   * File-mode-only exact binary body sidecar. JSON callbacks keep using
+   * `body`; a raw attachment chunk names `<request-id>.body` here so its bytes
+   * never enter the JSON envelope.
+   */
+  bodyFile?: string;
+  bodyByteLength?: number;
+  bodySha256?: string;
   createdAt: string;
 }
+
+export type SandboxCallbackBridgeForwardRequest = Omit<SandboxCallbackBridgeRequest, "body"> & {
+  body: string | Buffer;
+};
 
 export interface SandboxCallbackBridgeResponse {
   id: string;
@@ -247,6 +263,7 @@ export interface SandboxCallbackBridgeQueueClient {
   makeDirs?(remotePaths: string[]): Promise<void>;
   listJsonFiles(remotePath: string): Promise<string[]>;
   readTextFile(remotePath: string): Promise<string>;
+  readBinaryFile?(remotePath: string): Promise<Buffer>;
   writeTextFile(remotePath: string, body: string): Promise<void>;
   writeResponseFile?(
     responsePath: string,
@@ -496,6 +513,7 @@ export function createFileSystemSandboxCallbackBridgeQueueClient(): SandboxCallb
         .sort((left, right) => left.localeCompare(right));
     },
     readTextFile: async (remotePath) => await fs.readFile(remotePath, "utf8"),
+    readBinaryFile: async (remotePath) => await fs.readFile(remotePath),
     writeTextFile: async (remotePath, body) => {
       await fs.mkdir(path.posix.dirname(remotePath), { recursive: true });
       // Write to a temporary path that does NOT end in `.json`, then rename it
@@ -638,6 +656,15 @@ export function createCommandManagedSandboxCallbackBridgeQueueClient(input: {
       const result = await runChecked(`read ${remotePath}`, `base64 < ${shellQuote(remotePath)}`);
       return Buffer.from(result.stdout.replace(/\s+/g, ""), "base64").toString("utf8");
     },
+    readBinaryFile: async (remotePath) => {
+      // The queue request itself references an exact-byte sidecar rather than
+      // embedding base64 in JSON. Older provider RPCs expose command output as
+      // text only, so this compatibility fallback decodes that provider-owned
+      // output at the host boundary. The HTTP request and queue envelope remain
+      // exact binary/no-base64; http2_v1 carries the bytes natively throughout.
+      const result = await runChecked(`read binary ${remotePath}`, `base64 < ${shellQuote(remotePath)}`);
+      return Buffer.from(result.stdout.replace(/\s+/g, ""), "base64");
+    },
     writeTextFile: async (remotePath, body) => {
       const remoteDir = path.posix.dirname(remotePath);
       // Two temporary paths that do NOT end in `.json`, so a `.json`-only
@@ -765,7 +792,7 @@ export async function startSandboxCallbackBridgeWorker(input: {
   // not strand with no response. A handler that ignores the signal keeps its
   // earlier behavior.
   handleRequest: (
-    request: SandboxCallbackBridgeRequest,
+    request: SandboxCallbackBridgeForwardRequest,
     options?: { signal: AbortSignal },
   ) => Promise<{
     status: number;
@@ -1009,6 +1036,70 @@ export async function startSandboxCallbackBridgeWorker(input: {
         return;
       }
 
+      let forwardRequest: SandboxCallbackBridgeForwardRequest = request;
+      const hasBinarySidecar = typeof request.bodyFile === "string";
+      if (hasBinarySidecar) {
+        const expectedBodyFile = `${request.id}.body`;
+        if (
+          request.bodyFile !== expectedBodyFile ||
+          request.body !== "" ||
+          !Number.isSafeInteger(request.bodyByteLength) ||
+          (request.bodyByteLength ?? 0) <= 0 ||
+          (request.bodyByteLength ?? 0) > maxBodyBytes ||
+          typeof request.bodySha256 !== "string" ||
+          !/^[0-9a-f]{64}$/.test(request.bodySha256) ||
+          !input.client.readBinaryFile
+        ) {
+          await finalize({
+            id: request.id,
+            status: 400,
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ error: "Invalid binary bridge request sidecar metadata." }),
+            completedAt: new Date().toISOString(),
+          });
+          return;
+        }
+        const bodyPath = path.posix.join(directories.requestsDir, expectedBodyFile);
+        let bytes: Buffer;
+        try {
+          bytes = await input.client.readBinaryFile(bodyPath);
+        } catch {
+          await finalize({
+            id: request.id,
+            status: 400,
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ error: "Binary bridge request sidecar is missing or unreadable." }),
+            completedAt: new Date().toISOString(),
+          });
+          return;
+        }
+        const digest = createHash("sha256").update(bytes).digest("hex");
+        if (bytes.length !== request.bodyByteLength || digest !== request.bodySha256) {
+          await finalize({
+            id: request.id,
+            status: 400,
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ error: "Binary bridge request sidecar failed byte-count or SHA-256 verification." }),
+            completedAt: new Date().toISOString(),
+          });
+          return;
+        }
+        // The exact bytes now live in a bounded host Buffer. Remove the spool
+        // copy before invoking the handler so rejected and completed requests
+        // cannot leave a replayable binary payload behind.
+        await input.client.remove(bodyPath).catch(() => undefined);
+        forwardRequest = { ...request, body: bytes };
+      } else if (request.bodyByteLength !== undefined || request.bodySha256 !== undefined) {
+        await finalize({
+          id: request.id,
+          status: 400,
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ error: "Incomplete binary bridge request sidecar metadata." }),
+          completedAt: new Date().toISOString(),
+        });
+        return;
+      }
+
       // Claim the request for the handler before the host operation starts. When
       // the recovery path already claimed it, it writes a 503 and the caller may
       // retry, so do not run the mutation; the retry then applies it once. When
@@ -1022,7 +1113,7 @@ export async function startSandboxCallbackBridgeWorker(input: {
       // claim, so `finalize` writes the real response.
       let response: SandboxCallbackBridgeResponse;
       try {
-        const result = await input.handleRequest(request, { signal: guard.controller.signal });
+        const result = await input.handleRequest(forwardRequest, { signal: guard.controller.signal });
         const responseBody = result.body ?? "";
         if (Buffer.byteLength(responseBody, "utf8") > maxBodyBytes) {
           throw new Error(`Bridge response body exceeded the configured size limit of ${maxBodyBytes} bytes.`);
@@ -2049,7 +2140,7 @@ export function getSandboxDuplexGatewayCodecSource(): string {
 }
 
 export function getSandboxCallbackBridgeServerSource(): string {
-  return `import { randomUUID, timingSafeEqual } from "node:crypto";
+  return `import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 import { promises as fs } from "node:fs";
 import path from "node:path";
@@ -2057,6 +2148,9 @@ import http2 from "node:http2";
 import { Duplex } from "node:stream";
 
 const bridgeMode = process.env.PAPERCLIP_API_BRIDGE_MODE || "${SANDBOX_CALLBACK_BRIDGE_FILE_MODE}";
+// local_proxy_v1 is the installed confined-run contract.  It keeps the
+// queue-mode transport semantics while newer launches use queue_v1 directly.
+const effectiveBridgeMode = bridgeMode === "local_proxy_v1" ? "${SANDBOX_CALLBACK_BRIDGE_FILE_MODE}" : bridgeMode;
 const queueDir = process.env.PAPERCLIP_BRIDGE_QUEUE_DIR;
 const bridgeToken = process.env.PAPERCLIP_BRIDGE_TOKEN;
 const host = process.env.PAPERCLIP_BRIDGE_HOST || "127.0.0.1";
@@ -2089,12 +2183,12 @@ if (!bridgeToken) {
 // check below, so an unsupported mode never reaches a state where a missing
 // queue directory masks the real problem.
 if (
-  bridgeMode !== "${SANDBOX_CALLBACK_BRIDGE_HTTP2_MODE}" &&
-  bridgeMode !== "${SANDBOX_CALLBACK_BRIDGE_FILE_MODE}"
+  effectiveBridgeMode !== "${SANDBOX_CALLBACK_BRIDGE_HTTP2_MODE}" &&
+  effectiveBridgeMode !== "${SANDBOX_CALLBACK_BRIDGE_FILE_MODE}"
 ) {
   throw new Error("Unsupported PAPERCLIP_API_BRIDGE_MODE: " + bridgeMode);
 }
-if (bridgeMode !== "${SANDBOX_CALLBACK_BRIDGE_HTTP2_MODE}" && !queueDir) {
+if (effectiveBridgeMode !== "${SANDBOX_CALLBACK_BRIDGE_HTTP2_MODE}" && !queueDir) {
   throw new Error("PAPERCLIP_BRIDGE_QUEUE_DIR and PAPERCLIP_BRIDGE_TOKEN are required.");
 }
 
@@ -2176,6 +2270,14 @@ function writeJsonResponse(res, status, body) {
   res.end(JSON.stringify(body));
 }
 
+function isBinaryAttachmentChunkRequest(method, pathname, contentType) {
+  return (
+    method === "PUT" &&
+    /^\\/api\\/issues\\/[^/]+\\/attachment-transfers\\/[^/]+\\/chunks\\/\\d+$/.test(pathname) &&
+    contentType.split(";", 1)[0].trim().toLowerCase() === "application/octet-stream"
+  );
+}
+
 async function runFileGateway() {
   const requestsDir = path.posix.join(queueDir, "requests");
   const responsesDir = path.posix.join(queueDir, "responses");
@@ -2201,6 +2303,7 @@ async function runFileGateway() {
       const stats = await fs.stat(filePath).catch(() => null);
       if (stats && stats.mtimeMs < staleBefore) {
         await fs.rm(filePath, { force: true }).catch(() => undefined);
+        await fs.rm(filePath.replace(/\\.json$/, ".body"), { force: true }).catch(() => undefined);
       }
     }
   }
@@ -2240,23 +2343,36 @@ async function runFileGateway() {
 
       const url = new URL(req.url || "/", "http://127.0.0.1");
       const contentType = typeof req.headers["content-type"] === "string" ? req.headers["content-type"] : "";
-      if (req.method && req.method !== "GET" && req.method !== "HEAD" && !/json/i.test(contentType)) {
+      const method = req.method || "GET";
+      const binaryChunk = isBinaryAttachmentChunkRequest(method, url.pathname, contentType);
+      if (method !== "GET" && method !== "HEAD" && !/json/i.test(contentType) && !binaryChunk) {
         writeJsonResponse(res, 415, { error: "Bridge only accepts JSON request bodies." });
         return;
       }
       const requestId = randomUUID();
-      const requestBody = await readBody(req);
+      const requestBodyBytes = await readBodyBytes(req);
+      const requestBody = binaryChunk ? "" : requestBodyBytes.toString("utf8");
+      const bodyFile = binaryChunk ? requestId + ".body" : undefined;
       const payload = {
         id: requestId,
-        method: req.method || "GET",
+        method,
         path: url.pathname,
         query: url.search,
         headers: normalizeHeaders(req.headers),
         body: requestBody,
+        bodyFile,
+        bodyByteLength: binaryChunk ? requestBodyBytes.length : undefined,
+        bodySha256: binaryChunk ? createHash("sha256").update(requestBodyBytes).digest("hex") : undefined,
         createdAt: new Date().toISOString(),
       };
       const requestPath = path.posix.join(requestsDir, \`\${requestId}.json\`);
       const tempPath = \`\${requestPath}.tmp\`;
+      const requestBodyPath = bodyFile ? path.posix.join(requestsDir, bodyFile) : null;
+      if (requestBodyPath) {
+        const tempBodyPath = requestBodyPath + ".tmp";
+        await fs.writeFile(tempBodyPath, requestBodyBytes, { mode: 0o600 });
+        await fs.rename(tempBodyPath, requestBodyPath);
+      }
       await fs.writeFile(tempPath, \`\${JSON.stringify(payload)}\\n\`, "utf8");
       await fs.rename(tempPath, requestPath);
 
@@ -2271,8 +2387,10 @@ async function runFileGateway() {
         // this cleanup a stalled host wedges the gateway at the cap and every
         // later request gets an immediate 503 until run end.
         await fs.rm(requestPath, { force: true }).catch(() => undefined);
+        if (requestBodyPath) await fs.rm(requestBodyPath, { force: true }).catch(() => undefined);
         throw error;
       }
+      if (requestBodyPath) await fs.rm(requestBodyPath, { force: true }).catch(() => undefined);
       const responseHeaders = response.headers || {};
       // The host marks a possibly-committed mutation with an indeterminate outcome.
       // The host cannot cancel a host operation that is in flight, so the mutation
@@ -2487,7 +2605,9 @@ function runHttp2Gateway() {
       }
       const url = new URL(req.url || "/", "http://127.0.0.1");
       const contentType = typeof req.headers["content-type"] === "string" ? req.headers["content-type"] : "";
-      if (req.method && req.method !== "GET" && req.method !== "HEAD" && !/json/i.test(contentType)) {
+      const method = req.method || "GET";
+      const binaryChunk = isBinaryAttachmentChunkRequest(method, url.pathname, contentType);
+      if (method !== "GET" && method !== "HEAD" && !/json/i.test(contentType) && !binaryChunk) {
         writeJsonResponse(res, 415, { error: "Bridge only accepts JSON request bodies." });
         return;
       }
@@ -2495,7 +2615,7 @@ function runHttp2Gateway() {
       let response;
       try {
         response = await forwardOverHttp2({
-          method: req.method || "GET",
+          method,
           path: url.pathname,
           query: url.search,
           headers: normalizeHeaders(req.headers),
@@ -2569,9 +2689,9 @@ function runHttp2Gateway() {
 // The startup check above already rejected every value except http2 and
 // queue, so this dispatch names both modes explicitly and never falls
 // through to the queue gateway for an unsupported mode.
-if (bridgeMode === "${SANDBOX_CALLBACK_BRIDGE_HTTP2_MODE}") {
+if (effectiveBridgeMode === "${SANDBOX_CALLBACK_BRIDGE_HTTP2_MODE}") {
   runHttp2Gateway();
-} else if (bridgeMode === "${SANDBOX_CALLBACK_BRIDGE_FILE_MODE}") {
+} else if (effectiveBridgeMode === "${SANDBOX_CALLBACK_BRIDGE_FILE_MODE}") {
   await runFileGateway();
 } else {
   throw new Error("Unsupported PAPERCLIP_API_BRIDGE_MODE: " + bridgeMode);

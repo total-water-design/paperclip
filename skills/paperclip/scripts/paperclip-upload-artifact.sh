@@ -160,10 +160,14 @@ sha256_file() {
   fi
 }
 
-upload_file_bounded_json() {
+upload_file_bounded_binary() {
   local api_base="$1" path="$2" content_type="$3" issue_id="$4"
-  local chunk_size=131072 total_bytes whole_sha declaration transfer_id total_chunks index chunk_file
+  local chunk_size=131072 max_bytes=67108864 total_bytes whole_sha declaration transfer_id total_chunks index chunk_file
   total_bytes="$(wc -c < "$path" | tr -d ' ')"
+  if [[ "$total_bytes" -le 0 || "$total_bytes" -gt "$max_bytes" ]]; then
+    printf 'Confined artifact must contain 1 through 67108864 bytes; got %s.\n' "$total_bytes" >&2
+    exit 1
+  fi
   whole_sha="$(sha256_file "$path")"
   declaration="$(jq -nc --arg filename "$(basename "$path")" --arg contentType "$content_type" \
     --argjson totalBytes "$total_bytes" --arg sha256 "$whole_sha" --argjson chunkSize "$chunk_size" \
@@ -179,13 +183,35 @@ upload_file_bounded_json() {
   trap 'rm -f "$chunk_file"' RETURN
   for ((index=0; index<total_chunks; index+=1)); do
     dd if="$path" of="$chunk_file" bs="$chunk_size" skip="$index" count=1 status=none
-    local chunk_bytes chunk_sha chunk_base64 payload
+    local chunk_bytes chunk_sha response_file status_code response_byte_count response_sha response_next
     chunk_bytes="$(wc -c < "$chunk_file" | tr -d ' ')"
     chunk_sha="$(sha256_file "$chunk_file")"
-    chunk_base64="$(base64 < "$chunk_file" | tr -d '\n')"
-    payload="$(jq -nc --argjson byteCount "$chunk_bytes" --arg sha256 "$chunk_sha" --arg dataBase64 "$chunk_base64" \
-      '{byteCount:$byteCount,sha256:$sha256,dataBase64:$dataBase64}')"
-    request_json PUT "$api_base/issues/$issue_id/attachment-transfers/$transfer_id/chunks/$index" "$payload" >/dev/null
+    response_file="$(mktemp)"
+    status_code="$(
+      curl -sS -X PUT -w '%{http_code}' -o "$response_file" \
+        "$api_base/issues/$issue_id/attachment-transfers/$transfer_id/chunks/$index" \
+        -H "Authorization: Bearer $PAPERCLIP_API_KEY" \
+        -H "X-Paperclip-Run-Id: $PAPERCLIP_RUN_ID" \
+        -H 'Content-Type: application/octet-stream' \
+        -H "X-Paperclip-Chunk-Bytes: $chunk_bytes" \
+        -H "X-Paperclip-Chunk-Sha256: $chunk_sha" \
+        --data-binary "@$chunk_file"
+    )"
+    if [[ "$status_code" -lt 200 || "$status_code" -ge 300 ]]; then
+      printf 'Binary chunk upload failed (%s), transfer %s chunk %s.\n' "$status_code" "$transfer_id" "$index" >&2
+      cat "$response_file" >&2
+      printf '\n' >&2
+      rm -f "$response_file"
+      exit 1
+    fi
+    response_byte_count="$(jq -r '.byteCount // 0' < "$response_file")"
+    response_sha="$(jq -r '.sha256 // empty' < "$response_file")"
+    response_next="$(jq -r '.nextChunk // -1' < "$response_file")"
+    rm -f "$response_file"
+    if [[ "$response_byte_count" != "$chunk_bytes" || "$response_sha" != "$chunk_sha" || "$response_next" -ne $((index + 1)) ]]; then
+      printf 'Server did not acknowledge the exact bytes for transfer %s chunk %s.\n' "$transfer_id" "$index" >&2
+      exit 1
+    fi
   done
   request_json POST "$api_base/issues/$issue_id/attachment-transfers/$transfer_id/publish" '{}'
   rm -f "$chunk_file"
@@ -327,7 +353,7 @@ if [[ "$api_base" != */api ]]; then
 fi
 attachment="$(
   if [[ -n "${PAPERCLIP_API_BRIDGE_MODE:-}" ]]; then
-    upload_file_bounded_json "$api_base" "$file_path" "$content_type" "$issue_id"
+    upload_file_bounded_binary "$api_base" "$file_path" "$content_type" "$issue_id"
   else
     upload_file \
       "$api_base/companies/$company_id/issues/$issue_id/attachments" \
