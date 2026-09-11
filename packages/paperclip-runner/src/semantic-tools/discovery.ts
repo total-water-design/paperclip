@@ -37,6 +37,7 @@ const NAMESPACE: Readonly<Record<PaperclipSemanticActionId, string>> =
     create_task: "delegation",
     request_approval: "governance",
     decide_approval: "governance",
+    resubmit_approval: "governance",
     comment_on_approval: "governance",
     schedule_wake: "continuation",
   });

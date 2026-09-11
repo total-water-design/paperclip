@@ -294,6 +294,36 @@ describe("approval routes idempotent retries", () => {
     expect(mockApprovalService.reject).toHaveBeenCalledWith("approval-5", "user-1", "not now");
   });
 
+  it.each([
+    ["approve", "approve", "approved"],
+    ["reject", "reject", "rejected"],
+  ])("allows a Board approver to %s a revision-requested approval", async (_label, route, resultStatus) => {
+    const approval = {
+      id: `approval-${resultStatus}`,
+      companyId: "company-1",
+      type: "request_board_approval",
+      status: "revision_requested",
+      payload: {},
+      requestedByAgentId: "agent-1",
+    };
+    mockApprovalService.getById.mockResolvedValue(approval);
+    mockApprovalService[route as "approve" | "reject"].mockResolvedValue({
+      approval: { ...approval, status: resultStatus },
+      applied: false,
+    });
+
+    const res = await request(await createApp())
+      .post(`/api/approvals/${approval.id}/${route}`)
+      .send({ decisionNote: "Board decision" });
+
+    expect(res.status).toBe(200);
+    expect(mockApprovalService[route as "approve" | "reject"]).toHaveBeenCalledWith(
+      approval.id,
+      "user-1",
+      "Board decision",
+    );
+  });
+
   it("derives approval attribution from the authenticated actor on request revision", async () => {
     mockApprovalService.getById.mockResolvedValue({
       id: "approval-6",
@@ -320,6 +350,67 @@ describe("approval routes idempotent retries", () => {
       "user-1",
       "Need changes",
     );
+  });
+
+  it("wakes the original requester with semantic-only revision recovery context", async () => {
+    mockApprovalService.getById.mockResolvedValue({
+      id: "approval-revision",
+      companyId: "company-1",
+      type: "request_board_approval",
+      status: "pending",
+      payload: {},
+      requestedByAgentId: "agent-1",
+    });
+    mockApprovalService.requestRevision.mockResolvedValue({
+      id: "approval-revision",
+      companyId: "company-1",
+      type: "request_board_approval",
+      status: "revision_requested",
+      payload: {},
+      requestedByAgentId: "agent-1",
+      decisionNote: "Please revise the estimate.",
+    });
+    mockIssueApprovalService.listIssuesForApproval.mockResolvedValue([
+      { id: "issue-1", identifier: "PAP-1", title: "Estimate", status: "in_progress" },
+    ]);
+
+    const res = await request(await createApp())
+      .post("/api/approvals/approval-revision/request-revision")
+      .send({ decisionNote: "Please revise the estimate." });
+
+    expect(res.status).toBe(200);
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith("agent-1", expect.objectContaining({
+      reason: "approval_revision_requested",
+      idempotencyKey: "approval-revision-requested:approval-revision",
+      payload: expect.objectContaining({
+        approvalId: "approval-revision",
+        revisionDecision: "revision_requested",
+        revisionNote: "Please revise the estimate.",
+        issueIds: ["issue-1"],
+        recoveryInstruction: expect.stringContaining("resubmit_approval only"),
+      }),
+    }));
+    const wake = mockHeartbeatService.wakeup.mock.calls[0]?.[1];
+    expect(JSON.stringify(wake)).not.toContain("/api/");
+  });
+
+  it("forbids a non-requester from resubmitting an approval", async () => {
+    mockApprovalService.getById.mockResolvedValue({
+      id: "approval-foreign-requester",
+      companyId: "company-1",
+      type: "request_board_approval",
+      status: "revision_requested",
+      payload: {},
+      requestedByAgentId: "another-agent",
+    });
+
+    const res = await request(await createAgentApp())
+      .post("/api/approvals/approval-foreign-requester/resubmit")
+      .send({ payload: { revised: true } });
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toContain("Only requesting agent can resubmit");
+    expect(mockApprovalService.resubmit).not.toHaveBeenCalled();
   });
 
   it("lets agents create generic issue-linked board approval requests", async () => {

@@ -475,6 +475,25 @@ const descriptors: readonly PaperclipSemanticActionDescriptor[] = [
     outputSchema: operationReceipt,
   }),
   descriptor({
+    operationId: "resubmit_approval",
+    title: "Resubmit approval",
+    description:
+      "Resubmit the requesting agent's revision-requested approval; approvers approve or reject.",
+    placement: "optional",
+    effect: "governance",
+    requiredClaims: ["governance:approvals:resubmit"],
+    allowedModes: STANDARD_MODE,
+    inputSchema: object(
+      {
+        ...idempotency,
+        approvalId: text("Revision-requested approval identifier.", 200),
+        payload: openObject,
+      },
+      ["idempotencyKey", "approvalId"],
+    ),
+    outputSchema: operationReceipt,
+  }),
+  descriptor({
     operationId: "comment_on_approval",
     title: "Comment on approval",
     description: "Add a durable comment to an approval.",
