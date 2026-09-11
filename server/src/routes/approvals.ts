@@ -641,6 +641,88 @@ export function approvalRoutes(
         details: { type: approval.type },
       });
 
+      // A revision is a recovery of this approval, not a request for a
+      // successor approval. Wake only the original requester with the semantic
+      // operation it is authorized to use.
+      if (approval.requestedByAgentId) {
+        const linkedIssues = await issueApprovalsSvc.listIssuesForApproval(approval.id);
+        const linkedIssueIds = linkedIssues.map((issue) => issue.id);
+        const linkedTasks = linkedIssues.map((issue) => ({
+          id: issue.id,
+          identifier: issue.identifier,
+          title: issue.title,
+          status: issue.status,
+        }));
+        const recoveryInstruction =
+          "Use resubmit_approval only to resubmit this existing approval after addressing the revision. Do not use raw HTTP, curl, database mutation, or create a successor approval.";
+        try {
+          const wakeRun = await heartbeat.wakeup(approval.requestedByAgentId, {
+            source: "automation",
+            triggerDetail: "system",
+            reason: "approval_revision_requested",
+            idempotencyKey: `approval-revision-requested:${approval.id}`,
+            payload: {
+              approvalId: approval.id,
+              approvalStatus: approval.status,
+              revisionDecision: "revision_requested",
+              revisionNote: approval.decisionNote,
+              issueId: linkedIssueIds[0] ?? null,
+              issueIds: linkedIssueIds,
+              linkedTasks,
+              recoveryInstruction,
+            },
+            requestedByActorType: "user",
+            requestedByActorId: req.actor.userId ?? "board",
+            contextSnapshot: {
+              source: "approval.revision_requested",
+              approvalId: approval.id,
+              approvalStatus: approval.status,
+              revisionDecision: "revision_requested",
+              revisionNote: approval.decisionNote,
+              issueId: linkedIssueIds[0] ?? null,
+              issueIds: linkedIssueIds,
+              linkedTasks,
+              taskId: linkedIssueIds[0] ?? null,
+              wakeReason: "approval_revision_requested",
+              recoveryInstruction,
+            },
+          });
+          await logActivity(db, {
+            companyId: approval.companyId,
+            actorType: "user",
+            actorId: req.actor.userId ?? "board",
+            action: "approval.requester_wakeup_queued",
+            entityType: "approval",
+            entityId: approval.id,
+            details: {
+              requesterAgentId: approval.requestedByAgentId,
+              wakeRunId: wakeRun?.id ?? null,
+              linkedIssueIds,
+              recoveryOperationId: "resubmit_approval",
+            },
+          });
+        } catch (err) {
+          logger.warn(
+            { err, approvalId: approval.id, requestedByAgentId: approval.requestedByAgentId },
+            "failed to queue requester wakeup after approval revision request",
+          );
+          await logActivity(db, {
+            companyId: approval.companyId,
+            actorType: "user",
+            actorId: req.actor.userId ?? "board",
+            action: "approval.requester_wakeup_failed",
+            entityType: "approval",
+            entityId: approval.id,
+            details: {
+              requesterAgentId: approval.requestedByAgentId,
+              linkedIssueIds,
+              error: err instanceof Error ? err.message : String(err),
+              recoveryOperationId: "resubmit_approval",
+            },
+          });
+        }
+      }
+
       res.json(redactApprovalPayload(approval));
     },
   );

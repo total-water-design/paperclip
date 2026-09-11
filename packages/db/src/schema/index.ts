@@ -117,6 +117,7 @@ export { heartbeatRunEvents } from "./heartbeat_run_events.js";
 export { completionContracts } from "./completion_contracts.js";
 export { nativeRunResults } from "./native_run_results.js";
 export { nativeRunFinalizations } from "./native_run_finalizations.js";
+export { semanticActionReceipts } from "./semantic_action_receipts.js";
 export { workAssessments } from "./work_assessments.js";
 export { statusDecisions } from "./status_decisions.js";
 export { statusDecisionEffects } from "./status_decision_effects.js";

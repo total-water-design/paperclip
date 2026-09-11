@@ -105,6 +105,26 @@ describe("approvalService resolution idempotency", () => {
     expect(mockNotifyHireApproved).toHaveBeenCalledTimes(1);
   });
 
+  it("allows board approval of a revision-requested approval", async () => {
+    const revised = { ...createApproval("revision_requested"), type: "request_board_approval" };
+    const approved = { ...revised, status: "approved" };
+    const dbStub = createDbStub([[revised]], [approved]);
+
+    const result = await approvalService(dbStub.db as any).approve("approval-1", "board", "approved");
+
+    expect(result).toMatchObject({ applied: true, approval: { status: "approved" } });
+  });
+
+  it("allows board rejection of a revision-requested approval", async () => {
+    const revised = { ...createApproval("revision_requested"), type: "request_board_approval" };
+    const rejected = { ...revised, status: "rejected" };
+    const dbStub = createDbStub([[revised]], [rejected]);
+
+    const result = await approvalService(dbStub.db as any).reject("approval-1", "board", "rejected");
+
+    expect(result).toMatchObject({ applied: true, approval: { status: "rejected" } });
+  });
+
   it("creates the agent from payload when approval does not reference a pending agent", async () => {
     const approved = {
       ...createApproval("approved"),

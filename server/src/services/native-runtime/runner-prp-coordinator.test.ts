@@ -9,14 +9,18 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import {
   agents,
+  activityLog,
+  approvals,
   companies,
   completionContracts,
   createDb,
   heartbeatRunEvents,
   heartbeatRuns,
   issues,
+  issueApprovals,
   nativeRunFinalizations,
   nativeRunResults,
+  semanticActionReceipts,
 } from "@paperclipai/db";
 import type {
   PrpEvent,
@@ -118,6 +122,10 @@ describeEmbeddedPostgres("hidden runner PRP coordinator", () => {
     runnerPrpWebSocketInternals.resetForTests();
     await db.delete(nativeRunFinalizations);
     await db.delete(nativeRunResults);
+    await db.delete(activityLog);
+    await db.delete(semanticActionReceipts);
+    await db.delete(issueApprovals);
+    await db.delete(approvals);
     await db.delete(heartbeatRunEvents);
     await db.update(issues).set({ executionRunId: null });
     await db.delete(heartbeatRuns);
@@ -336,6 +344,70 @@ describeEmbeddedPostgres("hidden runner PRP coordinator", () => {
       error: { code: "task_ownership_denied", retryable: false },
       resultReceipt: { phase: "result" },
     });
+  });
+
+  it("resubmits only the requester's existing approval through a durable semantic receipt", async () => {
+    const seed = await seedNativeRun();
+    const approvalId = randomUUID();
+    await db.insert(approvals).values({
+      id: approvalId,
+      companyId: seed.companyId,
+      type: "request_board_approval",
+      requestedByAgentId: seed.agentId,
+      status: "revision_requested",
+      payload: { estimate: "original" },
+    });
+    await db.insert(issueApprovals).values({
+      companyId: seed.companyId,
+      issueId: seed.issueId,
+      approvalId,
+      linkedByAgentId: seed.agentId,
+    });
+
+    const authority = new PaperclipRunnerSemanticAuthority(db, {
+      companyId: seed.companyId,
+      issueId: seed.issueId,
+      runId: seed.runId,
+      agentId: seed.agentId,
+    });
+    const call = {
+      callId: "resubmit-1",
+      operationId: "resubmit_approval",
+      correlation: {
+        runId: seed.runId,
+        normalizedSessionId: seed.sessionId,
+        turnId: "turn-1",
+        itemId: "item-1",
+      },
+      input: {
+        approvalId,
+        payload: { estimate: "revised" },
+        idempotencyKey: "revision-1",
+      },
+    };
+
+    const first = await authority.dispatch(call);
+    const retry = await authority.dispatch({ ...call, callId: "resubmit-2" });
+
+    expect(first).toMatchObject({
+      ok: true,
+      operationId: "resubmit_approval",
+      duplicate: false,
+      value: { disposition: "applied", entityRefs: [approvalId, seed.issueId] },
+      inputReceipt: { phase: "input" },
+      resultReceipt: { phase: "result" },
+    });
+    expect(retry).toMatchObject({
+      ok: true,
+      operationId: "resubmit_approval",
+      duplicate: true,
+      value: { disposition: "applied", entityRefs: [approvalId, seed.issueId] },
+    });
+    const [approval] = await db.select().from(approvals).where(eq(approvals.id, approvalId));
+    expect(approval).toMatchObject({ status: "pending", payload: { estimate: "revised" } });
+    expect(await db.select().from(issueApprovals).where(eq(issueApprovals.approvalId, approvalId))).toHaveLength(1);
+    expect(await db.select().from(approvals).where(eq(approvals.companyId, seed.companyId))).toHaveLength(1);
+    expect(await db.select().from(semanticActionReceipts)).toHaveLength(1);
   });
 
   it("persists events and results idempotently and leases finalization", async () => {

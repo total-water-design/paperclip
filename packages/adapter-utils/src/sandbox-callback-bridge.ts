@@ -165,7 +165,9 @@ export const DEFAULT_SANDBOX_CALLBACK_BRIDGE_ROUTE_ALLOWLIST: readonly SandboxCa
   { method: "POST", path: /^\/api\/companies\/[^/]+\/agent-hires$/ },
   { method: "POST", path: /^\/api\/issues\/[^/]+\/approvals$/ },
 
-  // Approvals (request, read, comment)
+  // Approvals (request, read, comment). Revision recovery uses the native
+  // runner's resubmit_approval semantic action; raw REST resubmission remains
+  // unavailable through this bridge.
   { method: "GET", path: /^\/api\/approvals\/[^/]+$/ },
   { method: "GET", path: /^\/api\/approvals\/[^/]+\/issues$/ },
   { method: "GET", path: /^\/api\/approvals\/[^/]+\/comments$/ },

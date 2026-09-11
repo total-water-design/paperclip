@@ -1716,6 +1716,97 @@
   {
     "allowedModes": [
       "standard",
+      "skill_test"
+    ],
+    "description": "Resubmit the requesting agent's revision-requested approval; approvers approve or reject.",
+    "effect": "governance",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "approvalId": {
+          "description": "Revision-requested approval identifier.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "idempotencyKey": {
+          "description": "Caller-stable retry key.",
+          "maxLength": 240,
+          "minLength": 1,
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": true,
+          "type": "object"
+        }
+      },
+      "required": [
+        "idempotencyKey",
+        "approvalId"
+      ],
+      "type": "object"
+    },
+    "operationId": "resubmit_approval",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "commandId": {
+          "description": "Stable command identifier.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "disposition": {
+          "enum": [
+            "applied",
+            "duplicate"
+          ]
+        },
+        "entityRefs": {
+          "description": "Entities affected by the operation.",
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 200,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "scheduledWakeIds": {
+          "description": "Wake identifiers scheduled by the operation.",
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 200,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "stateRevision": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "commandId",
+        "disposition",
+        "stateRevision",
+        "entityRefs",
+        "scheduledWakeIds"
+      ],
+      "type": "object"
+    },
+    "placement": "optional",
+    "requiredClaims": [
+      "governance:approvals:resubmit"
+    ],
+    "schema": "paperclip.semantic-action.v1",
+    "title": "Resubmit approval",
+    "version": 1
+  },
+  {
+    "allowedModes": [
+      "standard",
       "ask",
       "planning",
       "skill_test"
