@@ -263,7 +263,7 @@ describe("sandbox callback bridge", () => {
       },
     });
     expect(seenRequests[0]?.headers.authorization).toBeUndefined();
-    expect(seenRequests[0]?.headers["x-paperclip-run-id"]).toBeUndefined();
+    expect(seenRequests[0]?.headers["x-paperclip-run-id"]).toBe("run-bridge-1");
 
   });
 

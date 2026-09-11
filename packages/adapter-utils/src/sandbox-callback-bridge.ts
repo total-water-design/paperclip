@@ -191,6 +191,11 @@ export const DEFAULT_SANDBOX_CALLBACK_BRIDGE_HEADER_ALLOWLIST = [
   "content-type",
   "if-match",
   "if-none-match",
+  // This is not forwarded as caller authority. The host bridge compares it to
+  // its authenticated run and then replaces it with that authenticated value.
+  // Keeping it here prevents a caller-supplied mismatch from being silently
+  // masked by the host-side header injection.
+  "x-paperclip-run-id",
 ] as const;
 
 export interface SandboxCallbackBridgeRequest {
