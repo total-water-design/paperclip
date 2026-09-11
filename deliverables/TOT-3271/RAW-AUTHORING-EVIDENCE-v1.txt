@@ -1,0 +1,57 @@
+TOT-3271 RAW AUTHORING EVIDENCE v1
+UTC interval: 2026-09-11T01:56:55Z through 2026-09-11T01:56:55Z
+Scope: repository-only, no host or network control action.
+
+$ git show -s --format='commit=%H%ntree=%T%nparents=%P%nauthor=%aI%ncommitter=%cI%nsubject=%s' 72b50614011b457093cd5e3be189a4ca7a9aab75 904683f94e4788beca63244269b9dcd59dcff71d 98d8a7d32cd92afa4a93c2515ec3c085a9dd44af
+commit=72b50614011b457093cd5e3be189a4ca7a9aab75
+tree=3a5cfa99e28ba3f59d7d6761c9e49fd97ab8d724
+parents=387f2710d8554455a842b2ad55ee3a8b08e10fd6 e890996329e4c2fdaa32fda3c1ee598fbf3958fc
+author=2026-09-09T23:27:09+00:00
+committer=2026-09-09T23:27:09+00:00
+subject=fix(sandbox): compose callback framing successor
+commit=904683f94e4788beca63244269b9dcd59dcff71d
+tree=3a5cfa99e28ba3f59d7d6761c9e49fd97ab8d724
+parents=72b50614011b457093cd5e3be189a4ca7a9aab75
+author=2026-09-10T10:43:29+00:00
+committer=2026-09-10T10:43:29+00:00
+subject=chore(provenance): establish post-adverse successor
+commit=98d8a7d32cd92afa4a93c2515ec3c085a9dd44af
+tree=53bf5caa25deaae473b2269020c86f3f88e0b747
+parents=cf76bf25831967319dd339a4ab79673aad76f385
+author=2026-09-09T00:28:30+00:00
+committer=2026-09-09T00:28:30+00:00
+subject=fix closed workspace checkout transaction fixture
+exit=0
+
+$ git diff --name-only 72b50614011b457093cd5e3be189a4ca7a9aab75..904683f94e4788beca63244269b9dcd59dcff71d
+<empty>
+exit=0
+
+$ sha256sum deliverables/TOT-3258/activation-preflight-20260910T1643Z.md
+f2c2e66754482024bd44ef1c74fffeea194961eb24c3df15e71df335ae7d9af6  deliverables/TOT-3258/activation-preflight-20260910T1643Z.md
+exit=0
+
+$ git ls-remote origin HEAD refs/heads/fix/sandbox-callback-framing-post-adverse-successor
+fatal: unable to access 'https://github.com/total-water-design/total-water-design-suite.git/': Could not resolve host: github.com
+exit=128
+
+$ curl -sS -H 'Authorization: Bearer [REDACTED]' http://127.0.0.1:3100/api/issues/[REDACTED]/heartbeat-context
+curl: (7) Failed to connect to 127.0.0.1 port 3100 after 0 ms: Couldn't connect to server
+exit=7
+
+$ sha256sum deliverables/TOT-3271/successor-live-controls-manifest-v1.json
+98d6f891a369129a83bc91a30a4983dcc45a8e9114ad4e2e7f12968d7843dd0c  deliverables/TOT-3271/successor-live-controls-manifest-v1.json
+$ stat -c '%s' deliverables/TOT-3271/successor-live-controls-manifest-v1.json
+4512
+$ sha256sum deliverables/TOT-3271/PREFLIGHT-PROCEDURE-v1.md
+fc2418a482d7b33d6d139374121cdc1cd077c7ebeda9e599a7737138ebbb5614  deliverables/TOT-3271/PREFLIGHT-PROCEDURE-v1.md
+$ stat -c '%s' deliverables/TOT-3271/PREFLIGHT-PROCEDURE-v1.md
+4934
+$ jq -e . deliverables/TOT-3271/successor-live-controls-manifest-v1.json >/dev/null
+exit=0
+$ git diff --check -- deliverables/TOT-3271
+exit=0
+
+No SSH, secret read, staging, activation, rollback, service or PostgreSQL
+control, protected-path mutation, collection, certification, merge, deployment,
+or approval creation occurred.

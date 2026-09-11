@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "packetIdentity": "TOT-3271/successor-live-controls-preflight-v1",
+  "createdAtUtc": "2026-09-11T00:00:00Z",
+  "disposition": "AUTHORING_ONLY_NOT_EXECUTION_AUTHORITY",
+  "authority": {
+    "humanExecutor": "NAMED_HUMAN_EXECUTOR_REQUIRED",
+    "oneShotScope": "A future, separately approved human may run exactly one read-only preflight. This packet contains no activation, staging, reload, restart, rollback, PostgreSQL, or collection command.",
+    "prohibitedReuse": [
+      "TOT-3258 adverse preflight and its rejected approval",
+      "TOT-3221 bridge-health-contract-successor-packet-v2",
+      "any prior approval, execution token, or operator identity"
+    ]
+  },
+  "actualLivePredecessor": {
+    "sha": "72b50614011b457093cd5e3be189a4ca7a9aab75",
+    "tree": "3a5cfa99e28ba3f59d7d6761c9e49fd97ab8d724",
+    "payloadPath": "/home/paperclip/.paperclip/cli/installs/git/72b50614011b",
+    "observedAtUtc": "2026-09-10T16:44:45Z",
+    "source": "TOT-3258 activation-preflight-20260910T1643Z.md"
+  },
+  "targetCandidate": {
+    "sha": "904683f94e4788beca63244269b9dcd59dcff71d",
+    "tree": "3a5cfa99e28ba3f59d7d6761c9e49fd97ab8d724",
+    "parent": "72b50614011b457093cd5e3be189a4ca7a9aab75",
+    "payloadPath": "/home/paperclip/.paperclip/cli/installs/git/904683f94e47",
+    "source": "local git object inspection plus TOT-3258"
+  },
+  "rollbackIdentity": {
+    "sha": "72b50614011b457093cd5e3be189a4ca7a9aab75",
+    "reason": "The effective current pointer, install manifest, activation authority, runtime argv, and embedded PostgreSQL binary were all observed at the live predecessor. The rejected v2 lane's 98d8 rollback is not adopted.",
+    "rollbackEntrypoint": "/home/paperclip/.paperclip/cli/installs/git/72b50614011b/node_modules/paperclipai/dist/index.js"
+  },
+  "locations": {
+    "packetDirectory": "/var/lib/paperclip/activation-packets/TOT-3271/successor-live-controls-preflight-v1",
+    "preflightEntrypoint": "preflight-only.sh",
+    "activationEntrypoint": "ABSENT_BY_DESIGN",
+    "rollbackEntrypoint": "ABSENT_BY_DESIGN"
+  },
+  "effectiveControlsObserved": {
+    "service": {
+      "unit": "/etc/systemd/system/paperclip.service",
+      "state": "active/running/enabled",
+      "mainPid": 704327,
+      "effectiveRestart": "no",
+      "effectiveExecStop": "empty",
+      "argv": "/usr/bin/node /home/paperclip/.paperclip/cli/installs/git/72b50614011b/node_modules/paperclipai/dist/index.js run"
+    },
+    "dropins": {
+      "requiredPresent": ["10-safe-shutdown.conf", "20-git-scan-containment.conf", "30-managed-launcher-guard.conf", "40-pg-clean-stop.conf", "45-application-owned-postgres-stop.conf", "97-db-recovery-single-start.conf", "99-maintenance-hold.conf"],
+      "requiredAbsent": ["98-db-recovery-no-heartbeats.conf"],
+      "unexpectedPresent": [{"name": "50-memory-limit.conf", "bytes": 39, "sha256": "cb861f41312c4dce8c29cdbb921033b3ae3d08904c4308cbd83899fd3e02d867"}],
+      "schedulerDisabledEnvironment": false
+    },
+    "guard": {"path": "/usr/local/bin/paperclipai-service-guard", "sha256": "85e979a79376705b59b148bb9655672370b936e4b0dc8d3da701b3d911523172"},
+    "shim": {"path": "/home/paperclip/.local/bin/paperclipai", "sha256": "70a5b24dfa2e2eed7821b8f0fc730498871e47d1b3a7029e931d10058a5aad54"},
+    "postgresql": {"pid": 704366, "port": 54329, "clusterState": "in production", "binaryBasis": "72b50614"}
+  },
+  "failClosed": {
+    "onAnyDifference": "STOP_ADVERSE_NO_RETRY",
+    "requiredChecks": ["human identity", "candidate object/tree/parent", "live predecessor pointers and argv", "candidate payload absence before any separately governed staging", "rollback readiness at 72b50614", "guard and shim digests", "exact effective drop-in set including 50 and absent 98", "service effective Restart=no and empty ExecStop", "PostgreSQL PID/port/production state", "complete raw stdout/stderr provenance"]
+  },
+  "limitations": [
+    "This authoring run made no host observation and performed no SSH or privileged command.",
+    "The Paperclip API bridge was unreachable at 127.0.0.1:3100 during authoring.",
+    "Live origin could not be queried because DNS resolution for github.com failed; local tracking refs are not live-origin proof.",
+    "The 2026-09-10 live observations are historical source evidence and must be recaptured by the separate human preflight.",
+    "No candidate archive, installation manifest, entrypoint size, or SHA-256 is asserted for this new packet because the candidate payload was observed absent."
+  ]
+}
