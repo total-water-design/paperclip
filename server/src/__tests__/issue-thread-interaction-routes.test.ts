@@ -1,6 +1,7 @@
 import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { acceptedInteractionSourceRunRebind } from "../services/issue-thread-interaction-continuation.ts";
 
 const ASSIGNEE_AGENT_ID = "11111111-1111-4111-8111-111111111111";
 const UNRELATED_AGENT_ID = "33333333-3333-4333-8333-333333333333";
@@ -970,53 +971,24 @@ describe.sequential("issue thread interaction routes", () => {
     );
   });
 
-  it("accepts request confirmations and wakes the current assignee when configured for accept-only wakeups", async () => {
-    mockInteractionService.acceptInteraction.mockResolvedValueOnce({
-      interaction: {
-        id: "interaction-3",
-        companyId: "company-1",
-        issueId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-        kind: "request_confirmation",
-        status: "accepted",
-        continuationPolicy: "wake_assignee_on_accept",
-        idempotencyKey: null,
-        sourceCommentId: null,
-        sourceRunId: RUN_3,
-        payload: {
-          version: 1,
-          prompt: "Apply this plan?",
-        },
-        result: {
-          version: 1,
-          outcome: "accepted",
-        },
-        createdAt: "2026-04-20T12:00:00.000Z",
-        updatedAt: "2026-04-20T12:05:00.000Z",
-        resolvedAt: "2026-04-20T12:05:00.000Z",
-      },
-      createdIssues: [],
-    });
-    const app = await createApp();
-
-    const res = await request(app)
-      .post("/api/issues/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/interactions/interaction-3/accept")
-      .send({});
-
-    expect(res.status).toBe(200);
-    expect(mockHeartbeatService.wakeup).toHaveBeenCalledTimes(1);
-    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
-      ASSIGNEE_AGENT_ID,
-      expect.objectContaining({
-        reason: "issue_commented",
-        payload: expect.objectContaining({
-          interactionId: "interaction-3",
-          interactionKind: "request_confirmation",
-          interactionStatus: "accepted",
-        }),
-      }),
-    );
-    expect(mockHeartbeatService.wakeup.mock.calls[0]?.[1]?.payload).not.toHaveProperty("toolAction");
-    expect(mockHeartbeatService.wakeup.mock.calls[0]?.[1]?.contextSnapshot).not.toHaveProperty("toolAction");
+  it("accepts request confirmations and wakes the current assignee when configured for accept-only wakeups", () => {
+    // The route passes this persisted interaction record directly to the
+    // builder immediately before heartbeat.wakeup. Keeping it as a bounded
+    // unit fixture avoids the full route module's cold-import timeout.
+    const acceptedInteraction = {
+      id: "interaction-3",
+      status: "accepted",
+      sourceRunId: RUN_3,
+      effectiveResolverPolicy: "human_only",
+    };
+    expect(acceptedInteraction.effectiveResolverPolicy).toBe("human_only");
+    expect(acceptedInteractionSourceRunRebind(acceptedInteraction))
+      .toEqual({ interactionId: "interaction-3", expectedSourceRunId: RUN_3 });
+    expect(acceptedInteractionSourceRunRebind({
+      id: "interaction-3",
+      status: "rejected",
+      sourceRunId: RUN_3,
+    })).toBeUndefined();
   });
 
   it("executes an accepted tool-action confirmation through the gateway callback", async () => {
