@@ -7,6 +7,7 @@ import {
   companies,
   createDb,
   heartbeatRuns,
+  issues,
 } from "@paperclipai/db";
 import {
   getEmbeddedPostgresTestSupport,
@@ -31,9 +32,143 @@ describeEmbeddedPostgres("cross-issue influence limit PostgreSQL serialization",
 
   afterEach(async () => {
     await db.delete(activityLog);
+    await db.delete(issues);
     await db.delete(heartbeatRuns);
     await db.delete(agents);
     await db.delete(companies);
+  });
+
+  async function seedRun(input: {
+    companyId?: string;
+    agentId?: string;
+    runId?: string;
+    contextSnapshot?: unknown;
+  } = {}) {
+    const companyId = input.companyId ?? randomUUID();
+    const agentId = input.agentId ?? randomUUID();
+    const runId = input.runId ?? randomUUID();
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix: `C${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      defaultResponsibleUserId: "board-user",
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      companyId,
+      name: "Cross-issue Coder",
+      role: "engineer",
+      adapterType: "codex_local",
+      adapterConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+    await db.insert(heartbeatRuns).values({
+      id: runId,
+      companyId,
+      agentId,
+      status: "running",
+      responsibleUserId: "board-user",
+      contextSnapshot: input.contextSnapshot ?? { trigger: "heartbeat_timer", reason: "interval_elapsed" },
+    });
+    return { companyId, agentId, runId };
+  }
+
+  async function insertIssue(input: {
+    companyId: string;
+    assigneeAgentId: string;
+    checkoutRunId?: string | null;
+    identifier?: string;
+  }) {
+    const id = randomUUID();
+    await db.insert(issues).values({
+      id,
+      companyId: input.companyId,
+      title: "Source issue",
+      status: "in_progress",
+      priority: "medium",
+      assigneeAgentId: input.assigneeAgentId,
+      checkoutRunId: input.checkoutRunId ?? null,
+      executionRunId: input.checkoutRunId ?? null,
+      identifier: input.identifier ?? null,
+    });
+    return id;
+  }
+
+  const attempt = (input: { companyId: string; agentId: string; runId: string }, targetIssueId = randomUUID()) =>
+    observeCrossIssueInfluence(db, {
+      ...input,
+      targetIssueId,
+      targetIssueIdentifier: "CAP-2",
+      kind: "comment",
+      now: CROSS_ISSUE_INFLUENCE_ENFORCE_AT,
+    });
+
+  it("keeps scoped snapshot attribution unchanged", async () => {
+    const sourceIssueId = randomUUID();
+    const run = await seedRun({ contextSnapshot: { issueId: sourceIssueId } });
+    const checkoutIssueId = await insertIssue({ ...run, assigneeAgentId: run.agentId, checkoutRunId: run.runId });
+
+    await attempt(run);
+
+    const [recorded] = await db.select({ details: activityLog.details }).from(activityLog);
+    expect(recorded?.details).toMatchObject({ sourceIssueId });
+    expect(recorded?.details).not.toMatchObject({ sourceIssueId: checkoutIssueId });
+  });
+
+  it("attributes an unscoped timer run from its unique same-agent checkout", async () => {
+    const run = await seedRun();
+    const sourceIssueId = await insertIssue({ ...run, assigneeAgentId: run.agentId, checkoutRunId: run.runId });
+
+    await expect(attempt(run)).resolves.toMatchObject({ allowed: true });
+    const [recorded] = await db.select({ details: activityLog.details }).from(activityLog);
+    expect(recorded?.details).toMatchObject({ sourceIssueId });
+  });
+
+  it("rejects an unscoped run without a checkout", async () => {
+    const run = await seedRun();
+    await expect(attempt(run)).rejects.toMatchObject({ status: 403 });
+  });
+
+  it("rejects checkout linkage owned by another agent", async () => {
+    const run = await seedRun();
+    const otherAgentId = randomUUID();
+    await db.insert(agents).values({
+      id: otherAgentId,
+      companyId: run.companyId,
+      name: "Other agent",
+      role: "engineer",
+      adapterType: "codex_local",
+      adapterConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+    await insertIssue({ ...run, assigneeAgentId: otherAgentId, checkoutRunId: run.runId });
+    await expect(attempt(run)).rejects.toMatchObject({ status: 403 });
+  });
+
+  it("rejects checkout linkage from another company", async () => {
+    const run = await seedRun();
+    const other = await seedRun();
+    await insertIssue({
+      companyId: other.companyId,
+      assigneeAgentId: other.agentId,
+      checkoutRunId: run.runId,
+    });
+    await expect(attempt(run)).rejects.toMatchObject({ status: 403 });
+  });
+
+  it("rejects ambiguous same-agent checkout linkage", async () => {
+    const run = await seedRun();
+    await insertIssue({ ...run, assigneeAgentId: run.agentId, checkoutRunId: run.runId });
+    await insertIssue({ ...run, assigneeAgentId: run.agentId, checkoutRunId: run.runId });
+    await expect(attempt(run)).rejects.toMatchObject({ status: 403 });
+  });
+
+  it("does not let an arbitrary run header spoof checkout attribution", async () => {
+    const run = await seedRun();
+    await insertIssue({ ...run, assigneeAgentId: run.agentId, checkoutRunId: run.runId });
+    await expect(attempt({ ...run, runId: randomUUID() })).rejects.toMatchObject({ status: 403 });
   });
 
   afterAll(async () => {
