@@ -7,6 +7,7 @@ import {
   installCommand,
   installGitPayload,
   stageGitCommand,
+  GITHUB_SOURCE_TOKEN_ENV,
   resolveGitHubRef,
   resolveGitInstallRequest,
   resolveGitInstallWorkspacePackages,
@@ -181,6 +182,76 @@ describe("managed install commands", () => {
     expect(staged.entrypointSha256).toMatch(/^[0-9a-f]{64}$/);
     expect(staged.adapterBridgeSha256).toMatch(/^[0-9a-f]{64}$/);
     expect(staged.serverRouteSha256).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("stages a protected exact SHA through the explicitly projected source token without emitting it", async () => {
+    const sha = "f".repeat(40);
+    const token = "github_pat_clean_room_fixture_123";
+    process.env[GITHUB_SOURCE_TOKEN_ENV] = token;
+    const sourceConfigs: string[] = [];
+    const delegate = createGitCheckoutRunCommand(sha);
+    const runCommand: CommandRunner = async (file, args, options) => {
+      const configIndex = args.indexOf("--config");
+      if (file === "curl" && configIndex >= 0) {
+        const config = fs.readFileSync(args[configIndex + 1]!, "utf8");
+        sourceConfigs.push(config);
+        expect(args).not.toContain(token);
+        expect(args.join(" ")).not.toContain("Authorization:");
+      }
+      return delegate(file, args, options);
+    };
+
+    await stageGitCommand({ ref: sha, repo: "total-water-design/total-water-design-suite", yes: true, json: true }, { runCommand, now: () => new Date("2026-09-11T00:00:00Z") });
+
+    const paths = resolveInstallStorePaths();
+    const identity = JSON.parse(fs.readFileSync(path.join(paths.stagedRoot, `${sha}.json`), "utf8"));
+    expect(sourceConfigs).toHaveLength(2);
+    expect(sourceConfigs).toEqual([`header = "Authorization: Bearer ${token}"\n`, `header = "Authorization: Bearer ${token}"\n`]);
+    expect(JSON.stringify(identity)).not.toContain(token);
+    expect(console.log).toHaveBeenLastCalledWith(expect.not.stringContaining(token));
+    expect(identity).toMatchObject({ sha, payloadPath: payloadPathFor(paths, "git", sha.slice(0, 12)) });
+    for (const field of ["manifestSha256", "entrypointSha256", "adapterBridgeSha256", "serverRouteSha256"]) {
+      expect(identity[field]).toMatch(/^[0-9a-f]{64}$/);
+    }
+  });
+
+  it("fails a protected source fetch before staging and leaves the active payload untouched", async () => {
+    const activeSha = "1".repeat(40);
+    const requestedSha = "2".repeat(40);
+    const paths = resolveInstallStorePaths();
+    const activePayload = payloadPathFor(paths, "git", activeSha.slice(0, 12));
+    fs.mkdirSync(activePayload, { recursive: true });
+    fs.symlinkSync(activePayload, paths.currentPath);
+    const activeManifest = {
+      schemaVersion: INSTALL_MANIFEST_VERSION as typeof INSTALL_MANIFEST_VERSION,
+      source: "git" as const,
+      version: "0.3.1",
+      channel: "pinned" as const,
+      repo: "total-water-design/total-water-design-suite",
+      ref: activeSha,
+      sha: activeSha,
+      payloadPath: activePayload,
+      installedAt: "2026-09-10T00:00:00Z",
+      previous: [],
+    };
+    writeInstallManifestAtomic(activeManifest, paths);
+    const beforeManifest = fs.readFileSync(paths.manifestPath, "utf8");
+    const beforeTarget = fs.readlinkSync(paths.currentPath);
+    process.env[GITHUB_SOURCE_TOKEN_ENV] = "github_pat_clean_room_fixture_123";
+    const runCommand = vi.fn(async (file: string, args: string[]) => {
+      if (file === "curl") {
+        expect(fs.readFileSync(args[args.indexOf("--config") + 1]!, "utf8")).toContain("Authorization: Bearer");
+        throw new Error("curl: (22) The requested URL returned error: 404");
+      }
+      throw new Error(`Unexpected command: ${file}`);
+    });
+
+    await expect(stageGitCommand({ ref: requestedSha, repo: "total-water-design/total-water-design-suite", yes: true, json: true }, { runCommand }))
+      .rejects.toThrow("404");
+    expect(fs.readlinkSync(paths.currentPath)).toBe(beforeTarget);
+    expect(fs.readFileSync(paths.manifestPath, "utf8")).toBe(beforeManifest);
+    expect(fs.existsSync(path.join(paths.stagedRoot, `${requestedSha}.json`))).toBe(false);
+    expect(runCommand).toHaveBeenCalledOnce();
   });
 
   it("builds git checkouts with NODE_ENV cleared so ambient production mode keeps devDependencies", async () => {

@@ -29,6 +29,12 @@ const execFileAsync = promisify(execFile);
 export const PUBLIC_NPM_REGISTRY = "https://registry.npmjs.org";
 const DEFAULT_GITHUB_REPO = "paperclipai/paperclip";
 const EXACT_VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
+/**
+ * Deliberately separate from general-purpose GitHub CLI credentials. Deployment
+ * automation projects this value only into the non-activating source-staging
+ * process when it needs to read a protected repository.
+ */
+export const GITHUB_SOURCE_TOKEN_ENV = "PAPERCLIP_GITHUB_SOURCE_TOKEN";
 
 export type InstallOptions = { canary?: boolean; version?: string; ref?: string; repo?: string; yes?: boolean };
 export type StageOptions = { ref?: string; repo?: string; yes?: boolean; json?: boolean };
@@ -150,7 +156,13 @@ async function runGitHubCurl(
   // Anonymous GitHub requests are rate-limited per source IP (CI runners and
   // corporate NAT exhaust the shared quota); honor an ambient token when present.
   // The token travels via a curl --config file so it never appears in process args.
-  const token = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN;
+  const projectedSourceToken = process.env[GITHUB_SOURCE_TOKEN_ENV];
+  if (projectedSourceToken !== undefined && !/^[A-Za-z0-9_-]+$/.test(projectedSourceToken)) {
+    throw new Error(`${GITHUB_SOURCE_TOKEN_ENV} must contain only letters, digits, underscores, or hyphens.`);
+  }
+  // A projected staging token takes precedence. Retain GH_TOKEN/GITHUB_TOKEN
+  // for backward-compatible interactive managed installs and updates.
+  const token = projectedSourceToken || process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
   if (!token) return runCommand("curl", args, options);
   const configDir = fs.mkdtempSync(path.join(os.tmpdir(), "paperclipai-gh-"));
   const configFile = path.join(configDir, "headers");

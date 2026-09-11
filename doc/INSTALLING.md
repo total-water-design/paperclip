@@ -131,6 +131,22 @@ authority record.
 paperclipai stage git --repo owner/repository --ref <40-character-sha> --yes --json
 ```
 
+When the source repository is protected, project a read-only GitHub token into
+the staging process as `PAPERCLIP_GITHUB_SOURCE_TOKEN`. This variable is read
+only by the GitHub source fetches; its value is supplied through a private,
+short-lived curl config file and is never included in JSON output, a staged
+identity, an activation authority file, or the managed payload. Do not put the
+token in a command-line argument or a shell-exported rollout manifest.
+
+```sh
+PAPERCLIP_GITHUB_SOURCE_TOKEN="$(your_secret_delivery_command)" \
+  paperclipai stage git --repo owner/repository --ref <40-character-sha> --yes --json
+```
+
+If source authentication or either source fetch fails, staging stops before it
+acquires the managed-install transaction. It leaves `current`, `install.json`,
+the service, and activation authority unchanged.
+
 The JSON output records the candidate payload path and SHA-256 values for the
 future `install.json`, CLI entrypoint, adapter callback bridge, and server issue
 route, plus ready-to-copy guard authority fields. An authorized deployment
