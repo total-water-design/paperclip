@@ -1356,7 +1356,6 @@ describe("sandbox callback bridge", () => {
       { method: "GET", path: "/api/approvals/ap-1/issues" },
       { method: "GET", path: "/api/approvals/ap-1/comments" },
       { method: "POST", path: "/api/approvals/ap-1/comments" },
-      { method: "POST", path: "/api/approvals/ap-1/resubmit" },
       { method: "POST", path: "/api/companies/co-1/approvals" },
       { method: "GET", path: "/api/execution-workspaces/ws-1" },
       { method: "POST", path: "/api/execution-workspaces/ws-1/runtime-services/start" },
@@ -1399,8 +1398,9 @@ describe("sandbox callback bridge", () => {
       { method: "DELETE", path: "/api/work-products/wp-1" },
       { method: "POST", path: "/api/approvals/ap-1/approve" },
       { method: "POST", path: "/api/approvals/ap-1/reject" },
-      // The resubmit capability is exact: decision subroutes and nested paths
-      // remain unavailable to the sandbox bridge.
+      // Revision recovery is semantic-only: raw REST resubmission, decision
+      // subroutes, and nested paths remain unavailable to the sandbox bridge.
+      { method: "POST", path: "/api/approvals/ap-1/resubmit" },
       { method: "POST", path: "/api/approvals/ap-1/resubmit/again" },
       { method: "POST", path: "/api/companies/co-1/logo" },
       { method: "GET", path: "/api/companies/co-1/secrets" },

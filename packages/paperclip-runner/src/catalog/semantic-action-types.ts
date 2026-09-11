@@ -24,6 +24,7 @@ export type PaperclipSemanticActionId =
   | "create_task"
   | "request_approval"
   | "decide_approval"
+  | "resubmit_approval"
   | "comment_on_approval"
   | "schedule_wake";
 

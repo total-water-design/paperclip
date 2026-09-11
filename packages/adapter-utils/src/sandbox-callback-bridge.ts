@@ -159,15 +159,13 @@ export const DEFAULT_SANDBOX_CALLBACK_BRIDGE_ROUTE_ALLOWLIST: readonly SandboxCa
   { method: "POST", path: /^\/api\/companies\/[^/]+\/agent-hires$/ },
   { method: "POST", path: /^\/api\/issues\/[^/]+\/approvals$/ },
 
-  // Approvals (request, read, comment, requester-owned resubmit). The server
-  // independently requires the requesting agent and a matching run context for
-  // resubmission, so this narrow bridge route restores the documented revision
-  // flow without granting board decision actions.
+  // Approvals (request, read, comment). Revision recovery uses the native
+  // runner's resubmit_approval semantic action; raw REST resubmission remains
+  // unavailable through this bridge.
   { method: "GET", path: /^\/api\/approvals\/[^/]+$/ },
   { method: "GET", path: /^\/api\/approvals\/[^/]+\/issues$/ },
   { method: "GET", path: /^\/api\/approvals\/[^/]+\/comments$/ },
   { method: "POST", path: /^\/api\/approvals\/[^/]+\/comments$/ },
-  { method: "POST", path: /^\/api\/approvals\/[^/]+\/resubmit$/ },
   { method: "POST", path: /^\/api\/companies\/[^/]+\/approvals$/ },
 
   // Execution workspaces and runtime services (start/stop/restart dev servers)
