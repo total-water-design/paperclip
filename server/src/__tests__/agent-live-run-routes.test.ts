@@ -16,6 +16,10 @@ const mockHeartbeatService = vi.hoisted(() => ({
   wakeup: vi.fn(),
 }));
 
+const mockAccessService = vi.hoisted(() => ({
+  isManagerOf: vi.fn(),
+}));
+
 const mockIssueService = vi.hoisted(() => ({
   getById: vi.fn(),
   getByIdentifier: vi.fn(),
@@ -69,6 +73,7 @@ function registerModuleMocks() {
         explanation: "Allowed by test grant.",
       })),
       hasPermission: vi.fn(async () => true),
+      isManagerOf: mockAccessService.isManagerOf,
     }),
     approvalService: () => ({}),
     builtInAgentService: () => ({ ensureCompanyDefaultAgentGrants: vi.fn() }),
@@ -92,7 +97,16 @@ function registerModuleMocks() {
   }));
 }
 
-async function createApp(db: Record<string, unknown> = {}) {
+async function createApp(
+  db: Record<string, unknown> = {},
+  actor: Record<string, unknown> = {
+    type: "board",
+    userId: "local-board",
+    companyIds: ["company-1"],
+    source: "local_implicit",
+    isInstanceAdmin: false,
+  },
+) {
   const [{ agentRoutes }, { errorHandler }] = await Promise.all([
     vi.importActual<typeof import("../routes/agents.js")>("../routes/agents.js"),
     vi.importActual<typeof import("../middleware/index.js")>("../middleware/index.js"),
@@ -100,13 +114,7 @@ async function createApp(db: Record<string, unknown> = {}) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
-    (req as any).actor = {
-      type: "board",
-      userId: "local-board",
-      companyIds: ["company-1"],
-      source: "local_implicit",
-      isInstanceAdmin: false,
-    };
+    (req as any).actor = actor;
     next();
   });
   app.use("/api", agentRoutes(db as any));
@@ -176,6 +184,7 @@ describe("agent live run routes", () => {
     vi.doUnmock("../middleware/index.js");
     registerModuleMocks();
     vi.clearAllMocks();
+    mockAccessService.isManagerOf.mockResolvedValue(false);
     mockIssueService.getByIdentifier.mockResolvedValue({
       id: "issue-1",
       companyId: "company-1",
@@ -651,5 +660,97 @@ describe("agent live run routes", () => {
         actorId: "local-board",
       },
     });
+  });
+
+  it("allows a same-company chief of staff to invoke a direct or indirect report", async () => {
+    const chiefOfStaffId = "22222222-2222-4222-8222-222222222222";
+    mockAccessService.isManagerOf.mockResolvedValue(true);
+
+    const res = await requestApp(
+      await createApp({}, {
+        type: "agent",
+        agentId: chiefOfStaffId,
+        companyId: "company-1",
+        source: "agent_jwt",
+        runId: "chief-of-staff-run",
+      }),
+      (baseUrl) => request(baseUrl)
+        .post(`/api/agents/${routeAgentId}/heartbeat/invoke`)
+        .send({}),
+    );
+
+    expect(res.status, JSON.stringify(res.body)).toBe(202);
+    expect(mockAccessService.isManagerOf).toHaveBeenCalledWith("company-1", chiefOfStaffId, routeAgentId);
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(routeAgentId, expect.objectContaining({
+      requestedByActorType: "agent",
+      requestedByActorId: chiefOfStaffId,
+    }));
+  });
+
+  it("preserves agent self-invocation without a reporting-subtree lookup", async () => {
+    const res = await requestApp(
+      await createApp({}, {
+        type: "agent",
+        agentId: routeAgentId,
+        companyId: "company-1",
+        source: "agent_jwt",
+        runId: "self-run",
+      }),
+      (baseUrl) => request(baseUrl)
+        .post(`/api/agents/${routeAgentId}/heartbeat/invoke`)
+        .send({}),
+    );
+
+    expect(res.status, JSON.stringify(res.body)).toBe(202);
+    expect(mockAccessService.isManagerOf).not.toHaveBeenCalled();
+  });
+
+  it("denies a same-company agent invoking an unrelated agent", async () => {
+    const peerId = "33333333-3333-4333-8333-333333333333";
+
+    const res = await requestApp(
+      await createApp({}, {
+        type: "agent",
+        agentId: peerId,
+        companyId: "company-1",
+        source: "agent_jwt",
+        runId: "peer-run",
+      }),
+      (baseUrl) => request(baseUrl)
+        .post(`/api/agents/${routeAgentId}/heartbeat/invoke`)
+        .send({}),
+    );
+
+    expect(res.status, JSON.stringify(res.body)).toBe(403);
+    expect(res.body).toEqual({ error: "Agent can only invoke itself or an agent in its reporting subtree" });
+    expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
+  });
+
+  it("does not disclose or invoke a cross-company agent", async () => {
+    const chiefOfStaffId = "22222222-2222-4222-8222-222222222222";
+    mockAgentService.getById.mockResolvedValueOnce({
+      id: routeAgentId,
+      companyId: "company-2",
+      name: "Other company builder",
+      adapterType: "codex_local",
+    });
+
+    const res = await requestApp(
+      await createApp({}, {
+        type: "agent",
+        agentId: chiefOfStaffId,
+        companyId: "company-1",
+        source: "agent_jwt",
+        runId: "chief-of-staff-run",
+      }),
+      (baseUrl) => request(baseUrl)
+        .post(`/api/agents/${routeAgentId}/heartbeat/invoke`)
+        .send({}),
+    );
+
+    expect(res.status, JSON.stringify(res.body)).toBe(404);
+    expect(res.body).toEqual({ error: "Agent not found" });
+    expect(mockAccessService.isManagerOf).not.toHaveBeenCalled();
+    expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
   });
 });

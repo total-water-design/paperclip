@@ -111,6 +111,10 @@ export const DEFAULT_SANDBOX_CALLBACK_BRIDGE_ROUTE_ALLOWLIST: readonly SandboxCa
   { method: "GET", path: /^\/api\/agents\/[^/]+\/skills$/ },
   { method: "POST", path: /^\/api\/agents\/[^/]+\/skills\/sync$/ },
   { method: "PATCH", path: /^\/api\/agents\/[^/]+\/instructions-path$/ },
+  // The server limits this route to self-invocation or the caller's reporting
+  // subtree. Exposing only the exact wake route does not grant other agent
+  // control-plane mutations through the bridge.
+  { method: "POST", path: /^\/api\/agents\/[^/]+\/heartbeat\/invoke$/ },
 
   // Company-level reads used to discover work and context
   { method: "GET", path: /^\/api\/companies\/[^/]+$/ },

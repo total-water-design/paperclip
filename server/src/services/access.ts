@@ -782,6 +782,7 @@ export function accessService(db: Db) {
   return {
     isInstanceAdmin,
     decide,
+    isManagerOf: authorization.isManagerOf,
     canUser,
     hasPermission,
     getMembership,

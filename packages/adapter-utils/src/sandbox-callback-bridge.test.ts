@@ -1374,6 +1374,7 @@ describe("sandbox callback bridge", () => {
       { method: "POST", path: "/api/routines/r-1/triggers" },
       { method: "PATCH", path: "/api/routine-triggers/t-1" },
       { method: "DELETE", path: "/api/routine-triggers/t-1" },
+      { method: "POST", path: "/api/agents/agent-1/heartbeat/invoke" },
     ];
     for (const request of allowed) {
       expect(authorizeSandboxCallbackBridgeRequestWithRoutes(request)).toBeNull();
@@ -1395,6 +1396,7 @@ describe("sandbox callback bridge", () => {
       { method: "POST", path: "/api/agents/agent-1/pause" },
       { method: "POST", path: "/api/agents/agent-1/terminate" },
       { method: "POST", path: "/api/agents/agent-1/keys" },
+      { method: "POST", path: "/api/agents/agent-1/heartbeat/invoke/extra" },
       { method: "POST", path: "/api/companies/co-1/exports" },
       { method: "POST", path: "/api/companies/co-1/imports/apply" },
       { method: "POST", path: "/api/companies/co-1/archive" },

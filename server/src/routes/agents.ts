@@ -4658,8 +4658,9 @@ export function agentRoutes(
     if (!agent) return;
 
     if (req.actor.type === "agent") {
-      if (req.actor.agentId !== id) {
-        res.status(403).json({ error: "Agent can only invoke itself" });
+      const actorAgentId = req.actor.agentId;
+      if (!actorAgentId || (actorAgentId !== id && !(await access.isManagerOf(agent.companyId, actorAgentId, id)))) {
+        res.status(403).json({ error: "Agent can only invoke itself or an agent in its reporting subtree" });
         return;
       }
     } else {
@@ -4728,8 +4729,9 @@ export function agentRoutes(
     if (!agent) return;
 
     if (req.actor.type === "agent") {
-      if (req.actor.agentId !== id) {
-        res.status(403).json({ error: "Agent can only invoke itself" });
+      const actorAgentId = req.actor.agentId;
+      if (!actorAgentId || (actorAgentId !== id && !(await access.isManagerOf(agent.companyId, actorAgentId, id)))) {
+        res.status(403).json({ error: "Agent can only invoke itself or an agent in its reporting subtree" });
         return;
       }
     } else {

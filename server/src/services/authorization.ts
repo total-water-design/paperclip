@@ -2366,5 +2366,6 @@ export function authorizationService(db: Db) {
   return {
     decide,
     decidePrincipalGrant,
+    isManagerOf,
   };
 }

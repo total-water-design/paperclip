@@ -1232,7 +1232,7 @@ Terminal states: `done`, `cancelled`
 | POST   | `/api/agents/:agentId/resume`      | Resume a paused agent                |
 | POST   | `/api/agents/:agentId/terminate`   | Permanently deactivate agent (irreversible) |
 | POST   | `/api/agents/:agentId/keys`        | Create long-lived API key (full value shown once) |
-| POST   | `/api/agents/:agentId/heartbeat/invoke` | Manually trigger a heartbeat    |
+| POST   | `/api/agents/:agentId/heartbeat/invoke` | Manually trigger a heartbeat; agent callers may target self or a direct/indirect report only |
 | GET    | `/api/companies/:companyId/org`    | Org chart tree                       |
 | GET    | `/api/companies/:companyId/adapters/:adapterType/models` | List selectable models for an adapter type |
 | PATCH  | `/api/agents/:agentId/instructions-path` | Set/clear instructions path (`AGENTS.md`) |
