@@ -147,6 +147,29 @@ If source authentication or either source fetch fails, staging stops before it
 acquires the managed-install transaction. It leaves `current`, `install.json`,
 the service, and activation authority unchanged.
 
+### Credential-free host projection
+
+When the rollout host has no run-readable GitHub credential, a host controller
+may instead project a certified archive into a protected local source root. Set
+`PAPERCLIP_PROJECTED_SOURCE_ROOT` in the host service configuration (never as a
+credential) and invoke:
+
+```sh
+paperclipai stage git --repo owner/repository --ref <40-character-sha> \
+  --projected-source --yes --json
+```
+
+The projection is deliberately narrow: it must be
+`$PAPERCLIP_PROJECTED_SOURCE_ROOT/<sha>/source.tar.gz` plus `source.json`, where
+the descriptor contains exactly `schemaVersion: 1`, `repo`, `sha`,
+`archiveSha256`, and `sizeBytes`. The CLI accepts only regular, non-symlink,
+non-group/world-writable files below that SHA-addressed root; bounds the archive
+to 512 MiB; verifies its exact byte size and SHA-256 before extracting; and
+never calls GitHub in this mode. Missing, malformed, unsafe, or mismatched
+projections fail before the install transaction and leave all active service
+state untouched. The projection directory is a host-managed boundary and must
+not be writable by agent-run identities.
+
 The JSON output records the candidate payload path and SHA-256 values for the
 future `install.json`, CLI entrypoint, adapter callback bridge, and server issue
 route, plus ready-to-copy guard authority fields. An authorized deployment

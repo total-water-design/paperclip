@@ -81,6 +81,7 @@ stage
   .description("Stage an exact Git SHA without changing current, authority, or service state")
   .requiredOption("--ref <full-sha>", "Exact full 40-character Git commit SHA")
   .option("--repo <owner/name>", "GitHub repository")
+  .option("--projected-source", "Use the host-managed SHA-addressed source projection; never contact GitHub")
   .option("-y, --yes", "Consent to Git build-script execution")
   .option("--json", "Print staged identity and guard authority input as JSON")
   .action(stageGitCommand);

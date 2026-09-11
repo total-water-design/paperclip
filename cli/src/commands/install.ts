@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { execFile } from "node:child_process";
@@ -35,9 +36,16 @@ const EXACT_VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
  * process when it needs to read a protected repository.
  */
 export const GITHUB_SOURCE_TOKEN_ENV = "PAPERCLIP_GITHUB_SOURCE_TOKEN";
+/**
+ * A host-managed, credential-free source projection root. Each accepted
+ * projection is addressed only by its full commit SHA and contains a bounded
+ * `source.tar.gz` plus a matching `source.json` integrity descriptor.
+ */
+export const PROJECTED_SOURCE_ROOT_ENV = "PAPERCLIP_PROJECTED_SOURCE_ROOT";
+const MAX_PROJECTED_SOURCE_BYTES = 512 * 1024 * 1024;
 
 export type InstallOptions = { canary?: boolean; version?: string; ref?: string; repo?: string; yes?: boolean };
-export type StageOptions = { ref?: string; repo?: string; yes?: boolean; json?: boolean };
+export type StageOptions = { ref?: string; repo?: string; yes?: boolean; json?: boolean; projectedSource?: boolean };
 export type ActivateStagedOptions = { sha: string; authorityFile: string; json?: boolean };
 
 export type CommandRunner = (
@@ -182,6 +190,57 @@ export async function resolveGitHubRef(repo: string, ref: string, runCommand: Co
   return sha.toLowerCase();
 }
 
+type ProjectedSourceDescriptor = {
+  schemaVersion: 1;
+  repo: string;
+  sha: string;
+  archiveSha256: string;
+  sizeBytes: number;
+};
+
+function assertSafeProjectedPath(targetPath: string, label: string, expectedDirectory: boolean): fs.Stats {
+  const stat = fs.lstatSync(targetPath);
+  if (stat.isSymbolicLink() || (expectedDirectory ? !stat.isDirectory() : (!stat.isFile() || stat.nlink > 1))) {
+    throw new Error(`Projected source ${label} is unsafe.`);
+  }
+  if ((stat.mode & 0o022) !== 0) throw new Error(`Projected source ${label} is writable by group or others.`);
+  return stat;
+}
+
+/**
+ * Resolve a host-projected archive without consulting GitHub or accepting an
+ * arbitrary host path. The host must place this exact two-file projection at
+ * `${PAPERCLIP_PROJECTED_SOURCE_ROOT}/${sha}` before the non-activating stage.
+ */
+export function resolveProjectedGitSource(repo: string, sha: string): string {
+  const configuredRoot = process.env[PROJECTED_SOURCE_ROOT_ENV];
+  if (!configuredRoot) throw new Error(`${PROJECTED_SOURCE_ROOT_ENV} is required with --projected-source.`);
+  if (!path.isAbsolute(configuredRoot)) throw new Error(`${PROJECTED_SOURCE_ROOT_ENV} must be an absolute path.`);
+  const root = path.resolve(configuredRoot);
+  assertSafeProjectedPath(root, "root", true);
+  const projection = path.join(root, sha);
+  if (path.dirname(projection) !== root) throw new Error("Projected source SHA escapes the configured root.");
+  assertSafeProjectedPath(projection, "directory", true);
+  const descriptorPath = path.join(projection, "source.json");
+  const archivePath = path.join(projection, "source.tar.gz");
+  assertSafeProjectedPath(descriptorPath, "descriptor", false);
+  const archiveStat = assertSafeProjectedPath(archivePath, "archive", false);
+  if (archiveStat.size <= 0 || archiveStat.size > MAX_PROJECTED_SOURCE_BYTES) {
+    throw new Error(`Projected source archive must be between 1 and ${MAX_PROJECTED_SOURCE_BYTES} bytes.`);
+  }
+  let descriptor: ProjectedSourceDescriptor;
+  try { descriptor = JSON.parse(fs.readFileSync(descriptorPath, "utf8")) as ProjectedSourceDescriptor; }
+  catch { throw new Error("Projected source descriptor is malformed."); }
+  if (
+    descriptor.schemaVersion !== 1 || descriptor.repo !== repo || descriptor.sha !== sha ||
+    !/^[0-9a-f]{64}$/.test(descriptor.archiveSha256) || !Number.isSafeInteger(descriptor.sizeBytes) ||
+    descriptor.sizeBytes !== archiveStat.size
+  ) throw new Error("Projected source descriptor does not match the requested immutable candidate.");
+  const archiveSha256 = createHash("sha256").update(fs.readFileSync(archivePath)).digest("hex");
+  if (archiveSha256 !== descriptor.archiveSha256) throw new Error("Projected source archive SHA-256 does not match its descriptor.");
+  return archivePath;
+}
+
 function payloadEntrypoint(payloadPath: string): string {
   return path.join(payloadPath, "node_modules", "paperclipai", "dist", "index.js");
 }
@@ -259,7 +318,7 @@ function gitBuildEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return env;
 }
 
-export async function installGitPayload(repo: string, sha: string, runCommand: CommandRunner, paths = resolveInstallStorePaths()): Promise<{ payloadPath: string; reused: boolean; version: string }> {
+export async function installGitPayload(repo: string, sha: string, runCommand: CommandRunner, paths = resolveInstallStorePaths(), sourceArchivePath?: string): Promise<{ payloadPath: string; reused: boolean; version: string }> {
   const identifier = sha.slice(0, 12);
   const payloadPath = payloadPathFor(paths, "git", identifier);
   if (fs.existsSync(payloadPath)) {
@@ -289,7 +348,8 @@ export async function installGitPayload(repo: string, sha: string, runCommand: C
   const buildEnv = (extra: NodeJS.ProcessEnv = {}) =>
     gitBuildEnv({ PATH: [pnpmShimDir, process.env.PATH].filter(Boolean).join(path.delimiter), ...extra });
   try {
-    await runGitHubCurl(["--fail", "--silent", "--show-error", "--location", "--output", archivePath, `https://codeload.github.com/${repo}/tar.gz/${sha}`], runCommand, { maxBuffer: 4 * 1024 * 1024 });
+    if (sourceArchivePath) fs.copyFileSync(sourceArchivePath, archivePath, fs.constants.COPYFILE_EXCL);
+    else await runGitHubCurl(["--fail", "--silent", "--show-error", "--location", "--output", archivePath, `https://codeload.github.com/${repo}/tar.gz/${sha}`], runCommand, { maxBuffer: 4 * 1024 * 1024 });
     await runCommand("tar", ["-xzf", archivePath, "--strip-components=1", "-C", checkoutPath], { maxBuffer: 4 * 1024 * 1024 });
     await runCommand("corepack", ["enable", "pnpm", "--install-directory", pnpmShimDir], { cwd: checkoutPath, env: buildEnv(), maxBuffer: 4 * 1024 * 1024 });
     await runCommand("corepack", ["pnpm", "install", "--frozen-lockfile"], { cwd: checkoutPath, env: buildEnv(), maxBuffer: 32 * 1024 * 1024 });
@@ -466,11 +526,15 @@ export async function stageGitCommand(options: StageOptions, dependencies: { run
   if (!request.pinned || request.ref.length !== 40) throw new Error("Staging requires --ref to be an exact full 40-character commit SHA.");
   await confirmGitInstall(options, request.repo, request.ref);
   const runCommand = dependencies.runCommand ?? runCommandWithDiagnostics;
-  const sha = await resolveGitHubRef(request.repo, request.ref, runCommand);
-  if (sha !== request.ref.toLowerCase()) throw new Error("Resolved GitHub commit differs from the requested exact SHA.");
+  const sha = request.ref.toLowerCase();
+  const projectedArchive = options.projectedSource ? resolveProjectedGitSource(request.repo, sha) : undefined;
+  if (!projectedArchive) {
+    const resolvedSha = await resolveGitHubRef(request.repo, request.ref, runCommand);
+    if (resolvedSha !== sha) throw new Error("Resolved GitHub commit differs from the requested exact SHA.");
+  }
   const paths = resolveInstallStorePaths();
   const result = await withInstallStoreLock(async () => {
-    const payload = await installGitPayload(request.repo, sha, runCommand, paths);
+    const payload = await installGitPayload(request.repo, sha, runCommand, paths, projectedArchive);
     const identity = createStagedGitIdentity({ source: "git", sha, repo: request.repo, ref: request.ref, version: payload.version, payloadPath: payload.payloadPath, stagedAt: (dependencies.now?.() ?? new Date()).toISOString() }, paths);
     const identityPath = writeStagedGitIdentity(identity, paths);
     return { identity, identityPath, reused: payload.reused };

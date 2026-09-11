@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -8,6 +9,7 @@ import {
   installGitPayload,
   stageGitCommand,
   GITHUB_SOURCE_TOKEN_ENV,
+  PROJECTED_SOURCE_ROOT_ENV,
   resolveGitHubRef,
   resolveGitInstallRequest,
   resolveGitInstallWorkspacePackages,
@@ -182,6 +184,56 @@ describe("managed install commands", () => {
     expect(staged.entrypointSha256).toMatch(/^[0-9a-f]{64}$/);
     expect(staged.adapterBridgeSha256).toMatch(/^[0-9a-f]{64}$/);
     expect(staged.serverRouteSha256).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("stages a host-projected exact SHA without a GitHub request or credential", async () => {
+    const sha = "a".repeat(40);
+    const projectionRoot = path.join(root, "projected-sources");
+    const projection = path.join(projectionRoot, sha);
+    const archive = path.join(projection, "source.tar.gz");
+    const bytes = Buffer.from("certified source archive");
+    fs.mkdirSync(projection, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(archive, bytes, { mode: 0o600 });
+    fs.writeFileSync(path.join(projection, "source.json"), JSON.stringify({
+      schemaVersion: 1,
+      repo: "total-water-design/total-water-design-suite",
+      sha,
+      archiveSha256: createHash("sha256").update(bytes).digest("hex"),
+      sizeBytes: bytes.length,
+    }), { mode: 0o600 });
+    process.env[PROJECTED_SOURCE_ROOT_ENV] = projectionRoot;
+    const delegate = createGitCheckoutRunCommand(sha);
+    const runCommand: CommandRunner = async (file, args, options) => {
+      expect(file).not.toBe("curl");
+      return delegate(file, args, options);
+    };
+
+    await stageGitCommand({ ref: sha, repo: "total-water-design/total-water-design-suite", yes: true, json: true, projectedSource: true }, { runCommand });
+
+    const identity = JSON.parse(fs.readFileSync(path.join(resolveInstallStorePaths().stagedRoot, `${sha}.json`), "utf8"));
+    expect(identity).toMatchObject({ sha, repo: "total-water-design/total-water-design-suite" });
+    expect(JSON.stringify(identity)).not.toContain("token");
+  });
+
+  it("rejects a malformed projected source before it can touch active install state", async () => {
+    const sha = "b".repeat(40);
+    const paths = resolveInstallStorePaths();
+    const activePayload = payloadPathFor(paths, "git", "c".repeat(12));
+    fs.mkdirSync(activePayload, { recursive: true });
+    fs.symlinkSync(activePayload, paths.currentPath);
+    const activeManifest = { schemaVersion: INSTALL_MANIFEST_VERSION as typeof INSTALL_MANIFEST_VERSION, source: "git" as const, version: "0.3.1", channel: "pinned" as const, repo: "total-water-design/total-water-design-suite", ref: "c".repeat(40), sha: "c".repeat(40), payloadPath: activePayload, installedAt: "2026-09-10T00:00:00Z", previous: [] };
+    writeInstallManifestAtomic(activeManifest, paths);
+    const beforeManifest = fs.readFileSync(paths.manifestPath, "utf8");
+    const projection = path.join(root, "bad-projection", sha);
+    fs.mkdirSync(projection, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(path.join(projection, "source.tar.gz"), "archive", { mode: 0o600 });
+    fs.writeFileSync(path.join(projection, "source.json"), "not json", { mode: 0o600 });
+    process.env[PROJECTED_SOURCE_ROOT_ENV] = path.dirname(projection);
+
+    await expect(stageGitCommand({ ref: sha, repo: "total-water-design/total-water-design-suite", yes: true, projectedSource: true }, { runCommand: vi.fn() })).rejects.toThrow("descriptor is malformed");
+    expect(fs.readFileSync(paths.manifestPath, "utf8")).toBe(beforeManifest);
+    expect(fs.readlinkSync(paths.currentPath)).toBe(activePayload);
+    expect(fs.existsSync(path.join(paths.stagedRoot, `${sha}.json`))).toBe(false);
   });
 
   it("stages a protected exact SHA through the explicitly projected source token without emitting it", async () => {
