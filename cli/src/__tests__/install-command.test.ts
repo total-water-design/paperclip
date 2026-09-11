@@ -6,6 +6,7 @@ import {
   type CommandRunner,
   installCommand,
   installGitPayload,
+  stageGitCommand,
   resolveGitHubRef,
   resolveGitInstallRequest,
   resolveGitInstallWorkspacePackages,
@@ -141,7 +142,7 @@ describe("managed install commands", () => {
         fs.writeFileSync(path.join(args[args.indexOf("--pack-destination") + 1], `${packageName}-0.3.1.tgz`), "package");
         return { stdout: "", stderr: "" };
       }
-      if (file === "npm" && args[0] === "install") { const prefix = args[args.indexOf("--prefix") + 1]; const packageRoot = path.join(prefix, "node_modules", "paperclipai"); fs.mkdirSync(path.join(packageRoot, "dist"), { recursive: true }); fs.writeFileSync(path.join(packageRoot, "package.json"), JSON.stringify({ version: "0.3.1" })); fs.writeFileSync(path.join(packageRoot, "dist", "index.js"), "#!/usr/bin/env node\n"); return { stdout: "", stderr: "" }; }
+      if (file === "npm" && args[0] === "install") { const prefix = args[args.indexOf("--prefix") + 1]; const packageRoot = path.join(prefix, "node_modules", "paperclipai"); fs.mkdirSync(path.join(packageRoot, "dist"), { recursive: true }); fs.writeFileSync(path.join(packageRoot, "package.json"), JSON.stringify({ version: "0.3.1" })); fs.writeFileSync(path.join(packageRoot, "dist", "index.js"), "#!/usr/bin/env node\n"); for (const filePath of [path.join(prefix, "node_modules", "@paperclipai", "adapter-utils", "dist", "sandbox-callback-bridge.js"), path.join(prefix, "node_modules", "@paperclipai", "server", "dist", "routes", "issues.js")]) { fs.mkdirSync(path.dirname(filePath), { recursive: true }); fs.writeFileSync(filePath, "export {};\n"); } return { stdout: "", stderr: "" }; }
       if (file === process.execPath && args[0]?.endsWith("prepare-bundled-package.mjs")) {
         fs.mkdirSync(args[2], { recursive: true });
         fs.writeFileSync(path.join(args[2], "package.json"), JSON.stringify({ name: "@paperclipai/db", version: "0.3.1" }));
@@ -166,6 +167,20 @@ describe("managed install commands", () => {
     expect(runCommand.mock.calls.filter(([command, args]) => command === "npm" && args[0] === "pack")).toHaveLength(2);
     const installCall = runCommand.mock.calls.find(([command, args]) => command === "npm" && args[0] === "install");
     expect(installCall?.[1].filter((arg) => arg.endsWith(".tgz"))).toHaveLength(4);
+  });
+
+  it("stages an exact Git SHA without changing current or the active manifest", async () => {
+    const sha = "e".repeat(40);
+    const runCommand = createGitCheckoutRunCommand(sha);
+    const paths = resolveInstallStorePaths();
+    await stageGitCommand({ ref: sha, repo: "HenkDz/paperclip", yes: true, json: true }, { runCommand, now: () => new Date("2026-09-11T00:00:00Z") });
+    expect(fs.existsSync(paths.currentPath)).toBe(false);
+    expect(readInstallManifest(paths)).toBeNull();
+    const staged = JSON.parse(fs.readFileSync(path.join(paths.stagedRoot, `${sha}.json`), "utf8"));
+    expect(staged).toMatchObject({ sha, payloadPath: payloadPathFor(paths, "git", sha.slice(0, 12)) });
+    expect(staged.entrypointSha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(staged.adapterBridgeSha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(staged.serverRouteSha256).toMatch(/^[0-9a-f]{64}$/);
   });
 
   it("builds git checkouts with NODE_ENV cleared so ambient production mode keeps devDependencies", async () => {

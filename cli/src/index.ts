@@ -44,7 +44,7 @@ import { registerAdapterCommands } from "./commands/client/adapter.js";
 import { registerAssetCommands } from "./commands/client/asset.js";
 import { registerSkillCommands } from "./commands/client/skill.js";
 import { cliVersion } from "./version.js";
-import { installCommand } from "./commands/install.js";
+import { activateStagedGitCommand, installCommand, stageGitCommand } from "./commands/install.js";
 import { uninstallCommand } from "./commands/uninstall.js";
 import { updateCommand } from "./commands/update.js";
 import { registerServiceCommands } from "./commands/service.js";
@@ -74,6 +74,23 @@ program
   .command("uninstall")
   .description("Remove the managed CLI install while preserving user data")
   .action(uninstallCommand);
+
+const stage = program.command("stage").description("Stage and preflight managed payloads without activation");
+stage
+  .command("git")
+  .description("Stage an exact Git SHA without changing current, authority, or service state")
+  .requiredOption("--ref <full-sha>", "Exact full 40-character Git commit SHA")
+  .option("--repo <owner/name>", "GitHub repository")
+  .option("-y, --yes", "Consent to Git build-script execution")
+  .option("--json", "Print staged identity and guard authority input as JSON")
+  .action(stageGitCommand);
+stage
+  .command("activate")
+  .description("Atomically hand off a staged Git payload after matching authority is installed")
+  .requiredOption("--sha <full-sha>", "Exact full 40-character staged Git SHA")
+  .requiredOption("--authority-file <path>", "Read-only guard authority record matching the staged identity")
+  .option("--json", "Print machine-readable result")
+  .action(activateStagedGitCommand);
 
 program
   .command("update")

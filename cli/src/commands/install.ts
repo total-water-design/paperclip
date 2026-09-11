@@ -18,6 +18,9 @@ import {
   withInstallStoreLock,
   writeInstallManifestAtomic,
   writeManagedShim,
+  createStagedGitIdentity,
+  readStagedGitIdentity,
+  writeStagedGitIdentity,
   type InstallChannel,
   type InstallRecord,
 } from "../install-store.js";
@@ -28,6 +31,8 @@ const DEFAULT_GITHUB_REPO = "paperclipai/paperclip";
 const EXACT_VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 
 export type InstallOptions = { canary?: boolean; version?: string; ref?: string; repo?: string; yes?: boolean };
+export type StageOptions = { ref?: string; repo?: string; yes?: boolean; json?: boolean };
+export type ActivateStagedOptions = { sha: string; authorityFile: string; json?: boolean };
 
 export type CommandRunner = (
   file: string,
@@ -417,4 +422,84 @@ export async function installCommand(
   console.log(pc.green(`${installed.reused ? "Activated cached" : "Installed"} paperclipai ${version} (${request.channel}).`));
   console.log(pc.dim(`Payload: ${installed.payloadPath}`));
   console.log(`Run ${pc.cyan("paperclipai --version")} to verify the managed install.`);
+}
+
+function authorityValue(contents: string, key: string): string | null {
+  const match = contents.match(new RegExp(`^${key}=([^\\r\\n]*)$`, "m"));
+  return match?.[1] ?? null;
+}
+
+function assertAuthorityMatches(identity: ReturnType<typeof readStagedGitIdentity>, authorityFile: string): void {
+  const stat = fs.lstatSync(authorityFile);
+  if (!stat.isFile() || stat.isSymbolicLink()) throw new Error("Activation authority must be a regular non-symlink file.");
+  const contents = fs.readFileSync(authorityFile, "utf8");
+  const expected: Record<string, string> = {
+    AUTHORIZED_SHA: identity.sha,
+    AUTHORIZED_PAYLOAD: identity.payloadPath,
+    AUTHORIZED_MANIFEST_SHA256: identity.manifestSha256,
+    AUTHORIZED_ENTRYPOINT_SHA256: identity.entrypointSha256,
+    AUTHORIZED_ADAPTER_BRIDGE_SHA256: identity.adapterBridgeSha256,
+    AUTHORIZED_SERVER_ROUTE_SHA256: identity.serverRouteSha256,
+  };
+  for (const [key, value] of Object.entries(expected)) {
+    if (authorityValue(contents, key) !== value) throw new Error(`Activation authority does not match staged identity field ${key}.`);
+  }
+}
+
+/** Stage a full-SHA Git candidate without changing current, install.json, shim, authority, or service state. */
+export async function stageGitCommand(options: StageOptions, dependencies: { runCommand?: CommandRunner; now?: () => Date } = {}): Promise<void> {
+  assertSupportedNodeVersion();
+  const request = resolveGitInstallRequest(options);
+  if (!request) throw new Error("Staging requires --ref <exact-commit-sha>.");
+  if (!request.pinned || request.ref.length !== 40) throw new Error("Staging requires --ref to be an exact full 40-character commit SHA.");
+  await confirmGitInstall(options, request.repo, request.ref);
+  const runCommand = dependencies.runCommand ?? runCommandWithDiagnostics;
+  const sha = await resolveGitHubRef(request.repo, request.ref, runCommand);
+  if (sha !== request.ref.toLowerCase()) throw new Error("Resolved GitHub commit differs from the requested exact SHA.");
+  const paths = resolveInstallStorePaths();
+  const result = await withInstallStoreLock(async () => {
+    const payload = await installGitPayload(request.repo, sha, runCommand, paths);
+    const identity = createStagedGitIdentity({ source: "git", sha, repo: request.repo, ref: request.ref, version: payload.version, payloadPath: payload.payloadPath, stagedAt: (dependencies.now?.() ?? new Date()).toISOString() }, paths);
+    const identityPath = writeStagedGitIdentity(identity, paths);
+    return { identity, identityPath, reused: payload.reused };
+  }, paths);
+  const authorityInput = [
+    `AUTHORIZED_SHA=${result.identity.sha}`,
+    `AUTHORIZED_PAYLOAD=${result.identity.payloadPath}`,
+    `AUTHORIZED_MANIFEST_SHA256=${result.identity.manifestSha256}`,
+    `AUTHORIZED_ENTRYPOINT_SHA256=${result.identity.entrypointSha256}`,
+    `AUTHORIZED_ADAPTER_BRIDGE_SHA256=${result.identity.adapterBridgeSha256}`,
+    `AUTHORIZED_SERVER_ROUTE_SHA256=${result.identity.serverRouteSha256}`,
+  ].join("\n");
+  const output = { staged: true, identityPath: result.identityPath, identity: result.identity, authorityInput };
+  console.log(options.json ? JSON.stringify(output) : `${result.reused ? "Verified cached" : "Staged"} Git payload ${sha}.\nIdentity: ${result.identityPath}\n\nGuard authority input:\n${authorityInput}`);
+}
+
+/**
+ * Commit an already-authorized staged identity. The authority is read-only and
+ * must match every executable identity before `current` can move. Any manifest
+ * write failure restores the prior current payload, leaving the service guard
+ * able to start only the already-authorized payload.
+ */
+export async function activateStagedGitCommand(options: ActivateStagedOptions): Promise<void> {
+  const sha = options.sha.toLowerCase();
+  const paths = resolveInstallStorePaths();
+  const result = await withInstallStoreLock(async () => {
+    const identity = readStagedGitIdentity(sha, paths);
+    assertAuthorityMatches(identity, path.resolve(options.authorityFile));
+    const active = readInstallManifest(paths);
+    if (!active || !fs.existsSync(paths.currentPath) || fs.realpathSync(paths.currentPath) !== fs.realpathSync(active.payloadPath)) {
+      throw new Error("Refusing staged activation without a verified active rollback payload.");
+    }
+    const oldTarget = fs.readlinkSync(paths.currentPath);
+    const next = buildNextManifest({ source: "git", version: identity.version, channel: "pinned", repo: identity.repo, ref: identity.ref, sha: identity.sha, payloadPath: identity.payloadPath, installedAt: identity.stagedAt }, active);
+    const recomputed = createStagedGitIdentity({ ...identity, source: "git" }, paths);
+    for (const field of ["manifestSha256", "entrypointSha256", "adapterBridgeSha256", "serverRouteSha256"] as const) {
+      if (recomputed[field] !== identity[field]) throw new Error(`Staged identity no longer matches ${field}.`);
+    }
+    flipCurrentAtomic(identity.payloadPath, paths);
+    try { writeInstallManifestAtomic(next, paths); } catch (error) { flipCurrentAtomic(path.resolve(paths.cliRoot, oldTarget), paths); throw error; }
+    return { payloadPath: identity.payloadPath, sha: identity.sha };
+  }, paths);
+  console.log(options.json ? JSON.stringify({ activated: true, ...result }) : `Activated staged Git payload ${result.sha} at ${result.payloadPath}.`);
 }

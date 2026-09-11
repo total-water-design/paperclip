@@ -120,6 +120,33 @@ Git-ref installs resolve the requested ref to an exact commit before building.
 Review and trust the repository and ref: installing a git ref executes that
 revision's package installation and release build scripts on your machine.
 
+## Protected Managed-Service Staging
+
+For a guarded service rollout, stage an already-certified full commit SHA before
+activation. This creates only a candidate payload and a private staged identity;
+it does not change `current`, `install.json`, the service, or any activation
+authority record.
+
+```sh
+paperclipai stage git --repo owner/repository --ref <40-character-sha> --yes --json
+```
+
+The JSON output records the candidate payload path and SHA-256 values for the
+future `install.json`, CLI entrypoint, adapter callback bridge, and server issue
+route, plus ready-to-copy guard authority fields. An authorized deployment
+controller must write a matching authority record, then may hand off the exact
+candidate:
+
+```sh
+paperclipai stage activate --sha <40-character-sha> \
+  --authority-file /etc/paperclip/activation/default.env
+```
+
+Activation refuses missing or skewed source, payload, manifest, entrypoint,
+bridge, or route identities and requires a verified existing active payload as
+the rollback target. It never restarts or enables a service; the service manager
+and its guard remain the activation boundary.
+
 ## Onboarding And The Service
 
 Run onboarding after a non-interactive installation:

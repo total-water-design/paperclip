@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { resolvePaperclipHomeDir } from "./config/home.js";
 
@@ -36,6 +37,22 @@ export type InstallStorePaths = {
   lockPath: string;
   currentPath: string;
   shimPath: string;
+  stagedRoot: string;
+};
+
+export type StagedGitIdentity = {
+  schemaVersion: 1;
+  source: "git";
+  sha: string;
+  repo: string;
+  ref: string;
+  version: string;
+  payloadPath: string;
+  manifestSha256: string;
+  entrypointSha256: string;
+  adapterBridgeSha256: string;
+  serverRouteSha256: string;
+  stagedAt: string;
 };
 
 function ensurePrivateDirectory(directoryPath: string): void {
@@ -83,6 +100,61 @@ export function resolveInstallStorePaths(options: {
     lockPath: path.join(cliRoot, ".install.lock"),
     currentPath: path.join(cliRoot, "current"),
     shimPath: path.join(homeDir, ".local", "bin", "paperclipai"),
+    stagedRoot: path.join(cliRoot, "staged"),
+  };
+}
+
+function sha256File(filePath: string): string {
+  return createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
+}
+
+function stagedIdentityPath(sha: string, paths: InstallStorePaths): string {
+  if (!/^[0-9a-f]{40}$/.test(sha)) throw new Error("Staged Git identity requires an exact full commit SHA.");
+  return path.join(paths.stagedRoot, `${sha}.json`);
+}
+
+/**
+ * Writes a candidate-only identity. It deliberately never reads or writes
+ * `current` or install.json, so it is safe against an active managed service.
+ */
+export function writeStagedGitIdentity(identity: StagedGitIdentity, paths = resolveInstallStorePaths()): string {
+  const target = stagedIdentityPath(identity.sha, paths);
+  fs.mkdirSync(paths.stagedRoot, { recursive: true, mode: 0o700 });
+  const stat = fs.lstatSync(paths.stagedRoot);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error(`Refusing to use unsafe staged identity directory ${paths.stagedRoot}.`);
+  writeFileAtomic(target, `${JSON.stringify(identity, null, 2)}\n`, 0o600);
+  return target;
+}
+
+export function readStagedGitIdentity(sha: string, paths = resolveInstallStorePaths()): StagedGitIdentity {
+  const identityPath = stagedIdentityPath(sha, paths);
+  const value = JSON.parse(fs.readFileSync(identityPath, "utf8")) as StagedGitIdentity;
+  if (
+    value.schemaVersion !== 1 || value.source !== "git" || value.sha !== sha ||
+    !/^[0-9a-f]{64}$/.test(value.manifestSha256) || !/^[0-9a-f]{64}$/.test(value.entrypointSha256) ||
+    !/^[0-9a-f]{64}$/.test(value.adapterBridgeSha256) || !/^[0-9a-f]{64}$/.test(value.serverRouteSha256)
+  ) throw new Error(`Invalid staged Git identity at ${identityPath}.`);
+  return value;
+}
+
+export function createStagedGitIdentity(input: Omit<StagedGitIdentity, "schemaVersion" | "manifestSha256" | "entrypointSha256" | "adapterBridgeSha256" | "serverRouteSha256">, paths = resolveInstallStorePaths()): StagedGitIdentity {
+  const entrypoint = path.join(input.payloadPath, "node_modules", "paperclipai", "dist", "index.js");
+  const adapterBridge = path.join(input.payloadPath, "node_modules", "@paperclipai", "adapter-utils", "dist", "sandbox-callback-bridge.js");
+  const serverRoute = path.join(input.payloadPath, "node_modules", "@paperclipai", "server", "dist", "routes", "issues.js");
+  for (const required of [entrypoint, adapterBridge, serverRoute]) {
+    const stat = fs.lstatSync(required);
+    if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`Candidate identity file is missing or unsafe: ${required}`);
+  }
+  // The candidate manifest is exactly what the service guard will consume once
+  // activation writes it; stable serialization makes its digest preflightable.
+  const candidateManifest = buildNextManifest({ source: "git", version: input.version, channel: "pinned", repo: input.repo, ref: input.ref, sha: input.sha, payloadPath: input.payloadPath, installedAt: input.stagedAt }, readInstallManifest(paths));
+  return {
+    ...input,
+    schemaVersion: 1,
+    manifestSha256: createHash("sha256").update(`${JSON.stringify(candidateManifest, null, 2)}\n`).digest("hex"),
+    entrypointSha256: sha256File(entrypoint),
+    adapterBridgeSha256: sha256File(adapterBridge),
+    serverRouteSha256: sha256File(serverRoute),
   };
 }
 
