@@ -111,6 +111,13 @@ export const DEFAULT_SANDBOX_CALLBACK_BRIDGE_ROUTE_ALLOWLIST: readonly SandboxCa
   { method: "GET", path: /^\/api\/agents\/[^/]+\/skills$/ },
   { method: "POST", path: /^\/api\/agents\/[^/]+\/skills\/sync$/ },
   { method: "PATCH", path: /^\/api\/agents\/[^/]+\/instructions-path$/ },
+  // Secret proposals are the confined agent-facing path for credentials and
+  // bindings. The server still enforces the run JWT, proposal permission,
+  // reporting authority, and approval-card execution; this bridge entry only
+  // permits the documented request to reach those checks.
+  { method: "GET", path: /^\/api\/agents\/me\/secret-proposals$/ },
+  { method: "POST", path: /^\/api\/agents\/me\/secret-proposals$/ },
+  { method: "DELETE", path: /^\/api\/agents\/me\/secret-proposals\/[^/]+$/ },
 
   // Company-level reads used to discover work and context
   { method: "GET", path: /^\/api\/companies\/[^/]+$/ },

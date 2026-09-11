@@ -1313,6 +1313,9 @@ describe("sandbox callback bridge", () => {
       { method: "GET", path: "/api/agents/agent-1/skills" },
       { method: "POST", path: "/api/agents/agent-1/skills/sync" },
       { method: "PATCH", path: "/api/agents/agent-1/instructions-path" },
+      { method: "GET", path: "/api/agents/me/secret-proposals" },
+      { method: "POST", path: "/api/agents/me/secret-proposals" },
+      { method: "DELETE", path: "/api/agents/me/secret-proposals/proposal-1" },
       { method: "GET", path: "/api/companies/co-1" },
       { method: "GET", path: "/api/companies/co-1/dashboard" },
       { method: "GET", path: "/api/companies/co-1/agents" },
@@ -1409,6 +1412,11 @@ describe("sandbox callback bridge", () => {
       { method: "POST", path: "/api/agents/me/secrets" },
       { method: "GET", path: "/api/agents/me/secrets/key/value" },
       { method: "POST", path: "/api/agents/me/secrets/key/value/extra" },
+      // Keep the proposal opening exact: no proposal mutation or approval,
+      // and no proposal route for a different agent.
+      { method: "PATCH", path: "/api/agents/me/secret-proposals/proposal-1" },
+      { method: "POST", path: "/api/agents/me/secret-proposals/proposal-1/approve" },
+      { method: "DELETE", path: "/api/agents/agent-1/secret-proposals/proposal-1" },
     ];
     for (const request of denied) {
       expect(authorizeSandboxCallbackBridgeRequestWithRoutes(request)).toBe(
