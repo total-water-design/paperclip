@@ -3977,6 +3977,21 @@ export async function startAdapterExecutionTargetPaperclipBridge(input: {
       if (value.trim().length === 0) continue;
       headers.set(key, value);
     }
+    const requestedRunId = headers.get("x-paperclip-run-id")?.trim();
+    if (requestedRunId && requestedRunId !== input.runId) {
+      // The sandbox gateway previously discarded this header and the bridge
+      // overwrote it below. That made a caller-supplied run mismatch invisible
+      // to the API and allowed the write to proceed under a different run.
+      // Reject before the host request so no mutation can be persisted.
+      return {
+        status: 422,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          error: "X-Paperclip-Run-Id does not match the authenticated run",
+          code: "run_id_mismatch",
+        }),
+      };
+    }
     headers.set("authorization", `Bearer ${hostApiToken}`);
     headers.set("x-paperclip-run-id", input.runId);
     // Abort the forward when the caller aborts the request (its per-iteration
