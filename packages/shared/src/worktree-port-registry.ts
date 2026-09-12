@@ -186,7 +186,13 @@ function readProcessIdentity(pid: number): string | null {
   if (!Number.isInteger(pid) || pid <= 0) return null;
   if (process.platform === "linux") {
     try {
-      const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
+      // Some managed execution environments virtualize Node's PID separately
+      // from the procfs PID namespace. `/proc/<process.pid>` is then absent
+      // even though the current process can always be addressed through the
+      // procfs self symlink. Retain the numeric PID in the lock owner record;
+      // this fallback is only for establishing this process's start identity.
+      const statPath = pid === process.pid ? "/proc/self/stat" : `/proc/${pid}/stat`;
+      const stat = fs.readFileSync(statPath, "utf8");
       const commandEnd = stat.lastIndexOf(")");
       if (commandEnd < 0) return null;
       const fields = stat.slice(commandEnd + 1).trim().split(/\s+/);

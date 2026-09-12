@@ -31,6 +31,18 @@ afterEach(() => {
 });
 
 describe("worktree port registry lock", () => {
+  it("acquires a lock using the current process identity", () => {
+    const homeDir = makeTemporaryRoot();
+    let entered = false;
+
+    withWorktreePortRegistryLockSync(homeDir, () => {
+      entered = true;
+    });
+
+    expect(entered).toBe(true);
+    expect(fs.existsSync(path.join(homeDir, ".worktree-port-reservations.lock"))).toBe(false);
+  });
+
   it("does not reclaim a stale lock while its fallback ownership probe responds", async () => {
     const homeDir = makeTemporaryRoot();
     const lockPath = path.join(homeDir, ".worktree-port-reservations.lock");
