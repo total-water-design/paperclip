@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { defineConfig } from "@playwright/test";
+import { chromiumLaunchOptions } from "../playwright-shared";
 
 // Use a dedicated port so e2e tests always start their own server in local_trusted mode,
 // even when the dev server is running on :3100 in authenticated mode.
@@ -51,6 +52,7 @@ export default defineConfig({
       name: "chromium",
       use: {
         browserName: "chromium",
+        launchOptions: chromiumLaunchOptions,
         ...(PLAYWRIGHT_CHANNEL ? { channel: PLAYWRIGHT_CHANNEL } : {}),
       },
     },
