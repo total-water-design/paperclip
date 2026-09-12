@@ -20,6 +20,7 @@ import {
   syncSandboxCallbackBridgeEntrypoint,
   startSandboxCallbackBridgeServer,
   startSandboxCallbackBridgeWorker,
+  DEFAULT_SANDBOX_CALLBACK_BRIDGE_ROUTE_ALLOWLIST,
 } from "./sandbox-callback-bridge.js";
 import type { SandboxCallbackBridgeQueueClient } from "./sandbox-callback-bridge.js";
 import { createHttp2BridgeServer } from "./http2-bridge-server.js";
@@ -121,6 +122,22 @@ describe("sandbox callback bridge", () => {
       if (!dir) continue;
       await rm(dir, { recursive: true, force: true }).catch(() => undefined);
     }
+  });
+
+  it("allows only the fixed COS timer-fixture route family", () => {
+    const allowed = (method: string, path: string) =>
+      authorizeSandboxCallbackBridgeRequestWithRoutes({ method, path }, DEFAULT_SANDBOX_CALLBACK_BRIDGE_ROUTE_ALLOWLIST);
+
+    expect(allowed("POST", "/api/agents/agent-1/cos-timer-fixture-wake")).toBeNull();
+    expect(allowed("GET", "/api/agents/agent-1/cos-timer-fixture-runs/run-1")).toBeNull();
+    expect(allowed("GET", "/api/agents/agent-1/cos-timer-fixture-runs/run-1/events")).toBeNull();
+    expect(allowed("GET", "/api/agents/agent-1/cos-timer-fixture-runs/run-1/log")).toBeNull();
+
+    expect(allowed("POST", "/api/agents/agent-1/wakeup")).toBe("Route not allowed: POST /api/agents/agent-1/wakeup");
+    expect(allowed("GET", "/api/heartbeat-runs/run-1/log")).toBe("Route not allowed: GET /api/heartbeat-runs/run-1/log");
+    expect(allowed("DELETE", "/api/agents/agent-1/cos-timer-fixture-runs/run-1")).toBe(
+      "Route not allowed: DELETE /api/agents/agent-1/cos-timer-fixture-runs/run-1",
+    );
   });
 
   it("round-trips localhost bridge requests over the sandbox queue without forwarding the bridge token", async () => {

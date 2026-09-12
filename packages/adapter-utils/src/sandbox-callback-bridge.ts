@@ -139,6 +139,14 @@ export const DEFAULT_SANDBOX_CALLBACK_BRIDGE_ROUTE_ALLOWLIST: readonly SandboxCa
   { method: "PATCH", path: /^\/api\/issues\/[^/]+$/ },
   { method: "GET", path: /^\/api\/issues\/[^/]+\/approvals$/ },
 
+  // COS timer fixture. This intentionally does not expose the ordinary wake
+  // or heartbeat-run routes: the server route binds a non-production,
+  // run-scoped agent identity to its own timer wake and to only that wake's
+  // returned run. Keeping the exact paths here lets the server perform those
+  // checks instead of rejecting the request at the sandbox boundary first.
+  { method: "POST", path: /^\/api\/agents\/[^/]+\/cos-timer-fixture-wake$/ },
+  { method: "GET", path: /^\/api\/agents\/[^/]+\/cos-timer-fixture-runs\/[^/]+(?:\/(?:events|log))?$/ },
+
   // Work products: publish branch/commit/artifact metadata for completed work.
   { method: "GET", path: /^\/api\/issues\/[^/]+\/work-products$/ },
   { method: "POST", path: /^\/api\/issues\/[^/]+\/work-products$/ },
