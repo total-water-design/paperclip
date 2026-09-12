@@ -28,6 +28,12 @@ export type RunDatabaseBackupOptions = {
   excludeTables?: string[];
   nullifyColumns?: Record<string, string[]>;
   backupEngine?: "auto" | "pg_dump" | "javascript";
+  /**
+   * Bound a pg_dump-backed snapshot. This is primarily used by callers that
+   * run inside a supervised lifecycle and need time to persist their own
+   * terminal failure state before the supervisor terminates them.
+   */
+  timeoutMs?: number;
 };
 
 export type RunDatabaseBackupResult = {
@@ -321,6 +327,7 @@ async function runPgDumpBackup(opts: {
   connectionString: string;
   backupFile: string;
   connectTimeout: number;
+  timeoutMs?: number;
 }): Promise<void> {
   const pgDumpBin = process.env.PAPERCLIP_PG_DUMP_PATH || "pg_dump";
   const child = spawn(
@@ -346,10 +353,30 @@ async function runPgDumpBackup(opts: {
     throw new Error("pg_dump did not expose stdout");
   }
 
-  await Promise.all([
-    pipeline(child.stdout, createGzip(), createWriteStream(opts.backupFile)),
-    waitForChildExit(child, pgDumpBin),
-  ]);
+  const timeoutMs = opts.timeoutMs == null ? null : Math.max(1, Math.trunc(opts.timeoutMs));
+  let timedOut = false;
+  let forceKillTimeout: NodeJS.Timeout | null = null;
+  const timeout = timeoutMs == null ? null : setTimeout(() => {
+    timedOut = true;
+    child.kill("SIGTERM");
+    // pg_dump normally exits on SIGTERM. Keep the seed lifecycle bounded even
+    // if a wrapper or blocked process ignores it.
+    forceKillTimeout = setTimeout(() => child.kill("SIGKILL"), 5_000);
+  }, timeoutMs);
+  try {
+    await Promise.all([
+      pipeline(child.stdout, createGzip(), createWriteStream(opts.backupFile)),
+      waitForChildExit(child, pgDumpBin),
+    ]);
+  } catch (error) {
+    if (timedOut) {
+      throw new Error(`${pgDumpBin} timed out after ${timeoutMs}ms while creating the database snapshot.`);
+    }
+    throw error;
+  } finally {
+    if (timeout) clearTimeout(timeout);
+    if (forceKillTimeout) clearTimeout(forceKillTimeout);
+  }
 }
 
 async function restoreWithPsql(opts: RunDatabaseRestoreOptions, connectTimeout: number): Promise<void> {
@@ -553,6 +580,7 @@ export async function runDatabaseBackup(opts: RunDatabaseBackupOptions): Promise
           connectionString: opts.connectionString,
           backupFile,
           connectTimeout,
+          timeoutMs: opts.timeoutMs,
         });
         await writer.abort();
         const sizeBytes = statSync(backupFile).size;

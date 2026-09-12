@@ -75,6 +75,33 @@ describe("createBufferedTextFileWriter", () => {
 });
 
 describeEmbeddedPostgres("runDatabaseBackup", () => {
+  it("terminates a bounded pg_dump snapshot and reports the deadline", async () => {
+    const sourceConnectionString = await createTempDatabase();
+    const backupDir = createTempDir("paperclip-db-backup-timeout-");
+    const pgDumpStub = path.join(backupDir, "pg-dump-hang.sh");
+    const originalPgDumpPath = process.env.PAPERCLIP_PG_DUMP_PATH;
+    fs.writeFileSync(pgDumpStub, "#!/bin/sh\nexec sleep 30\n", { mode: 0o700 });
+    process.env.PAPERCLIP_PG_DUMP_PATH = pgDumpStub;
+
+    try {
+      await expect(runDatabaseBackup({
+        connectionString: sourceConnectionString,
+        backupDir,
+        retention: { dailyDays: 7, weeklyWeeks: 4, monthlyMonths: 1 },
+        filenamePrefix: "paperclip-timeout-test",
+        backupEngine: "pg_dump",
+        timeoutMs: 25,
+      })).rejects.toThrow(/timed out after 25ms while creating the database snapshot/);
+      expect(fs.readdirSync(backupDir).some((name) => name.startsWith("paperclip-timeout-test-"))).toBe(false);
+    } finally {
+      if (originalPgDumpPath === undefined) {
+        delete process.env.PAPERCLIP_PG_DUMP_PATH;
+      } else {
+        process.env.PAPERCLIP_PG_DUMP_PATH = originalPgDumpPath;
+      }
+    }
+  }, 10_000);
+
   it(
     "keeps the newest backup for each retained calendar month",
     async () => {

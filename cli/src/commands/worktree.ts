@@ -1737,6 +1737,7 @@ async function seedWorktreeDatabase(input: {
       retention: { dailyDays: 7, weeklyWeeks: 4, monthlyMonths: 1 },
       filenamePrefix: `${input.instanceId}-seed`,
       backupEngine: resolveWorktreeSeedBackupEngine(seedPlan),
+      timeoutMs: seedPlan.mode === "full" ? WORKTREE_FULL_SEED_SNAPSHOT_TIMEOUT_MS : undefined,
       includeMigrationJournal: true,
       excludeTables: seedPlan.excludedTables,
       nullifyColumns: seedPlan.nullifyColumns,
@@ -1816,6 +1817,10 @@ async function seedWorktreeDatabase(input: {
 
 const WORKTREE_SEED_DIAGNOSTIC_LIMIT = 32;
 const WORKTREE_SEED_DIAGNOSTIC_MESSAGE_LIMIT = 512;
+// Agent/service lifecycle supervisors reserve time for cleanup and reporting.
+// A full snapshot must therefore fail before those supervisors terminate the
+// process, otherwise a running manifest and a dead-owner lock are left behind.
+const WORKTREE_FULL_SEED_SNAPSHOT_TIMEOUT_MS = 240_000;
 const activeSeedInterruptHandlers = new Map<string, (signal: NodeJS.Signals) => void>();
 
 export function formatWorktreeSeedFailureDiagnostic(
@@ -1838,6 +1843,9 @@ export function formatWorktreeSeedFailureDiagnostic(
     )
   ) {
     return "Seed validation could not find a credential-backed instance administrator with an active company membership. Authenticated instances must create or sign in an administrator before seeding.";
+  }
+  if (phase === "snapshot" && /timed out after \d+ms while creating the database snapshot/i.test(message)) {
+    return "Source database snapshot exceeded the four-minute worktree seed limit. Retry after reducing source backup pressure or use a supervised seed window with more capacity.";
   }
   return `Seed failed during ${phase}.`;
 }
@@ -2086,7 +2094,12 @@ function parseWorktreeSeedLockOwner(raw: string): WorktreeSeedLockOwner | null {
   }
 }
 
-async function acquireWorktreeSeedLock(lockPath: string): Promise<() => Promise<void>> {
+async function acquireWorktreeSeedLock(
+  lockPath: string,
+  options: {
+    onExitedOwner?: (owner: WorktreeSeedLockOwner) => Promise<void> | void;
+  } = {},
+): Promise<() => Promise<void>> {
   while (true) {
     const owner: WorktreeSeedLockOwner = {
       version: 1,
@@ -2123,9 +2136,19 @@ async function acquireWorktreeSeedLock(lockPath: string): Promise<() => Promise<
       lockStat && Date.now() - lockStat.mtimeMs >= WORKTREE_SEED_LOCK_MALFORMED_STALE_MS,
     );
     if (currentOwner && !processIsAlive(currentOwner.pid)) {
+      // A killed seed process cannot run its finally block. Record a terminal
+      // manifest before releasing its lock so the next invocation never treats
+      // this as an active seed and operators get a bounded failure instead of a
+      // silent lock leak. Re-read before removal so we do not remove a lock a
+      // concurrent owner replaced while diagnostics were being written.
+      await options.onExitedOwner?.(currentOwner);
+      const latest = await fsPromises.readFile(lockPath, "utf8").catch(() => null);
+      if (latest === rawOwner) {
+        await fsPromises.rm(lockPath, { force: true });
+      }
       throw new Error(
-        `Worktree seed lock ${lockPath} belongs to exited process ${currentOwner.pid}. `
-        + "Verify that no seed is running, then remove the stale lock and retry.",
+        `Worktree seed lock ${lockPath} belonged to exited process ${currentOwner.pid}. `
+        + "The interrupted seed attempt was recorded as failed and the stale lock was released; retry the seed.",
       );
     }
     if (!currentOwner && malformedLockIsStale) {
@@ -2319,7 +2342,20 @@ export async function ensureWorktreeSeeded(
   // diagnostic is replaced under the lock from this server/operator registration.
   let canonicalSource = registeredSeedSource;
   mkdirSync(path.dirname(markers.lock), { recursive: true });
-  const releaseLock = await acquireWorktreeSeedLock(markers.lock);
+  const releaseLock = await acquireWorktreeSeedLock(markers.lock, {
+    onExitedOwner: () => {
+      const interrupted = readWorktreeSeedManifest(configPath);
+      if (interrupted?.state === "running") {
+        updateWorktreeSeedManifest({
+          configPath,
+          phase: interrupted.phase,
+          status: "failed",
+          state: "failed",
+          message: "Seed process exited before it wrote a terminal result; stale seed lock was released.",
+        });
+      }
+    },
+  });
   try {
     // These checks deliberately happen under the cross-process lock. A second
     // service process waits for the first seed transaction, then observes the

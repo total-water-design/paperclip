@@ -1037,6 +1037,66 @@ describe("worktree helpers", () => {
     }
   });
 
+  it("records a bounded actionable diagnostic when the full snapshot deadline expires", async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "paperclip-worktree-ensure-seeded-snapshot-timeout-"));
+    try {
+      const sourceConfigPath = path.join(tempRoot, "source", "config.json");
+      const targetRoot = path.join(tempRoot, "worktree");
+      const targetConfigPath = path.join(targetRoot, ".paperclip", "config.json");
+      const targetPaths = resolveWorktreeLocalPaths({
+        cwd: targetRoot,
+        homeDir: path.join(tempRoot, "worktree-home"),
+        instanceId: "ensure-seeded-snapshot-timeout",
+      });
+      const sourceConfig = buildSourceConfig();
+      const targetConfig = buildWorktreeConfig({
+        sourceConfig,
+        paths: targetPaths,
+        serverPort: 3190,
+        databasePort: 54990,
+      });
+      fs.mkdirSync(path.dirname(sourceConfigPath), { recursive: true });
+      fs.mkdirSync(path.dirname(targetConfigPath), { recursive: true });
+      fs.writeFileSync(sourceConfigPath, `${JSON.stringify(sourceConfig)}\n`);
+      fs.writeFileSync(path.join(path.dirname(sourceConfigPath), ".env"), "PAPERCLIP_INSTANCE_ID=source\n");
+      fs.writeFileSync(targetConfigPath, `${JSON.stringify(targetConfig)}\n`);
+      fs.writeFileSync(
+        path.join(targetRoot, ".paperclip", ".env"),
+        `PAPERCLIP_HOME=${targetPaths.homeDir}\nPAPERCLIP_INSTANCE_ID=${targetPaths.instanceId}\n`,
+      );
+      markWorktreeSeedPending({
+        configPath: targetConfigPath,
+        sourceConfigPath,
+        seedMode: "full",
+      });
+
+      await expect(ensureWorktreeSeeded(
+        { config: targetConfigPath, fromConfig: sourceConfigPath },
+        {
+          seedDatabase: vi.fn(async (input) => {
+            input.onPhase?.("snapshot", "started");
+            throw new Error("pg_dump timed out after 240000ms while creating the database snapshot.");
+          }),
+        },
+      )).rejects.toThrow("timed out after 240000ms");
+
+      expect(readWorktreeSeedManifest(targetConfigPath)).toMatchObject({
+        state: "failed",
+        phase: "snapshot",
+        diagnostics: expect.arrayContaining([
+          expect.objectContaining({
+            phase: "snapshot",
+            status: "failed",
+            message: "Source database snapshot exceeded the four-minute worktree seed limit. Retry after reducing source backup pressure or use a supervised seed window with more capacity.",
+          }),
+        ]),
+      });
+      expect(fs.existsSync(path.join(targetRoot, ".paperclip", "seed.lock"))).toBe(false);
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it("serializes concurrent ensure-seeded calls across the seed marker lock", async () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "paperclip-worktree-ensure-seeded-lock-"));
     try {
@@ -1140,12 +1200,40 @@ describe("worktree helpers", () => {
     }
   });
 
-  it("fails closed instead of racing to reclaim a stale seed lock", async () => {
+  it("terminalizes an interrupted seed and releases its dead-owner lock", async () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "paperclip-worktree-ensure-seeded-stale-lock-"));
     try {
-      const targetConfigPath = path.join(tempRoot, ".paperclip", "config.json");
-      const lockPath = path.join(tempRoot, ".paperclip", "seed.lock");
+      const sourceConfigPath = path.join(tempRoot, "source", "config.json");
+      const targetRoot = path.join(tempRoot, "worktree");
+      const targetConfigPath = path.join(targetRoot, ".paperclip", "config.json");
+      const targetPaths = resolveWorktreeLocalPaths({
+        cwd: targetRoot,
+        homeDir: path.join(tempRoot, "worktree-home"),
+        instanceId: "stale-lock-target",
+      });
+      const sourceConfig = buildSourceConfig();
+      const targetConfig = buildWorktreeConfig({
+        sourceConfig,
+        paths: targetPaths,
+        serverPort: 3191,
+        databasePort: 54991,
+      });
+      const lockPath = path.join(targetRoot, ".paperclip", "seed.lock");
+      fs.mkdirSync(path.dirname(sourceConfigPath), { recursive: true });
       fs.mkdirSync(path.dirname(targetConfigPath), { recursive: true });
+      fs.writeFileSync(sourceConfigPath, `${JSON.stringify(sourceConfig)}\n`);
+      fs.writeFileSync(path.join(path.dirname(sourceConfigPath), ".env"), "PAPERCLIP_INSTANCE_ID=source\n");
+      fs.writeFileSync(targetConfigPath, `${JSON.stringify(targetConfig)}\n`);
+      fs.writeFileSync(
+        path.join(targetRoot, ".paperclip", ".env"),
+        `PAPERCLIP_HOME=${targetPaths.homeDir}\nPAPERCLIP_INSTANCE_ID=${targetPaths.instanceId}\n`,
+      );
+      markWorktreeSeedPending({ configPath: targetConfigPath, sourceConfigPath });
+      const interrupted = readWorktreeSeedManifest(targetConfigPath)!;
+      fs.writeFileSync(
+        path.join(targetRoot, ".paperclip", "seed-manifest.json"),
+        `${JSON.stringify({ ...interrupted, state: "running", phase: "snapshot" }, null, 2)}\n`,
+      );
       fs.writeFileSync(
         lockPath,
         `${JSON.stringify({
@@ -1158,11 +1246,22 @@ describe("worktree helpers", () => {
       const seedDatabase = vi.fn();
 
       await expect(
-        ensureWorktreeSeeded({ config: targetConfigPath }, { seedDatabase }),
-      ).rejects.toThrow("belongs to exited process");
+        ensureWorktreeSeeded({ config: targetConfigPath, fromConfig: sourceConfigPath }, { seedDatabase }),
+      ).rejects.toThrow("belonged to exited process");
 
       expect(seedDatabase).not.toHaveBeenCalled();
-      expect(fs.existsSync(lockPath)).toBe(true);
+      expect(fs.existsSync(lockPath)).toBe(false);
+      expect(readWorktreeSeedManifest(targetConfigPath)).toMatchObject({
+        state: "failed",
+        phase: "snapshot",
+        diagnostics: expect.arrayContaining([
+          expect.objectContaining({
+            phase: "snapshot",
+            status: "failed",
+            message: "Seed process exited before it wrote a terminal result; stale seed lock was released.",
+          }),
+        ]),
+      });
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }
