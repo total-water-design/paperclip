@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { chromium, expect, test, type Browser, type BrowserContext, type Page } from "@playwright/test";
+import { chromiumLaunchOptions } from "../../playwright-shared";
 
 const requestedRuns = Number(process.env.PAPERCLIP_ISSUE_PERF_RUNS ?? 5);
 const RUNS = Number.isFinite(requestedRuns) ? Math.max(5, Math.floor(requestedRuns)) : 5;
@@ -279,7 +280,7 @@ async function runScenario(browser: Browser, baseURL: string, seedData: Seed, pr
 
 async function runScenarioWithBrowserRetry(baseURL: string, seedData: Seed, profile: Profile, scenario: RunMetrics["scenario"], run: number): Promise<RunMetrics> {
   for (let attempt = 1; attempt <= 2; attempt += 1) {
-    const sampleBrowser = await chromium.launch();
+    const sampleBrowser = await chromium.launch(chromiumLaunchOptions);
     try {
       return await runScenario(sampleBrowser, baseURL, seedData, profile, scenario, run);
     } catch (error) {

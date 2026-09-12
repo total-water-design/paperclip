@@ -1,4 +1,5 @@
 import { defineConfig } from "@playwright/test";
+import { chromiumLaunchOptions } from "../playwright-shared";
 
 const BASE_URL =
   process.env.PAPERCLIP_RELEASE_SMOKE_BASE_URL ?? "http://127.0.0.1:3232";
@@ -23,6 +24,7 @@ export default defineConfig({
       name: "chromium",
       use: {
         browserName: "chromium",
+        launchOptions: chromiumLaunchOptions,
         ...(PLAYWRIGHT_CHANNEL ? { channel: PLAYWRIGHT_CHANNEL } : {}),
       },
     },

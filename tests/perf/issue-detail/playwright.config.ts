@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { defineConfig } from "@playwright/test";
+import { chromiumLaunchOptions } from "../../playwright-shared";
 
 const PORT = Number(process.env.PAPERCLIP_ISSUE_PERF_PORT ?? 3201);
 const BASE_URL = `http://127.0.0.1:${PORT}`;
@@ -21,6 +22,7 @@ export default defineConfig({
   use: {
     baseURL: BASE_URL,
     browserName: "chromium",
+    launchOptions: chromiumLaunchOptions,
     headless: true,
   },
   webServer: {
