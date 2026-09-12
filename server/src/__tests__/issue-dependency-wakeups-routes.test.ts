@@ -119,16 +119,24 @@ vi.mock("../services/issue-dependency-wakeups.js", async () => {
 
 async function createApp() {
   const emptyRows: unknown[] = [];
-  const whereResult = {
-    limit: vi.fn(async () => emptyRows),
-    then: async (resolve: (rows: unknown[]) => unknown) => resolve(emptyRows),
+  const unblockOwnerId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+  const makeQuery = (rows: unknown[]) => {
+    const whereResult = {
+      limit: vi.fn(async () => rows),
+      then: async (resolve: (resultRows: unknown[]) => unknown) => resolve(rows),
+    };
+    const query: Record<string, unknown> = {};
+    query.innerJoin = vi.fn(() => query);
+    query.where = vi.fn(() => whereResult);
+    return query;
   };
-  const query: Record<string, unknown> = {};
-  query.innerJoin = vi.fn(() => query);
-  query.where = vi.fn(() => whereResult);
   const routeDb = {
     select: vi.fn(() => ({
-      from: vi.fn(() => query),
+      from: vi.fn((table) => makeQuery(
+        (table as Record<PropertyKey, unknown>)[Symbol.for("drizzle:Name")] === "agents"
+          ? [{ id: unblockOwnerId }]
+          : emptyRows,
+      )),
     })),
     transaction: async (callback: (tx: Record<string, never>) => Promise<unknown>) => callback({}),
   };
@@ -294,7 +302,7 @@ describe("issue dependency wakeups in issue routes", () => {
       .send({
         status: "blocked",
         blockedByIssueIds: [childIssueId],
-        unblockDescriptor: { owner: "board", action: "Review the restored dependency" },
+        unblockDescriptor: { owner: { agentId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc" }, action: "Review the restored dependency" },
       });
 
     expect(res.status).toBe(200);
@@ -641,7 +649,7 @@ describe("issue dependency wakeups in issue routes", () => {
       .send({
         status: "blocked",
         blockedByIssueIds: [childIssueId],
-        unblockDescriptor: { owner: "board", action: "Review the restored dependency" },
+        unblockDescriptor: { owner: { agentId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc" }, action: "Review the restored dependency" },
       });
 
     expect(res.status).toBe(200);
