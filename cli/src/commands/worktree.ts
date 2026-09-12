@@ -15,7 +15,7 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createServer } from "node:net";
 import { Readable } from "node:stream";
@@ -1821,7 +1821,72 @@ const WORKTREE_SEED_DIAGNOSTIC_MESSAGE_LIMIT = 512;
 // A full snapshot must therefore fail before those supervisors terminate the
 // process, otherwise a running manifest and a dead-owner lock are left behind.
 const WORKTREE_FULL_SEED_SNAPSHOT_TIMEOUT_MS = 240_000;
+const WORKTREE_FULL_SEED_EXECUTOR_ENV = "PAPERCLIP_WORKTREE_SEED_MANAGED_EXECUTOR";
+const WORKTREE_FULL_SEED_EXECUTOR_TIMEOUT_SEC = 60 * 60;
 const activeSeedInterruptHandlers = new Map<string, (signal: NodeJS.Signals) => void>();
+
+type ManagedFullSeedExecutor = (input: {
+  configPath: string;
+  targetCwd: string;
+}) => Promise<void>;
+
+/**
+ * Full logical snapshots can outlast an agent heartbeat.  Run the outer CLI
+ * invocation in a transient systemd user service so the execution host may
+ * reap its client process without killing the manifest owner.  The service
+ * re-enters this exact CLI command with a marker, and only that inner process
+ * acquires the existing cross-process seed lock.
+ */
+async function runManagedFullSeedExecutor(input: {
+  configPath: string;
+  targetCwd: string;
+}): Promise<void> {
+  if (process.platform !== "linux") {
+    throw new Error("Full worktree seeds require the Paperclip managed executor on Linux.");
+  }
+  const commandArgs = process.argv.slice(1);
+  if (commandArgs.length === 0) {
+    throw new Error("Paperclip could not reconstruct the full-seed CLI invocation for its managed executor.");
+  }
+  const unit = `paperclip-worktree-seed-${randomUUID()}`;
+  // A user service gets the user manager's environment, not necessarily the
+  // foreground command's. Carry only the non-secret registration bindings the
+  // inner CLI needs to derive its authority-bound source and target paths.
+  const inheritedRegistrationEnv = [
+    "PAPERCLIP_WORKSPACE_BASE_CWD",
+    "PAPERCLIP_PROJECT_WORKSPACE_ID",
+    "PAPERCLIP_SEED_EXPECTED_COMPANY_ID",
+    "PAPERCLIP_WORKTREES_DIR",
+  ].flatMap((key) => process.env[key] === undefined ? [] : [`--setenv=${key}=${process.env[key]}`]);
+  const args = [
+    "--user",
+    "--wait",
+    "--collect",
+    "--quiet",
+    "--service-type=exec",
+    "--property=KillMode=control-group",
+    `--property=TimeoutStartSec=${WORKTREE_FULL_SEED_EXECUTOR_TIMEOUT_SEC}s`,
+    `--unit=${unit}`,
+    `--working-directory=${input.targetCwd}`,
+    `--setenv=${WORKTREE_FULL_SEED_EXECUTOR_ENV}=1`,
+    ...inheritedRegistrationEnv,
+    process.execPath,
+    ...commandArgs,
+  ];
+
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn("systemd-run", args, { stdio: "inherit" });
+    child.once("error", (error) => {
+      reject(new Error(`Paperclip managed full-seed executor could not start: ${error.message}`));
+    });
+    child.once("exit", (code, signal) => {
+      if (code === 0) resolve();
+      else reject(new Error(
+        `Paperclip managed full-seed executor ${unit} exited ${signal ? `from ${signal}` : `with code ${code ?? "unknown"}`}.`,
+      ));
+    });
+  });
+}
 
 export function formatWorktreeSeedFailureDiagnostic(
   phase: WorktreeSeedPhase,
@@ -2279,6 +2344,7 @@ export async function ensureWorktreeSeeded(
   dependencies: {
     seedDatabase?: SeedWorktreeDatabase;
     inspectLegacyDatabase?: typeof inspectLegacyWorktreeDatabase;
+    runManagedFullSeedExecutor?: ManagedFullSeedExecutor;
   } = {},
 ): Promise<EnsureWorktreeSeededResult> {
   const configPath = resolveConfigPath(opts.config);
@@ -2310,6 +2376,50 @@ export async function ensureWorktreeSeeded(
       await releaseExistingLock();
     }
     return { seeded: false, reason: "legacy_unmarked" };
+  }
+
+  // The agent/command host is allowed to terminate its foreground client after
+  // a heartbeat.  A complete full snapshot is consequently handed to the
+  // Paperclip-managed transient service before we create a lock or mark the
+  // manifest running.  Test seams that supply a seed implementation remain
+  // in-process so they can verify the seed protocol without systemd.
+  if (
+    initialManifest?.seedMode === "full"
+    && process.env[WORKTREE_FULL_SEED_EXECUTOR_ENV] !== "1"
+    && !dependencies.seedDatabase
+  ) {
+    try {
+      await (dependencies.runManagedFullSeedExecutor ?? runManagedFullSeedExecutor)({
+        configPath,
+        targetCwd: path.dirname(path.dirname(configPath)),
+      });
+    } catch (error) {
+      const current = readWorktreeSeedManifest(configPath);
+      if (current && current.state !== "verified") {
+        updateWorktreeSeedManifest({
+          configPath,
+          phase: current.phase,
+          status: "failed",
+          state: "failed",
+          message: "Paperclip managed full-seed executor exited without verified seed evidence.",
+        });
+      }
+      throw error;
+    }
+    const completed = readWorktreeSeedManifest(configPath);
+    if (completed?.state === "verified") {
+      return { seeded: false, reason: "verified_manifest" };
+    }
+    if (completed) {
+      updateWorktreeSeedManifest({
+        configPath,
+        phase: completed.phase,
+        status: "failed",
+        state: "failed",
+        message: "Paperclip managed full-seed executor exited without verified seed evidence.",
+      });
+    }
+    throw new Error("Paperclip managed full-seed executor exited without a verified seed manifest.");
   }
   const registeredProjectWorkspaceId = opts.registeredProjectWorkspaceId
     ?? nonEmpty(process.env.PAPERCLIP_PROJECT_WORKSPACE_ID)
