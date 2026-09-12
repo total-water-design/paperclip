@@ -89,7 +89,10 @@ describeEmbeddedPostgres("runDatabaseBackup", () => {
         backupDir,
         retention: { dailyDays: 7, weeklyWeeks: 4, monthlyMonths: 1 },
         filenamePrefix: "paperclip-timeout-test",
-        backupEngine: "pg_dump",
+        // Full worktree seeds use the automatic engine. The bounded deadline
+        // must remain terminal rather than falling through to the unbounded
+        // JavaScript exporter.
+        backupEngine: "auto",
         timeoutMs: 25,
       })).rejects.toThrow(/timed out after 25ms while creating the database snapshot/);
       expect(fs.readdirSync(backupDir).some((name) => name.startsWith("paperclip-timeout-test-"))).toBe(false);

@@ -594,7 +594,12 @@ export async function runDatabaseBackup(opts: RunDatabaseBackupOptions): Promise
         if (existsSync(backupFile)) {
           try { unlinkSync(backupFile); } catch { /* ignore */ }
         }
-        if (backupEngine === "pg_dump") {
+        // A caller that supplies a deadline is running a supervised snapshot
+        // lifecycle and needs the failure to reach its terminal-state handler.
+        // Falling back to the JavaScript exporter here would discard that
+        // bound, allowing the process to be killed with its manifest still
+        // running and its lock still held.
+        if (backupEngine === "pg_dump" || opts.timeoutMs != null) {
           throw error;
         }
         sql = postgres(opts.connectionString, { max: 1, connect_timeout: connectTimeout });
