@@ -514,6 +514,12 @@ describeEmbeddedPostgres("stale issue execution lock routes", () => {
       executionAgentNameKey: null,
       executionLockedAt: null,
     });
+    // The checkout is performed by OtherAgent, so its active run must also be
+    // attributed to OtherAgent before the route binds that run to this issue.
+    await db
+      .update(heartbeatRuns)
+      .set({ agentId: otherAgentId })
+      .where(eq(heartbeatRuns.id, currentRunId));
 
     const res = await request(createApp(agentActor(companyId, otherAgentId, currentRunId)))
       .post(`/api/issues/${issueId}/checkout`)

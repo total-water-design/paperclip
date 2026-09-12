@@ -79,8 +79,8 @@ describe("Board approval governance", () => {
     });
 
     expect(first.exactIdentityEstablished).toBe(true);
-    expect(same.fingerprint).toBe(first.fingerprint);
-    expect(differentSha.fingerprint).not.toBe(first.fingerprint);
+    expect(same.authorizationFingerprint).toBe(first.authorizationFingerprint);
+    expect(differentSha.authorizationFingerprint).not.toBe(first.authorizationFingerprint);
   });
 
   it("does not establish approved authorization identity from an idempotency key alone", () => {
@@ -114,6 +114,111 @@ describe("Board approval governance", () => {
       type: "request_board_approval", issueIds: ["issue-1"], payload: { ...payload, idempotencyKey: "request-2" },
     });
     expect(first.exactIdentityEstablished).toBe(true);
-    expect(repeated.fingerprint).toBe(first.fingerprint);
+    expect(repeated.authorizationFingerprint).toBe(first.authorizationFingerprint);
+  });
+
+  it("normalizes linked issue ordering, action prefixes, case, and scope arrays", () => {
+    const first = boardApprovalRequestIdentity({
+      type: "request_board_approval",
+      issueIds: ["issue-b", "issue-a", "issue-a"],
+      payload: {
+        title: "Authorize the Production Deployment",
+        scope: { resources: ["Service-B", "service-a"] },
+      },
+    });
+    const same = boardApprovalRequestIdentity({
+      type: "request_board_approval",
+      issueIds: ["issue-a", "issue-b"],
+      payload: {
+        title: "production deployment",
+        scope: { resources: ["SERVICE-A", "service-b"] },
+      },
+    });
+    expect(same.openDeduplicationKey).toBe(first.openDeduplicationKey);
+  });
+
+  it("fails closed when an unknown payload field changes effective scope", () => {
+    const first = boardApprovalRequestIdentity({
+      type: "request_board_approval",
+      issueIds: ["issue-1"],
+      payload: {
+        action: "deploy",
+        environment: "production",
+        deploymentWindow: "2026-09-10T12:00:00Z",
+      },
+    });
+    const different = boardApprovalRequestIdentity({
+      type: "request_board_approval",
+      issueIds: ["issue-1"],
+      payload: {
+        action: "deploy",
+        environment: "production",
+        deploymentWindow: "2026-09-11T12:00:00Z",
+      },
+    });
+    expect(different.openDeduplicationKey).not.toBe(first.openDeduplicationKey);
+  });
+
+  it("fails closed when a generic structured action masks different action-bearing text", () => {
+    const first = boardApprovalRequestIdentity({
+      type: "request_board_approval",
+      issueIds: ["issue-1"],
+      payload: {
+        action: "deploy",
+        title: "Deploy service A",
+        recommendedAction: "Deploy digest aaa to production",
+      },
+    });
+    const differentTitle = boardApprovalRequestIdentity({
+      type: "request_board_approval",
+      issueIds: ["issue-1"],
+      payload: {
+        action: "deploy",
+        title: "Deploy service B",
+        recommendedAction: "Deploy digest aaa to production",
+      },
+    });
+    const differentRecommendation = boardApprovalRequestIdentity({
+      type: "request_board_approval",
+      issueIds: ["issue-1"],
+      payload: {
+        action: "deploy",
+        title: "Deploy service A",
+        recommendedAction: "Deploy digest bbb to production",
+      },
+    });
+    expect(differentTitle.openDeduplicationKey).not.toBe(first.openDeduplicationKey);
+    expect(differentRecommendation.openDeduplicationKey).not.toBe(first.openDeduplicationKey);
+  });
+
+  it("uses the named operational records as immutable identity fixtures", () => {
+    const duplicateA = boardApprovalRequestIdentity({
+      type: "request_board_approval",
+      issueIds: ["TOT-3098"],
+      payload: {
+        title: "Authorize bounded read-only staged-host topology collection",
+        summary: "fixture 544365d1-e653-4c55-a290-fca919ffbf1f",
+        recommendedAction: "Approve bounded read-only collection for diagnosis.",
+      },
+    });
+    const duplicateB = boardApprovalRequestIdentity({
+      type: "request_board_approval",
+      issueIds: ["TOT-3098"],
+      payload: {
+        title: "Authorize bounded read-only staged-host topology collection",
+        summary: "fixture d93fefee-488a-4d93-a43a-7199d88d0ab9 with reworded support",
+        recommendedAction: "Approve this bounded collection for exact remediation diagnosis.",
+      },
+    });
+    const stale = boardApprovalRequestIdentity({
+      type: "request_board_approval",
+      issueIds: ["TOT-1912"],
+      payload: {
+        title: "Authorize bounded TOT-1912 smoke probes",
+        summary: "fixture eb43b4e8-65c0-4cc8-b2c6-917ccf71c1fc",
+      },
+    });
+    expect(duplicateB.openDeduplicationKey).toBe(duplicateA.openDeduplicationKey);
+    expect(stale.openDeduplicationKey).not.toBe(duplicateA.openDeduplicationKey);
   });
 });

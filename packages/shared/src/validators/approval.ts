@@ -17,6 +17,21 @@ export const resolveApprovalSchema = z.object({
 
 export type ResolveApproval = z.infer<typeof resolveApprovalSchema>;
 
+export const cancelApprovalSchema = z.object({
+  reason: multilineTextSchema.optional().nullable(),
+  decisionNote: multilineTextSchema.optional().nullable(),
+}).superRefine((value, ctx) => {
+  if (!value.reason?.trim() && !value.decisionNote?.trim()) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["reason"],
+      message: "Cancellation reason is required",
+    });
+  }
+});
+
+export type CancelApproval = z.infer<typeof cancelApprovalSchema>;
+
 export const requestApprovalRevisionSchema = z.object({
   decisionNote: multilineTextSchema.optional().nullable(),
 });

@@ -46,6 +46,8 @@ export function issueApprovalService(db: Db) {
         .select({
           id: approvals.id,
           companyId: approvals.companyId,
+          type: approvals.type,
+          status: approvals.status,
           requestedByAgentId: approvals.requestedByAgentId,
           requestedByUserId: approvals.requestedByUserId,
         })
@@ -68,9 +70,14 @@ export function issueApprovalService(db: Db) {
           requestedByUserId: approvals.requestedByUserId,
           status: approvals.status,
           payload: approvals.payload,
+          openDeduplicationKey: approvals.openDeduplicationKey,
           decisionNote: approvals.decisionNote,
           decidedByUserId: approvals.decidedByUserId,
           decidedAt: approvals.decidedAt,
+          cancellationReason: approvals.cancellationReason,
+          cancelledByAgentId: approvals.cancelledByAgentId,
+          cancelledByUserId: approvals.cancelledByUserId,
+          cancelledAt: approvals.cancelledAt,
           createdAt: approvals.createdAt,
           updatedAt: approvals.updatedAt,
         })
@@ -119,7 +126,10 @@ export function issueApprovalService(db: Db) {
     },
 
     link: async (issueId: string, approvalId: string, actor?: LinkActor) => {
-      const { issue } = await assertIssueAndApprovalSameCompany(issueId, approvalId);
+      const { issue, approval } = await assertIssueAndApprovalSameCompany(issueId, approvalId);
+      if (approval.type === "request_board_approval" && ["pending", "revision_requested"].includes(approval.status)) {
+        throw unprocessable("Open Board approval links are immutable; cancel and recreate the approval");
+      }
 
       await db
         .insert(issueApprovals)
@@ -140,7 +150,10 @@ export function issueApprovalService(db: Db) {
     },
 
     unlink: async (issueId: string, approvalId: string) => {
-      await assertIssueAndApprovalSameCompany(issueId, approvalId);
+      const { approval } = await assertIssueAndApprovalSameCompany(issueId, approvalId);
+      if (approval.type === "request_board_approval" && ["pending", "revision_requested"].includes(approval.status)) {
+        throw unprocessable("Open Board approval links are immutable; cancel and recreate the approval");
+      }
       await db
         .delete(issueApprovals)
         .where(and(eq(issueApprovals.issueId, issueId), eq(issueApprovals.approvalId, approvalId)));
@@ -151,6 +164,9 @@ export function issueApprovalService(db: Db) {
 
       const approval = await getApproval(approvalId);
       if (!approval) throw notFound("Approval not found");
+      if (approval.type === "request_board_approval" && ["pending", "revision_requested"].includes(approval.status)) {
+        throw unprocessable("Open Board approval links are immutable; cancel and recreate the approval");
+      }
 
       const uniqueIssueIds = Array.from(new Set(issueIds));
       const rows = await db
