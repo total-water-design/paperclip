@@ -287,6 +287,23 @@ describeEmbeddedPostgres("issueThreadInteractionService", () => {
     expect(persisted).toMatchObject({ status: "in_progress", statusVersion: 0 });
   });
 
+  it("does not promote a todo issue for a pending human-only interaction", async () => {
+    const { companyId, issueId } = await seedConfirmationIssue("Human-only todo lifecycle");
+    await db.update(issues).set({ status: "todo" }).where(eq(issues.id, issueId));
+
+    await interactionsSvc.create({ id: issueId, companyId }, {
+      kind: "request_confirmation",
+      resolverPolicy: "human_only",
+      payload: { version: 1, prompt: "Board approval required" },
+    }, { userId: "local-board" });
+
+    const persisted = await db.select({ status: issues.status })
+      .from(issues)
+      .where(eq(issues.id, issueId))
+      .then((rows) => rows[0]);
+    expect(persisted?.status).toBe("todo");
+  });
+
   it("cancels addressed interactions before deleting the addressee", async () => {
     const { companyId, issueId } = await seedConfirmationIssue("Deleted interaction addressee");
     const creatorAgentId = randomUUID();

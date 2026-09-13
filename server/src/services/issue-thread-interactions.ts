@@ -2422,7 +2422,7 @@ export function issueThreadInteractionService(db: Db, opts: IssueThreadInteracti
           // against concurrent interaction creation and terminal transitions.
           if (
             policy.effectiveResolverPolicy === "human_only"
-            && issueRow.status !== "in_review"
+            && (issueRow.status === "blocked" || issueRow.status === "in_progress")
           ) {
             await tx
               .update(issues)
