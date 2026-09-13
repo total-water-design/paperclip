@@ -46,6 +46,7 @@ import {
   resolveCurrentWorktreeEndpoint,
   resolveWorktreeSeedMigrationRevision,
   resolveWorktreeSeedBackupEngine,
+  resolveWorktreeSeedSystemdUserBusAddress,
   resolveWorktreeMakeTargetPath,
   worktreeRepairCommand,
   worktreeInitCommand,
@@ -114,6 +115,29 @@ function mockVerifiedSeedResult() {
     },
   };
 }
+
+describe("managed full-seed systemd bus resolution", () => {
+  it("uses the canonical lingering user bus when an agent host omits DBUS_SESSION_BUS_ADDRESS", () => {
+    const socketPaths: string[] = [];
+
+    expect(resolveWorktreeSeedSystemdUserBusAddress({}, {
+      uid: 1001,
+      isSocket: (filePath) => {
+        socketPaths.push(filePath);
+        return filePath === "/run/user/1001/bus";
+      },
+    })).toBe("unix:path=/run/user/1001/bus");
+
+    expect(socketPaths).toEqual(["/run/user/1001/bus"]);
+  });
+
+  it("does not substitute an unmanaged process when no user bus is available", () => {
+    expect(resolveWorktreeSeedSystemdUserBusAddress({}, {
+      uid: 1001,
+      isSocket: () => false,
+    })).toBeUndefined();
+  });
+});
 
 async function seedValidWorktreeSource(
   connectionString: string,

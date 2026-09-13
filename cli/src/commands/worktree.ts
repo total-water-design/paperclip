@@ -1832,6 +1832,34 @@ type ManagedFullSeedExecutor = (input: {
 }) => Promise<void>;
 
 /**
+ * Agent hosts do not always export DBUS_SESSION_BUS_ADDRESS even when the
+ * lingering user manager and its socket are available.  Derive only the
+ * canonical per-user bus path; do not fall back to an unmanaged process when
+ * the manager is genuinely unavailable.
+ */
+export function resolveWorktreeSeedSystemdUserBusAddress(
+  env: NodeJS.ProcessEnv = process.env,
+  dependencies: {
+    uid?: number;
+    isSocket?: (filePath: string) => boolean;
+  } = {},
+): string | undefined {
+  const inheritedAddress = nonEmpty(env.DBUS_SESSION_BUS_ADDRESS);
+  if (inheritedAddress) return inheritedAddress;
+  const uid = dependencies.uid ?? process.getuid?.();
+  if (typeof uid !== "number" || !Number.isSafeInteger(uid) || uid < 0) return undefined;
+  const busPath = `/run/user/${uid}/bus`;
+  const isSocket = dependencies.isSocket ?? ((filePath: string) => {
+    try {
+      return statSync(filePath).isSocket();
+    } catch {
+      return false;
+    }
+  });
+  return isSocket(busPath) ? `unix:path=${busPath}` : undefined;
+}
+
+/**
  * Full logical snapshots can outlast an agent heartbeat.  Run the outer CLI
  * invocation in a transient systemd user service so the execution host may
  * reap its client process without killing the manifest owner.  The service
@@ -1863,6 +1891,10 @@ async function runManagedFullSeedExecutor(input: {
   const expectedCompanyEnv = input.expectedCompanyId === undefined
     ? []
     : [`--setenv=PAPERCLIP_SEED_EXPECTED_COMPANY_ID=${input.expectedCompanyId}`];
+  const userBusAddress = resolveWorktreeSeedSystemdUserBusAddress();
+  const executorEnv = userBusAddress
+    ? { ...process.env, DBUS_SESSION_BUS_ADDRESS: userBusAddress }
+    : process.env;
   const args = [
     "--user",
     "--wait",
@@ -1881,7 +1913,7 @@ async function runManagedFullSeedExecutor(input: {
   ];
 
   await new Promise<void>((resolve, reject) => {
-    const child = spawn("systemd-run", args, { stdio: "inherit" });
+    const child = spawn("systemd-run", args, { stdio: "inherit", env: executorEnv });
     child.once("error", (error) => {
       reject(new Error(`Paperclip managed full-seed executor could not start: ${error.message}`));
     });
