@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createServer } from "node:net";
 import { eq } from "drizzle-orm";
@@ -217,6 +217,49 @@ describe("managed full-seed detached operation", () => {
       sleep: async (ms) => { now += ms; },
     })).rejects.toThrow("did not produce terminal manifest evidence");
   });
+
+  it.runIf(Boolean(resolveWorktreeSeedSystemdUserBusAddress()))(
+    "keeps a submitted transient unit alive when its foreground submitter is cancelled",
+    async () => {
+      const unit = `paperclip-worktree-seed-cancellation-${randomUUID()}`;
+      const userBusAddress = resolveWorktreeSeedSystemdUserBusAddress()!;
+      const submitter = spawn("bash", ["-lc", [
+        `systemd-run --user --collect --quiet --service-type=exec --unit=${unit} /bin/sleep 30`,
+        "printf submitted",
+        "sleep 30",
+      ].join("; ")], {
+        env: { ...process.env, DBUS_SESSION_BUS_ADDRESS: userBusAddress },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const timeout = setTimeout(() => reject(new Error("Timed out waiting for transient service submission.")), 5_000);
+          submitter.once("error", (error) => {
+            clearTimeout(timeout);
+            reject(error);
+          });
+          submitter.stdout?.once("data", () => {
+            clearTimeout(timeout);
+            resolve();
+          });
+        });
+        submitter.kill("SIGTERM");
+        await new Promise<void>((resolve) => submitter.once("exit", () => resolve()));
+
+        expect(() => execFileSync("systemctl", ["--user", "is-active", "--quiet", unit], {
+          env: { ...process.env, DBUS_SESSION_BUS_ADDRESS: userBusAddress },
+        })).not.toThrow();
+      } finally {
+        try {
+          execFileSync("systemctl", ["--user", "stop", unit], {
+            env: { ...process.env, DBUS_SESSION_BUS_ADDRESS: userBusAddress },
+          });
+        } catch {
+          // The transient unit may have already exited or been collected.
+        }
+      }
+    },
+  );
 });
 
 async function seedValidWorktreeSource(
