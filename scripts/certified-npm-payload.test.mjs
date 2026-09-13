@@ -21,6 +21,16 @@ const required = new Map([
   ["package/dist/scripts/paperclip-artifact-identity.mjs", "sourceSha"],
 ]);
 
+const runtimeWorkspacePackages = [
+  "@paperclipai/server",
+  "@paperclipai/adapter-utils",
+  "@paperclipai/db",
+  "@paperclipai/shared",
+  "@paperclipai/adapter-claude-local",
+  "@paperclipai/adapter-codex-local",
+  "@paperclipai/adapter-openclaw-gateway",
+];
+
 test("certified npm archive contains the complete reviewed service payload safely", () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "paperclip-certified-payload-"));
   try {
@@ -41,6 +51,19 @@ test("certified npm archive contains the complete reviewed service payload safel
     assert.equal(statSync(path.join(root, "package/dist/deploy/recovery/paperclip-recovery")).mode & 0o111, 0o111);
     assert.equal(statSync(path.join(root, "package/dist/scripts/paperclip-activation-preflight.sh")).mode & 0o111, 0o111);
     assert.equal(statSync(path.join(root, "package/dist/scripts/paperclip-artifact-identity.mjs")).mode & 0o111, 0o111);
+    assert.ok(listing.some((entry) => entry.startsWith("package/node_modules/.pnpm/")), "archive must carry a production dependency closure");
+    const resolver = [
+      "const { createRequire } = require('node:module');",
+      "const root = process.argv[1];",
+      "const requireFromPayload = createRequire(`${root}/dist/index.js`);",
+      `for (const dependency of ${JSON.stringify(runtimeWorkspacePackages)}) {`,
+      "  const resolved = requireFromPayload.resolve(dependency);",
+      "  if (!resolved.startsWith(`${root}/node_modules/`)) throw new Error(`dependency escaped payload: ${dependency} -> ${resolved}`);",
+      "  process.stdout.write(`${dependency}\\t${resolved}\\n`);",
+      "}",
+    ].join("\n");
+    const resolved = execFileSync(process.execPath, ["-e", resolver, path.join(root, "package")], { encoding: "utf8" });
+    for (const dependency of runtimeWorkspacePackages) assert.match(resolved, new RegExp(`^${dependency}\\t`, "m"), `missing runtime dependency ${dependency}`);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

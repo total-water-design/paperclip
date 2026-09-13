@@ -23,12 +23,21 @@ trap 'if [[ -f "$repo_root/cli/package.dev.json" ]]; then mv "$repo_root/cli/pac
 stage="$(mktemp -d "${PAPERCLIP_TMPDIR:-/tmp}/paperclip-package.XXXXXX")"
 trap 'rm -rf "$stage"; if [[ -f "$repo_root/cli/package.dev.json" ]]; then mv "$repo_root/cli/package.dev.json" "$repo_root/cli/package.json"; fi; cp "$readme_backup" "$repo_root/cli/README.md"; rm -f "$readme_backup"' EXIT
 mkdir -p "$stage/package"
-cp "$repo_root/cli/package.json" "$stage/package/package.json"
-cp "$repo_root/cli/README.md" "$stage/package/README.md"
+# Restore the workspace manifest before deploying.  The publish manifest only
+# retains @paperclipai/server because the normal npm package expects the
+# registry to supply the rest of the graph.  A certified activation payload is
+# intentionally different: it must carry its complete, production runtime
+# closure so an operator never has to resolve workspace packages at startup.
 mv "$repo_root/cli/package.dev.json" "$repo_root/cli/package.json"
 cp "$readme_backup" "$repo_root/cli/README.md"
+
+# pnpm deploy materializes the workspace package and every production runtime
+# dependency beneath one portable package root.  Use the already-locked
+# workspace graph; this command neither publishes nor contacts a registry.
+pnpm --dir "$repo_root" --filter paperclipai --prod deploy "$stage/package"
+
 node "$repo_root/scripts/paperclip-artifact-identity.mjs" identity --repo "$repo_root" --output-dir "$repo_root/cli/dist" --source-sha "$source_sha" --build-command "$canonical_command"
-cp -R "$repo_root/cli/dist" "$stage/package/"
+cp "$repo_root/cli/dist/paperclip-artifact-identity.json" "$stage/package/dist/paperclip-artifact-identity.json"
 
 epoch="$(git -C "$repo_root" show -s --format=%ct "$source_sha")"
 COPYFILE_DISABLE=1 tar --sort=name --format=posix --mtime="@$epoch" --owner=0 --group=0 --numeric-owner --pax-option=delete=atime,delete=ctime -C "$stage" -cf - package | gzip -n -9 > "$archive"
