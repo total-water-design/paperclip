@@ -14,7 +14,7 @@ function fail(message) {
 }
 
 function isRuntimeModule(specifier) {
-  return !specifier.startsWith(".") && !specifier.startsWith("/") && !specifier.startsWith("node:");
+  return !specifier.startsWith(".") && !specifier.startsWith("/") && !specifier.startsWith("node:") && !specifier.startsWith("@embedded-postgres/");
 }
 
 // This reads executable import/require syntax, never manifest declarations.

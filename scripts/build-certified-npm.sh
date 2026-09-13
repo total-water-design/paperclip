@@ -29,6 +29,13 @@ mv "$repo_root/cli/package.dev.json" "$repo_root/cli/package.json"
 cp "$readme_backup" "$repo_root/cli/README.md"
 node "$repo_root/scripts/paperclip-artifact-identity.mjs" identity --repo "$repo_root" --output-dir "$repo_root/cli/dist" --source-sha "$source_sha" --build-command "$canonical_command"
 cp -R "$repo_root/cli/dist" "$stage/package/"
+# The CLI dispatches the server through a literal dynamic import. Include its
+# source package in the archive so module resolution never escapes the payload.
+# node_modules is deliberately excluded: every direct non-workspace runtime
+# dependency is bundled in dist/index.js and platform-only binaries stay out of
+# the bounded archive.
+mkdir -p "$stage/package/node_modules/@paperclipai/server"
+tar --exclude=node_modules --exclude=dist --exclude=ui-dist -C "$repo_root/server" -cf - . | tar -C "$stage/package/node_modules/@paperclipai/server" -xf -
 
 epoch="$(git -C "$repo_root" show -s --format=%ct "$source_sha")"
 COPYFILE_DISABLE=1 tar --sort=name --format=posix --mtime="@$epoch" --owner=0 --group=0 --numeric-owner --pax-option=delete=atime,delete=ctime -C "$stage" -cf - package | gzip -n -9 > "$archive"
