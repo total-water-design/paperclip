@@ -6,8 +6,10 @@
  */
 
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { bundledCliNpmDependencies } from "../scripts/cli-bundled-npm-dependencies.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, "..");
@@ -34,21 +36,41 @@ const workspacePaths = [
   "packages/plugins/sdk",
 ];
 
-// Certified payloads must execute after a clean extraction with no package
-// manager, registry, credentials, or inherited workspace node_modules. Keep
-// the CLI's complete JavaScript dependency closure in the bundle instead of
-// leaving either workspace or registry packages for Node to resolve later.
-const externalWorkspacePackages = new Set();
+// Workspace packages that should NOT be bundled — they'll be published
+// to npm and resolved at runtime (e.g. @paperclipai/server uses dynamic import).
+const externalWorkspacePackages = new Set([
+  "@paperclipai/server",
+]);
+
+// Collect all external (non-workspace) npm package names
 const externals = new Set();
 for (const p of workspacePaths) {
   const pkg = JSON.parse(readFileSync(resolve(repoRoot, p, "package.json"), "utf8"));
   for (const name of Object.keys(pkg.dependencies || {})) {
-    if (externalWorkspacePackages.has(name)) externals.add(name);
+    if (externalWorkspacePackages.has(name)) {
+      externals.add(name);
+    } else if (!name.startsWith("@paperclipai/") && !bundledCliNpmDependencies.has(name)) {
+      externals.add(name);
+    }
+  }
+  for (const name of Object.keys(pkg.optionalDependencies || {})) {
+    externals.add(name);
   }
 }
 // Also add all published workspace packages as external
 for (const name of externalWorkspacePackages) {
   externals.add(name);
+}
+
+if (bundledCliNpmDependencies.has("embedded-postgres")) {
+  const requireFromDb = createRequire(resolve(repoRoot, "packages/db/package.json"));
+  const embeddedPostgresRoot = dirname(requireFromDb.resolve("embedded-postgres"));
+  const embeddedPostgresPackage = JSON.parse(
+    readFileSync(resolve(embeddedPostgresRoot, "..", "package.json"), "utf8"),
+  );
+  for (const name of Object.keys(embeddedPostgresPackage.optionalDependencies ?? {})) {
+    externals.add(name);
+  }
 }
 
 /** @type {import('esbuild').BuildOptions} */
@@ -60,8 +82,6 @@ export default {
   format: "esm",
   outfile: "dist/index.js",
   banner: { js: "#!/usr/bin/env node" },
-  // Node built-ins remain external automatically; every resolvable package
-  // import is embedded in dist/index.js for the certified archive.
   external: [...externals].sort(),
   treeShaking: true,
   sourcemap: true,
