@@ -6,7 +6,8 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 const PACKAGE_ROOT = "package";
-const RUNTIME_MODULE = /(?:\bfrom\s*|\bimport\s*\(|\brequire\s*\()(["'])([^"']+)\1/g;
+const STATIC_IMPORT = /^\s*import(?:[\s\S]*?\sfrom\s*)?["']([^"']+)["']/gm;
+const CALL_IMPORT = /\b(?:import|require)\(\s*(["'])([^"']+)\1\s*\)/g;
 
 function fail(message) {
   throw new Error(`certified payload: ${message}`);
@@ -20,7 +21,10 @@ function isRuntimeModule(specifier) {
 // It captures each static external module edge Node must resolve after extract.
 export function collectRuntimeModules(source) {
   const modules = new Set();
-  for (const match of source.matchAll(RUNTIME_MODULE)) {
+  for (const match of source.matchAll(STATIC_IMPORT)) {
+    if (isRuntimeModule(match[1])) modules.add(match[1]);
+  }
+  for (const match of source.matchAll(CALL_IMPORT)) {
     if (isRuntimeModule(match[2])) modules.add(match[2]);
   }
   return [...modules].sort();
