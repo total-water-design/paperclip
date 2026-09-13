@@ -44,6 +44,7 @@ import {
   resolveGitWorktreeAddArgs,
   resolvePnpmInstallInvocation,
   resolveCurrentWorktreeEndpoint,
+  resolveManagedFullSeedCommandInvocation,
   resolveWorktreeSeedMigrationRevision,
   resolveWorktreeSeedBackupEngine,
   resolveWorktreeSeedSystemdUserBusAddress,
@@ -136,6 +137,38 @@ describe("managed full-seed systemd bus resolution", () => {
       uid: 1001,
       isSocket: () => false,
     })).toBeUndefined();
+  });
+});
+
+describe("managed full-seed command invocation", () => {
+  it("preserves the TSX launcher for a source CLI entrypoint", () => {
+    expect(resolveManagedFullSeedCommandInvocation({
+      entrypoint: "/repo/cli/src/index.ts",
+      commandArgs: ["worktree", "ensure-seeded", "--from-config", "/source/config.json"],
+      nodePath: "/usr/bin/node",
+      sourceTsxLauncherPath: "/repo/cli/node_modules/tsx/dist/cli.mjs",
+    })).toEqual({
+      executable: "/usr/bin/node",
+      args: [
+        "/repo/cli/node_modules/tsx/dist/cli.mjs",
+        "/repo/cli/src/index.ts",
+        "worktree",
+        "ensure-seeded",
+        "--from-config",
+        "/source/config.json",
+      ],
+    });
+  });
+
+  it("keeps a built CLI entrypoint on plain Node", () => {
+    expect(resolveManagedFullSeedCommandInvocation({
+      entrypoint: "/opt/paperclip/dist/index.js",
+      commandArgs: ["worktree", "ensure-seeded"],
+      nodePath: "/usr/bin/node",
+    })).toEqual({
+      executable: "/usr/bin/node",
+      args: ["/opt/paperclip/dist/index.js", "worktree", "ensure-seeded"],
+    });
   });
 });
 
@@ -880,6 +913,11 @@ describe("worktree helpers", () => {
       name: "fails before writing verified evidence",
       executor: vi.fn(async () => { throw new Error("managed executor was reaped"); }),
       expectedError: "managed executor was reaped",
+    },
+    {
+      name: "cannot load the source launcher",
+      executor: vi.fn(async () => { throw new Error("ERR_MODULE_NOT_FOUND: tsx loader"); }),
+      expectedError: "ERR_MODULE_NOT_FOUND: tsx loader",
     },
   ])("terminalizes a full seed when the managed executor $name", async ({ executor, expectedError }) => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "paperclip-worktree-managed-full-seed-failure-"));

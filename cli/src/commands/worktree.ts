@@ -1831,6 +1831,35 @@ type ManagedFullSeedExecutor = (input: {
   expectedCompanyId?: string;
 }) => Promise<void>;
 
+export type ManagedFullSeedCommandInvocation = {
+  executable: string;
+  args: string[];
+};
+
+/**
+ * Reconstruct a re-entrant CLI command without losing the TSX loader used by
+ * source checkouts. Built CLI entrypoints remain plain Node invocations.
+ */
+export function resolveManagedFullSeedCommandInvocation(input: {
+  entrypoint?: string;
+  commandArgs?: string[];
+  nodePath?: string;
+  sourceTsxLauncherPath?: string;
+} = {}): ManagedFullSeedCommandInvocation {
+  const entrypoint = input.entrypoint ?? process.argv[1];
+  if (!entrypoint) {
+    throw new Error("Paperclip could not reconstruct the full-seed CLI invocation for its managed executor.");
+  }
+  const commandArgs = input.commandArgs ?? process.argv.slice(2);
+  const executable = input.nodePath ?? process.execPath;
+  if (entrypoint.endsWith(".ts")) {
+    const sourceTsxLauncherPath = input.sourceTsxLauncherPath
+      ?? path.resolve(path.dirname(path.resolve(entrypoint)), "../node_modules/tsx/dist/cli.mjs");
+    return { executable, args: [sourceTsxLauncherPath, entrypoint, ...commandArgs] };
+  }
+  return { executable, args: [entrypoint, ...commandArgs] };
+}
+
 /**
  * Agent hosts do not always export DBUS_SESSION_BUS_ADDRESS even when the
  * lingering user manager and its socket are available.  Derive only the
@@ -1874,10 +1903,7 @@ async function runManagedFullSeedExecutor(input: {
   if (process.platform !== "linux") {
     throw new Error("Full worktree seeds require the Paperclip managed executor on Linux.");
   }
-  const commandArgs = process.argv.slice(1);
-  if (commandArgs.length === 0) {
-    throw new Error("Paperclip could not reconstruct the full-seed CLI invocation for its managed executor.");
-  }
+  const command = resolveManagedFullSeedCommandInvocation();
   const unit = `paperclip-worktree-seed-${randomUUID()}`;
   // A user service gets the user manager's environment, not necessarily the
   // foreground command's. Carry only non-secret registration bindings. The
@@ -1908,8 +1934,8 @@ async function runManagedFullSeedExecutor(input: {
     `--setenv=${WORKTREE_FULL_SEED_EXECUTOR_ENV}=1`,
     ...inheritedRegistrationEnv,
     ...expectedCompanyEnv,
-    process.execPath,
-    ...commandArgs,
+    command.executable,
+    ...command.args,
   ];
 
   await new Promise<void>((resolve, reject) => {
