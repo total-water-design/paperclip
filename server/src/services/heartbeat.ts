@@ -10439,7 +10439,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
   }
 
   function isServerStdioBoundHotRestartRun(input: {
-    run: typeof heartbeatRuns.$inferSelect;
+    run: Pick<typeof heartbeatRuns.$inferSelect, "contextSnapshot">;
     adapterType: string;
     adapterConfig: unknown;
   }) {
@@ -13922,6 +13922,91 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     return {
       activeRunIds: rows.filter((row) => row.status === "running").map((row) => row.id),
       queuedRunIds: rows.filter((row) => row.status === "queued").map((row) => row.id),
+    };
+  }
+
+  async function getSafeWindowInventory(companyId: string) {
+    // This method is intentionally a bounded set of SELECTs. It must remain
+    // free of runtime/process inspection and all scheduler/recovery helpers so
+    // a safe-window snapshot cannot wake agents, write issue/run state, read a
+    // secret file, expand privileges, or execute service-control commands.
+    const [company] = await db
+      .select({ id: companies.id, status: companies.status })
+      .from(companies)
+      .where(eq(companies.id, companyId));
+
+    if (!company) return { company: null, runs: [], issues: [] };
+
+    const [runs, companyIssues] = await Promise.all([
+      db
+        .select({
+          id: heartbeatRuns.id,
+          status: heartbeatRuns.status,
+          agentId: heartbeatRuns.agentId,
+          issueId: heartbeatRuns.nativeIssueId,
+          runtimeMode: heartbeatRuns.runtimeMode,
+          processPid: heartbeatRuns.processPid,
+          processGroupId: heartbeatRuns.processGroupId,
+          createdAt: heartbeatRuns.createdAt,
+          startedAt: heartbeatRuns.startedAt,
+          adapterType: agents.adapterType,
+          adapterConfig: agents.adapterConfig,
+          contextSnapshot: heartbeatRuns.contextSnapshot,
+        })
+        .from(heartbeatRuns)
+        .innerJoin(agents, and(eq(agents.id, heartbeatRuns.agentId), eq(agents.companyId, companyId)))
+        .where(and(eq(heartbeatRuns.companyId, companyId), inArray(heartbeatRuns.status, ["queued", "running"]))),
+      db
+        .select({
+          id: issues.id,
+          identifier: issues.identifier,
+          status: issues.status,
+          checkoutRunId: issues.checkoutRunId,
+          executionRunId: issues.executionRunId,
+          assigneeAgentId: issues.assigneeAgentId,
+          updatedAt: issues.updatedAt,
+        })
+        .from(issues)
+        .where(and(eq(issues.companyId, companyId), notInArray(issues.status, ["done", "cancelled"]))),
+    ]);
+
+    return {
+      company: { id: company.id, status: company.status },
+      runs: runs.map((run) => {
+        const context = parseObject(run.contextSnapshot);
+        const serverStdio = isServerStdioBoundHotRestartRun({
+          run,
+          adapterType: run.adapterType,
+          adapterConfig: run.adapterConfig,
+        });
+        const hotAdoptable = run.status === "running"
+          && !serverStdio
+          && isTrackedLocalChildProcessAdapter(run.adapterType)
+          && (run.processPid !== null || run.processGroupId !== null);
+        return {
+          id: run.id,
+          status: run.status,
+          agentId: run.agentId,
+          issueId: run.issueId ?? issueIdFromRunContext(context),
+          adapterType: run.adapterType,
+          runtimeMode: run.runtimeMode,
+          processPidPresent: run.processPid !== null,
+          processGroupPresent: run.processGroupId !== null,
+          createdAt: run.createdAt,
+          startedAt: run.startedAt,
+          safeWindowDisposition: hotAdoptable ? "hot_adoptable" : "drain_required",
+          dispositionReason: hotAdoptable
+            ? "running_detached_local_child_process"
+            : run.status !== "running"
+              ? "run_not_running"
+              : serverStdio
+                ? "server_stdio_bound"
+                : !isTrackedLocalChildProcessAdapter(run.adapterType)
+                  ? "adapter_not_local_child_process"
+                  : "missing_process_metadata",
+        };
+      }),
+      issues: companyIssues,
     };
   }
 
@@ -19808,6 +19893,8 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     resumeQueuedRuns,
 
     getRecoveryRunInventory,
+
+    getSafeWindowInventory,
 
     scheduleBoundedRetry: async (
       runId: string,

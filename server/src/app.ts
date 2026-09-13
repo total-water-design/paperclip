@@ -506,6 +506,8 @@ export async function createApp(
   );
   api.use(recoveryRoutes({
     recoveryToken: process.env.PAPERCLIP_RECOVERY_TOKEN,
+    safeWindowInventoryToken: process.env.PAPERCLIP_SAFE_WINDOW_INVENTORY_TOKEN,
+    safeWindowInventoryCompanyId: process.env.PAPERCLIP_SAFE_WINDOW_INVENTORY_COMPANY_ID,
     heartbeat: heartbeatService(db),
   }));
   api.use(assetRoutes(db, opts.storageService));
