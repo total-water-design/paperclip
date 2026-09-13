@@ -32,5 +32,6 @@ cp -R "$repo_root/cli/dist" "$stage/package/"
 
 epoch="$(git -C "$repo_root" show -s --format=%ct "$source_sha")"
 COPYFILE_DISABLE=1 tar --sort=name --format=posix --mtime="@$epoch" --owner=0 --group=0 --numeric-owner --pax-option=delete=atime,delete=ctime -C "$stage" -cf - package | gzip -n -9 > "$archive"
+node "$repo_root/scripts/verify-certified-npm-payload.mjs" --archive "$archive"
 node "$repo_root/scripts/paperclip-artifact-identity.mjs" certify --identity "$repo_root/cli/dist/paperclip-artifact-identity.json" --archive "$archive" --executable "$repo_root/cli/dist/index.js" --manifest "$manifest"
 printf 'certified archive: %s\ncertification manifest: %s\n' "$archive" "$manifest"

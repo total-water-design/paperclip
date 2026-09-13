@@ -23,9 +23,17 @@ const workspacePaths = [
   "packages/adapter-utils",
   "packages/adapters/claude-local",
   "packages/adapters/codex-local",
+  "packages/adapters/cursor-cloud",
+  "packages/adapters/cursor-local",
+  "packages/adapters/gemini-local",
+  "packages/adapters/grok-local",
   "packages/adapters/hermes-gateway",
   "packages/adapters/hermes",
+  "packages/adapters/kimi-local",
+  "packages/adapters/opencode-local",
   "packages/adapters/openclaw-gateway",
+  "packages/adapters/pi-local",
+  "packages/plugins/sdk",
 ];
 
 // Workspace packages that should NOT be bundled — they'll be published

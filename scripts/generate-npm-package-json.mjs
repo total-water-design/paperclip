@@ -38,6 +38,7 @@ const workspacePaths = [
   "packages/adapters/hermes",
   "packages/adapters/opencode-local",
   "packages/adapters/openclaw-gateway",
+  "packages/plugins/sdk",
 ];
 
 // Workspace packages that are NOT bundled and must stay as npm dependencies.
