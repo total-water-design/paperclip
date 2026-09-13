@@ -1828,6 +1828,7 @@ const activeSeedInterruptHandlers = new Map<string, (signal: NodeJS.Signals) => 
 type ManagedFullSeedExecutor = (input: {
   configPath: string;
   targetCwd: string;
+  expectedCompanyId?: string;
 }) => Promise<void>;
 
 /**
@@ -1840,6 +1841,7 @@ type ManagedFullSeedExecutor = (input: {
 async function runManagedFullSeedExecutor(input: {
   configPath: string;
   targetCwd: string;
+  expectedCompanyId?: string;
 }): Promise<void> {
   if (process.platform !== "linux") {
     throw new Error("Full worktree seeds require the Paperclip managed executor on Linux.");
@@ -1850,14 +1852,17 @@ async function runManagedFullSeedExecutor(input: {
   }
   const unit = `paperclip-worktree-seed-${randomUUID()}`;
   // A user service gets the user manager's environment, not necessarily the
-  // foreground command's. Carry only the non-secret registration bindings the
-  // inner CLI needs to derive its authority-bound source and target paths.
+  // foreground command's. Carry only non-secret registration bindings. The
+  // expected-company constraint is normalized into the seed-specific binding
+  // so an inner service cannot lose the outer command's company boundary.
   const inheritedRegistrationEnv = [
     "PAPERCLIP_WORKSPACE_BASE_CWD",
     "PAPERCLIP_PROJECT_WORKSPACE_ID",
-    "PAPERCLIP_SEED_EXPECTED_COMPANY_ID",
     "PAPERCLIP_WORKTREES_DIR",
   ].flatMap((key) => process.env[key] === undefined ? [] : [`--setenv=${key}=${process.env[key]}`]);
+  const expectedCompanyEnv = input.expectedCompanyId === undefined
+    ? []
+    : [`--setenv=PAPERCLIP_SEED_EXPECTED_COMPANY_ID=${input.expectedCompanyId}`];
   const args = [
     "--user",
     "--wait",
@@ -1870,6 +1875,7 @@ async function runManagedFullSeedExecutor(input: {
     `--working-directory=${input.targetCwd}`,
     `--setenv=${WORKTREE_FULL_SEED_EXECUTOR_ENV}=1`,
     ...inheritedRegistrationEnv,
+    ...expectedCompanyEnv,
     process.execPath,
     ...commandArgs,
   ];
@@ -2378,6 +2384,11 @@ export async function ensureWorktreeSeeded(
     return { seeded: false, reason: "legacy_unmarked" };
   }
 
+  const expectedCompanyId = opts.expectedCompanyId
+    ?? nonEmpty(process.env.PAPERCLIP_SEED_EXPECTED_COMPANY_ID)
+    ?? nonEmpty(process.env.PAPERCLIP_COMPANY_ID)
+    ?? undefined;
+
   // The agent/command host is allowed to terminate its foreground client after
   // a heartbeat.  A complete full snapshot is consequently handed to the
   // Paperclip-managed transient service before we create a lock or mark the
@@ -2392,6 +2403,7 @@ export async function ensureWorktreeSeeded(
       await (dependencies.runManagedFullSeedExecutor ?? runManagedFullSeedExecutor)({
         configPath,
         targetCwd: path.dirname(path.dirname(configPath)),
+        expectedCompanyId,
       });
     } catch (error) {
       const current = readWorktreeSeedManifest(configPath);
@@ -2424,10 +2436,6 @@ export async function ensureWorktreeSeeded(
   const registeredProjectWorkspaceId = opts.registeredProjectWorkspaceId
     ?? nonEmpty(process.env.PAPERCLIP_PROJECT_WORKSPACE_ID)
     ?? null;
-  const expectedCompanyId = opts.expectedCompanyId
-    ?? nonEmpty(process.env.PAPERCLIP_SEED_EXPECTED_COMPANY_ID)
-    ?? nonEmpty(process.env.PAPERCLIP_COMPANY_ID)
-    ?? undefined;
   if (!explicitSourceConfigPath && registeredBaseWorkspaceCwd && (!registeredProjectWorkspaceId || !expectedCompanyId)) {
     throw new Error(
       "Managed worktree seed registration is incomplete; project workspace and company bindings are required.",

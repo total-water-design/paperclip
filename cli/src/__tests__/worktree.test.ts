@@ -757,13 +757,91 @@ describe("worktree helpers", () => {
         { runManagedFullSeedExecutor: executor },
       )).resolves.toEqual({ seeded: false, reason: "verified_manifest" });
 
-      expect(executor).toHaveBeenCalledWith({ configPath: targetConfigPath, targetCwd: targetRoot });
+      expect(executor).toHaveBeenCalledWith(expect.objectContaining({
+        configPath: targetConfigPath,
+        targetCwd: targetRoot,
+      }));
       expect(seedDatabase).toHaveBeenCalledWith(expect.objectContaining({ seedMode: "full" }));
       expect(readWorktreeSeedManifest(targetConfigPath)).toMatchObject({ state: "verified", phase: "complete" });
       expect(fs.existsSync(path.join(targetRoot, ".paperclip", "seed.lock"))).toBe(false);
     } finally {
       if (previousExecutorMarker === undefined) delete process.env.PAPERCLIP_WORKTREE_SEED_MANAGED_EXECUTOR;
       else process.env.PAPERCLIP_WORKTREE_SEED_MANAGED_EXECUTOR = previousExecutorMarker;
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves the expected company binding so a managed full seed rejects a cross-company source", async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "paperclip-worktree-managed-full-seed-company-"));
+    const previousExecutorMarker = process.env.PAPERCLIP_WORKTREE_SEED_MANAGED_EXECUTOR;
+    const previousCompanyId = process.env.PAPERCLIP_COMPANY_ID;
+    const previousExpectedCompanyId = process.env.PAPERCLIP_SEED_EXPECTED_COMPANY_ID;
+    try {
+      const sourceConfigPath = path.join(tempRoot, "source", "config.json");
+      const targetRoot = path.join(tempRoot, "worktree");
+      const targetConfigPath = path.join(targetRoot, ".paperclip", "config.json");
+      const targetPaths = resolveWorktreeLocalPaths({
+        cwd: targetRoot,
+        homeDir: path.join(tempRoot, "worktree-home"),
+        instanceId: "managed-full-seed-company-test",
+      });
+      const sourceConfig = buildSourceConfig();
+      const targetConfig = buildWorktreeConfig({
+        sourceConfig,
+        paths: targetPaths,
+        serverPort: 3196,
+        databasePort: 54996,
+      });
+      fs.mkdirSync(path.dirname(sourceConfigPath), { recursive: true });
+      fs.mkdirSync(path.dirname(targetConfigPath), { recursive: true });
+      fs.writeFileSync(sourceConfigPath, `${JSON.stringify(sourceConfig)}\n`);
+      fs.writeFileSync(path.join(path.dirname(sourceConfigPath), ".env"), "PAPERCLIP_INSTANCE_ID=source\n");
+      fs.writeFileSync(targetConfigPath, `${JSON.stringify(targetConfig)}\n`);
+      fs.writeFileSync(
+        path.join(targetRoot, ".paperclip", ".env"),
+        `PAPERCLIP_HOME=${targetPaths.homeDir}\nPAPERCLIP_INSTANCE_ID=${targetPaths.instanceId}\n`,
+      );
+      markWorktreeSeedPending({ configPath: targetConfigPath, sourceConfigPath, seedMode: "full" });
+      process.env.PAPERCLIP_COMPANY_ID = "authorized-company";
+      delete process.env.PAPERCLIP_SEED_EXPECTED_COMPANY_ID;
+
+      const seedDatabase = vi.fn(async (input) => {
+        expect(input.expectedCompanyId).toBe("authorized-company");
+        throw new Error("Cross-company source rejected by expected company binding.");
+      });
+      const executor = vi.fn(async (input: { expectedCompanyId?: string }) => {
+        process.env.PAPERCLIP_WORKTREE_SEED_MANAGED_EXECUTOR = "1";
+        try {
+          await ensureWorktreeSeeded(
+            { config: targetConfigPath, fromConfig: sourceConfigPath, expectedCompanyId: input.expectedCompanyId },
+            { seedDatabase },
+          );
+        } finally {
+          if (previousExecutorMarker === undefined) delete process.env.PAPERCLIP_WORKTREE_SEED_MANAGED_EXECUTOR;
+          else process.env.PAPERCLIP_WORKTREE_SEED_MANAGED_EXECUTOR = previousExecutorMarker;
+        }
+      });
+
+      await expect(ensureWorktreeSeeded(
+        { config: targetConfigPath, fromConfig: sourceConfigPath },
+        { runManagedFullSeedExecutor: executor },
+      )).rejects.toThrow("Cross-company source rejected");
+
+      expect(executor).toHaveBeenCalledWith({
+        configPath: targetConfigPath,
+        targetCwd: targetRoot,
+        expectedCompanyId: "authorized-company",
+      });
+      expect(seedDatabase).toHaveBeenCalledTimes(1);
+      expect(readWorktreeSeedManifest(targetConfigPath)).toMatchObject({ state: "failed" });
+      expect(fs.existsSync(path.join(targetRoot, ".paperclip", "seed.lock"))).toBe(false);
+    } finally {
+      if (previousExecutorMarker === undefined) delete process.env.PAPERCLIP_WORKTREE_SEED_MANAGED_EXECUTOR;
+      else process.env.PAPERCLIP_WORKTREE_SEED_MANAGED_EXECUTOR = previousExecutorMarker;
+      if (previousCompanyId === undefined) delete process.env.PAPERCLIP_COMPANY_ID;
+      else process.env.PAPERCLIP_COMPANY_ID = previousCompanyId;
+      if (previousExpectedCompanyId === undefined) delete process.env.PAPERCLIP_SEED_EXPECTED_COMPANY_ID;
+      else process.env.PAPERCLIP_SEED_EXPECTED_COMPANY_ID = previousExpectedCompanyId;
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }
   });
@@ -813,7 +891,10 @@ describe("worktree helpers", () => {
         { runManagedFullSeedExecutor: executor },
       )).rejects.toThrow(expectedError);
 
-      expect(executor).toHaveBeenCalledWith({ configPath: targetConfigPath, targetCwd: targetRoot });
+      expect(executor).toHaveBeenCalledWith(expect.objectContaining({
+        configPath: targetConfigPath,
+        targetCwd: targetRoot,
+      }));
       expect(readWorktreeSeedManifest(targetConfigPath)).toMatchObject({
         state: "failed",
         diagnostics: expect.arrayContaining([
