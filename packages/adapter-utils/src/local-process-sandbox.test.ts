@@ -71,7 +71,7 @@ describe("local process sandbox", () => {
     })).rejects.toThrow("valid networkAllowlist hostname or HTTP(S) networkTrustedUrl");
   });
 
-  it("builds a fresh-root bubblewrap command with workspace access", async () => {
+  it("uses the approved full-root Bubblewrap foundation for workspace access", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-fs-sandbox-"));
     cleanup.push(root);
     const workspace = path.join(root, "workspace");
@@ -86,13 +86,28 @@ describe("local process sandbox", () => {
       options: {
         workspaceDir: workspace,
         filesystemScope: "workspace",
+        networkScope: "deny",
         managedPaths: [{ path: managedHome, access: "rw" }],
         homeDir: managedHome,
       },
     });
 
     expect(target.command).toBe("bwrap");
-    expect(target.args).toContain("--tmpfs");
+    expect(target.args).toEqual(expect.arrayContaining([
+      "--ro-bind", "/", "/",
+      "--proc", "/proc",
+      "--dev", "/dev",
+      "--tmpfs", "/tmp",
+      "--unshare-pid",
+      "--unshare-ipc",
+      "--unshare-uts",
+      "--unshare-net",
+    ]));
+    const tmpfsRootIndex = target.args.findIndex((arg, index) => arg === "--tmpfs" && target.args[index + 1] === "/");
+    expect(tmpfsRootIndex).toBe(-1);
+    expect(target.args).not.toEqual(expect.arrayContaining(["--ro-bind", "/usr", "/usr"]));
+    expect(target.args).not.toEqual(expect.arrayContaining(["--ro-bind", "/bin", "/bin"]));
+    expect(target.args).not.toEqual(expect.arrayContaining(["--ro-bind", "/lib", "/lib"]));
     expect(target.args).toContain(workspace);
     expect(target.args).toContain(managedHome);
     expect(target.args.slice(-6)).toEqual([

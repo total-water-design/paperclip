@@ -50,24 +50,6 @@ interface NetworkAllowlistProxy {
   close: () => Promise<void>;
 }
 
-const SYSTEM_READ_PATHS = [
-  "/bin",
-  "/sbin",
-  "/usr",
-  "/lib",
-  "/lib64",
-  "/etc/ca-certificates",
-  "/etc/ssl",
-  "/etc/resolv.conf",
-  "/etc/hosts",
-  "/etc/nsswitch.conf",
-  "/etc/passwd",
-  "/etc/group",
-  "/etc/localtime",
-  "/etc/timezone",
-  "/etc/gitconfig",
-] as const;
-
 const PROXY_ENV_KEYS = ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"] as const;
 const SANDBOX_PROXY_PORT = 31_337;
 const UNIX_SOCKET_PATH_MAX_BYTES = 107;
@@ -105,41 +87,6 @@ function normalizeAbsolutePath(candidate: string, label: string): string {
 
 async function pathExists(candidate: string): Promise<boolean> {
   return fs.lstat(candidate).then(() => true).catch(() => false);
-}
-
-function parentDirectories(candidate: string): string[] {
-  const directories: string[] = [];
-  let current = path.dirname(candidate);
-  while (current !== path.dirname(current)) {
-    directories.push(current);
-    current = path.dirname(current);
-  }
-  return directories.reverse();
-}
-
-function addParentDirectories(args: string[], created: Set<string>, candidate: string): void {
-  for (const directory of parentDirectories(candidate)) {
-    if (created.has(directory)) continue;
-    args.push("--dir", directory);
-    created.add(directory);
-  }
-}
-
-async function nearestPackageRoot(candidate: string): Promise<string> {
-  let current = path.dirname(candidate);
-  while (current !== path.dirname(current)) {
-    if (await pathExists(path.join(current, "package.json"))) return current;
-    current = path.dirname(current);
-  }
-  return path.dirname(candidate);
-}
-
-async function executableReadPaths(command: string): Promise<string[]> {
-  const paths = new Set<string>();
-  paths.add(path.dirname(command));
-  const realCommand = await fs.realpath(command).catch(() => command);
-  paths.add(await nearestPackageRoot(realCommand));
-  return Array.from(paths);
 }
 
 function parseNetworkAllowlistEntry(entry: string, index: number): NetworkAllowlistRule {
@@ -410,29 +357,18 @@ export async function buildLocalProcessSandboxSpawnTarget(input: {
   let executableArgs = input.args;
 
   if (filesystemScope === "workspace") {
-    args.push("--tmpfs", "/", "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp");
-    args.push(
-      "--symlink", "usr/bin", "/bin",
-      "--symlink", "usr/sbin", "/sbin",
-      "--symlink", "usr/lib", "/lib",
-      "--symlink", "usr/lib64", "/lib64",
-    );
-    const created = new Set<string>(["/", "/proc", "/dev", "/tmp"]);
+    // Keep the host runtime layout intact and immutable, then explicitly
+    // overlay only approved writable paths. A fresh tmpfs root plus selected
+    // system mounts is not equivalent: it breaks host layouts such as merged
+    // /usr and has repeatedly diverged from the approved Bubblewrap command.
+    args.push("--ro-bind", "/", "/", "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp");
     const mounted = new Set<string>();
     const mount = async (source: string, access: LocalProcessSandboxAccess) => {
       const normalized = normalizeAbsolutePath(source, "Sandbox path");
       if (mounted.has(normalized) || !(await pathExists(normalized))) return;
-      addParentDirectories(args, created, normalized);
       args.push(access === "rw" ? "--bind" : "--ro-bind", normalized, normalized);
       mounted.add(normalized);
-      created.add(normalized);
     };
-    for (const systemPath of SYSTEM_READ_PATHS) await mount(systemPath, "ro");
-    for (const executablePath of await executableReadPaths(input.executable)) await mount(executablePath, "ro");
-    for (const nodePath of await executableReadPaths(process.execPath)) await mount(nodePath, "ro");
-    if (networkScope === "allowlist") {
-      for (const nodePath of await executableReadPaths(process.execPath)) await mount(nodePath, "ro");
-    }
     for (const managedPath of input.options.managedPaths ?? []) await mount(managedPath.path, managedPath.access);
     for (const extraPath of input.options.extraPaths ?? []) await mount(extraPath.path, extraPath.access);
     await mount(workspaceDir, "rw");
@@ -448,9 +384,7 @@ export async function buildLocalProcessSandboxSpawnTarget(input: {
       if (!(await pathExists(aliasTarget))) {
         throw new Error(`Sandbox path alias target "${aliasTarget}" does not exist.`);
       }
-      addParentDirectories(args, created, aliasPath);
       args.push("--bind", aliasTarget, aliasPath);
-      created.add(aliasPath);
     }
 
     if (networkScope === "allowlist") {
