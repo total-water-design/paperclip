@@ -4656,6 +4656,48 @@ registry.registerPath({
   responses: { 200: r.ok(), 401: r.unauthorized },
 });
 
+// Test-only, agent-bound fixture endpoints. These remain documented so the
+// route/spec coverage check can detect contract drift; production rejects all
+// access at the route boundary.
+registry.registerPath({
+  method: "post",
+  path: "/api/agents/{id}/cos-timer-fixture-wake",
+  tags: ["agents"],
+  summary: "Create a distinct COS timer fixture wake",
+  request: {
+    params: z.object({ id: z.string() }),
+    body: jsonBody(z.object({ idempotencyKey: z.string().trim().min(1).max(128).optional() }).strict()),
+  },
+  responses: { 202: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/agents/{id}/cos-timer-fixture-runs/{runId}",
+  tags: ["agents"],
+  summary: "Get an agent-bound COS timer fixture run",
+  request: { params: z.object({ id: z.string(), runId: z.string() }) },
+  responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden, 404: r.notFound },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/agents/{id}/cos-timer-fixture-runs/{runId}/events",
+  tags: ["agents"],
+  summary: "List events for an agent-bound COS timer fixture run",
+  request: { params: z.object({ id: z.string(), runId: z.string() }) },
+  responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden, 404: r.notFound },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/agents/{id}/cos-timer-fixture-runs/{runId}/log",
+  tags: ["agents"],
+  summary: "Get the redacted log for an agent-bound COS timer fixture run",
+  request: { params: z.object({ id: z.string(), runId: z.string() }) },
+  responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden, 404: r.notFound },
+});
+
 registry.registerPath({
   method: "post",
   path: "/api/agents/{id}/claude-login",
