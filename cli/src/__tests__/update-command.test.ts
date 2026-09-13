@@ -155,7 +155,8 @@ describe("update command", () => {
     const paths = resolveInstallStorePaths(); initializeInstallStore(paths);
     const activePayload = payloadPathFor(paths, "npm", "2026.831.1");
     const executable = createPayload(activePayload, "2026.831.1");
-    const validSha = "7".repeat(40); const invalidSha = "4".repeat(40);
+    const validSha = "72b50614011b457093cd5e3be189a4ca7a9aab75";
+    const invalidSha = "4fac7834b048d0942c0aa868a74b62ad0f0330fc";
     const validPayload = payloadPathFor(paths, "git", validSha.slice(0, 12));
     const invalidPayload = payloadPathFor(paths, "git", invalidSha.slice(0, 12));
     createPayload(validPayload, "0.3.1");
@@ -172,12 +173,19 @@ describe("update command", () => {
     };
     writeInstallManifestAtomic(manifest, paths);
     const restartActiveService = vi.fn(async () => true);
+    const backup = vi.fn(async () => undefined);
+    const activationEnv = path.join(root, "activation", "default.env");
+    fs.mkdirSync(path.dirname(activationEnv), { recursive: true });
+    fs.writeFileSync(activationEnv, "AUTHORIZED_ALPHA=alpha\nAUTHORIZED_BETA=beta\n");
+    const activationBefore = fs.readFileSync(activationEnv, "utf8");
 
-    await updateCommand({ discardUnsafePrevious: invalidSha }, { paths, executablePath: executable, restartActiveService });
+    await updateCommand({ discardUnsafePrevious: invalidSha }, { paths, executablePath: executable, restartActiveService, backup });
 
     expect(fs.realpathSync(paths.currentPath)).toBe(fs.realpathSync(activePayload));
     expect(readInstallManifest(paths)).toEqual({ ...manifest, previous: [manifest.previous[0]!] });
     expect(restartActiveService).not.toHaveBeenCalled();
+    expect(backup).not.toHaveBeenCalled();
+    expect(fs.readFileSync(activationEnv, "utf8")).toBe(activationBefore);
     expect(fs.existsSync(invalidPayload)).toBe(true);
   });
 
@@ -195,6 +203,29 @@ describe("update command", () => {
 
     await expect(updateCommand({ discardUnsafePrevious: bootableSha }, { paths, executablePath: executable })).rejects.toThrow("Refusing to discard bootable");
     expect(() => rollbackManagedInstall(paths)).toThrow("not bootable");
+    expect(fs.realpathSync(paths.currentPath)).toBe(fs.realpathSync(activePayload));
+  });
+
+  it("refuses a missing selector or a repair that would retain an unbootable payload", async () => {
+    const paths = resolveInstallStorePaths(); initializeInstallStore(paths);
+    const activePayload = payloadPathFor(paths, "npm", "2026.831.1");
+    const executable = createPayload(activePayload, "2026.831.1");
+    const invalidSha = "4fac7834b048d0942c0aa868a74b62ad0f0330fc";
+    const retainedSha = "72b50614011b457093cd5e3be189a4ca7a9aab75";
+    const invalidPayload = payloadPathFor(paths, "git", invalidSha.slice(0, 12));
+    const retainedPayload = payloadPathFor(paths, "git", retainedSha.slice(0, 12));
+    fs.mkdirSync(invalidPayload, { recursive: true });
+    fs.mkdirSync(retainedPayload, { recursive: true });
+    flipCurrentAtomic(activePayload, paths);
+    const manifest: InstallManifest = { schemaVersion: 1, ...record(activePayload, "2026.831.1"), previous: [
+      { source: "git", version: "0.3.1", channel: "pinned", repo: "paperclipai/paperclip", ref: invalidSha, sha: invalidSha, payloadPath: invalidPayload, installedAt: "2026-07-22T00:00:00.000Z" },
+      { source: "git", version: "0.3.1", channel: "pinned", repo: "paperclipai/paperclip", ref: retainedSha, sha: retainedSha, payloadPath: retainedPayload, installedAt: "2026-07-22T00:00:01.000Z" },
+    ] };
+    writeInstallManifestAtomic(manifest, paths);
+
+    await expect(updateCommand({ discardUnsafePrevious: "f".repeat(40) }, { paths, executablePath: executable })).rejects.toThrow("No retained git payload");
+    await expect(updateCommand({ discardUnsafePrevious: invalidSha }, { paths, executablePath: executable })).rejects.toThrow("retained payload is not bootable");
+    expect(readInstallManifest(paths)).toEqual(manifest);
     expect(fs.realpathSync(paths.currentPath)).toBe(fs.realpathSync(activePayload));
   });
 

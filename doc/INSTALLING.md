@@ -201,6 +201,26 @@ Roll back to the previous retained payload:
 paperclipai update --rollback
 ```
 
+### Selective unsafe-retention repair
+
+When a retained **git** payload is known to be non-bootable, an operator may
+remove only that record from rollback eligibility without changing `current`,
+the active manifest head fields, activation authority, or service state:
+
+```sh
+paperclipai update --discard-unsafe-previous <full-40-character-git-sha> --dry-run --json
+paperclipai update --discard-unsafe-previous <full-40-character-git-sha> --json
+```
+
+This is deliberately narrower than rollback or update: it takes the managed
+install lock, requires the active `current` payload and every retained record
+to be bootable, and only permits the selected retained git record when that
+record is non-bootable. The discarded payload directory is left on disk; it is
+quarantined from rollback eligibility rather than deleted. The command does
+not take a database backup or call service management. It refuses a missing
+selector, a bootable selected record, an unbootable active payload, or an
+unbootable payload that would remain retained.
+
 The `upgrade` command is an alias for `update`. Exact versions and commit SHAs
 are pinned; provide a new target when you want them to move.
 

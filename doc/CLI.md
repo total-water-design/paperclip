@@ -168,11 +168,15 @@ paperclipai install --ref <branch|tag|sha> [--repo owner/repo]
 paperclipai update
 paperclipai update --latest|--canary|--version <version>
 paperclipai update --rollback
+paperclipai update --discard-unsafe-previous <full-40-character-git-sha> [--dry-run] [--json]
 paperclipai upgrade
 paperclipai uninstall
 ```
 
-`upgrade` aliases `update`. `uninstall` removes managed code and the shim but
+`--discard-unsafe-previous` is a managed-install repair for exactly one
+non-bootable retained git record. It preserves `current` and the active manifest
+head, does not restart services, and leaves the payload directory on disk while
+removing it from rollback eligibility. `upgrade` aliases `update`. `uninstall` removes managed code and the shim but
 preserves instance data under `~/.paperclip/instances/`. See
 `doc/INSTALLING.md` for installation methods, security notes, PATH setup, and
 the complete update and rollback behavior.

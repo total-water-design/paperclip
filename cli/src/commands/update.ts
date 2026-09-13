@@ -160,6 +160,11 @@ function discardUnsafePrevious(
     throw new Error(`Refusing to discard bootable retained payload ${sha}; use the normal retention lifecycle.`);
   }
   const next: InstallManifest = { ...manifest, previous: manifest.previous.filter((record) => record !== target) };
+  for (const retained of next.previous) {
+    if (!isBootableManagedPayload(retained.payloadPath, paths)) {
+      throw new Error(`Refusing to repair retention because retained payload is not bootable: ${retained.payloadPath}`);
+    }
+  }
   writeInstallManifestAtomic(next, paths);
   return { manifest: next, removed: target };
 }
@@ -205,6 +210,15 @@ export async function updateCommand(options: UpdateOptions, overrides: Partial<D
       const target = manifest?.previous.find((record) => record.source === "git" && record.sha?.toLowerCase() === sha.toLowerCase());
       if (!target || isBootableManagedPayload(target.payloadPath, paths)) {
         throw new Error(`No unsafe retained git payload matches ${sha}.`);
+      }
+      if (!manifest || !isBootableManagedPayload(manifest.payloadPath, paths) || !isManagedExecutable(executablePath, manifest, paths)) {
+        throw new Error("Refusing to repair retention because the active managed payload is not bootable and selected by current.");
+      }
+      for (const retained of manifest.previous) {
+        if (retained === target) continue;
+        if (!isBootableManagedPayload(retained.payloadPath, paths)) {
+          throw new Error(`Refusing to repair retention because retained payload is not bootable: ${retained.payloadPath}`);
+        }
       }
       emit(options, { mode, action: "discard-unsafe-previous", dryRun: true, sha, payloadPath: target.payloadPath }, `Would discard unsafe retained git payload ${sha.slice(0, 12)} without changing current or restarting the service.`);
       return;
