@@ -139,6 +139,11 @@ export const DEFAULT_SANDBOX_CALLBACK_BRIDGE_ROUTE_ALLOWLIST: readonly SandboxCa
   { method: "PATCH", path: /^\/api\/issues\/[^/]+$/ },
   { method: "GET", path: /^\/api\/issues\/[^/]+\/approvals$/ },
 
+  // Test-only COS timer fixture bridge. The server applies the deployment,
+  // agent, company, and exact-run checks before serving any fixture data.
+  { method: "POST", path: /^\/api\/agents\/[^/]+\/cos-timer-fixture-wake$/ },
+  { method: "GET", path: /^\/api\/agents\/[^/]+\/cos-timer-fixture-runs\/[^/]+(?:\/(?:events|log))?$/ },
+
   // Work products: publish branch/commit/artifact metadata for completed work.
   { method: "GET", path: /^\/api\/issues\/[^/]+\/work-products$/ },
   { method: "POST", path: /^\/api\/issues\/[^/]+\/work-products$/ },
