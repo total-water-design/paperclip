@@ -1,0 +1,74 @@
+#!/bin/sh
+# Source-only predecessor-compatible safe-window snapshot.  This is not an
+# installer and intentionally has no service-control, recovery, or agent API.
+set -eu
+
+PATH=/usr/bin:/bin
+export PATH
+
+if [ "$#" -ne 0 ]; then
+  echo "paperclip-preactivation-safe-window-inventory accepts no arguments" >&2
+  exit 64
+fi
+
+# Authentication is the dedicated Paperclip OS identity plus a root-owned,
+# non-secret company binding.  The database connection is PostgreSQL peer auth
+# over its fixed local Unix socket: no token, password, URL, or secret file is
+# accepted or read by this utility.
+if [ "$(/usr/bin/id -un)" != "paperclip" ]; then
+  echo "paperclip-preactivation-safe-window-inventory must run as paperclip" >&2
+  exit 77
+fi
+
+company_file=/etc/paperclip/preactivation-safe-window-company
+if [ ! -f "$company_file" ] || [ -L "$company_file" ]; then
+  echo "pre-activation company binding is unavailable" >&2
+  exit 78
+fi
+if [ "$(/usr/bin/stat -c '%U:%a' "$company_file")" != "root:640" ]; then
+  echo "pre-activation company binding must be root-owned mode 0640" >&2
+  exit 78
+fi
+company_id=$(/bin/cat "$company_file")
+case "$company_id" in
+  ''|*[!A-Za-z0-9-]*)
+    echo "pre-activation company binding is invalid" >&2
+    exit 78
+    ;;
+esac
+
+# The SQL deliberately exposes only the fixed company's nonterminal heartbeat
+# run identity/status.  Every observed run is conservatively drain_required;
+# this predecessor utility never adopts, resumes, or infers a process liveness
+# exception.  Its sole external effect is stdout JSON.
+exec /usr/bin/psql \
+  --no-psqlrc \
+  --quiet \
+  --tuples-only \
+  --no-align \
+  --host=/var/run/postgresql \
+  --username=paperclip \
+  --dbname=paperclip \
+  --set=ON_ERROR_STOP=1 <<SQL
+BEGIN TRANSACTION READ ONLY;
+SELECT json_build_object(
+  'contractVersion', 'safe_window_inventory.predecessor.v1',
+  'caller', json_build_object('principal', 'preactivation_safe_window_inventory', 'companyId', '${company_id}'),
+  'inventory', json_build_object(
+    'runs', COALESCE(json_agg(json_build_object(
+      'id', id,
+      'status', status,
+      'agentId', agent_id,
+      'issueId', native_issue_id,
+      'createdAt', created_at,
+      'startedAt', started_at,
+      'safeWindowDisposition', 'drain_required',
+      'dispositionReason', 'predecessor_conservative_no_hot_adoption'
+    ) ORDER BY created_at), '[]'::json)
+  )
+)
+FROM heartbeat_runs
+WHERE company_id = '${company_id}'
+  AND status IN ('queued', 'running', 'scheduled_retry');
+COMMIT;
+SQL
