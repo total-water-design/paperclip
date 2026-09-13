@@ -35,6 +35,7 @@ cp "$readme_backup" "$repo_root/cli/README.md"
 # dependency beneath one portable package root.  Use the already-locked
 # workspace graph; this command neither publishes nor contacts a registry.
 pnpm --dir "$repo_root" --filter paperclipai --prod deploy "$stage/package"
+node "$repo_root/scripts/materialize-certified-runtime-sources.mjs" "$repo_root" "$stage/package"
 
 node "$repo_root/scripts/paperclip-artifact-identity.mjs" identity --repo "$repo_root" --output-dir "$repo_root/cli/dist" --source-sha "$source_sha" --build-command "$canonical_command"
 cp "$repo_root/cli/dist/paperclip-artifact-identity.json" "$stage/package/dist/paperclip-artifact-identity.json"
