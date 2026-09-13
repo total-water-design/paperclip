@@ -303,6 +303,7 @@ describeEmbeddedPostgres("approval service semantic reuse", () => {
     expect(results.every((result) => result.approval.status === "cancelled")).toBe(true);
     const current = await db.select().from(approvals).then((rows) => rows[0]!);
     expect(current).toMatchObject({
+      status: "cancelled",
       cancellationReason: "Stale request",
       cancelledByAgentId: agent.id,
       decisionNote: "Board requested revision",
