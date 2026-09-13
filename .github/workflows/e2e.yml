@@ -1,12 +1,25 @@
 name: E2E Tests
 
 on:
+  pull_request:
   workflow_dispatch:
     inputs:
       skip_llm:
         description: "Skip LLM-dependent assertions (default: true)"
         type: boolean
         default: true
+      validation_target:
+        description: "Validation lane to execute"
+        type: choice
+        options:
+          - e2e
+          - protected-alpha
+        default: e2e
+      protected_ref:
+        description: "Protected Alpha ref to validate when validation_target=protected-alpha"
+        type: string
+        required: false
+        default: alpha
 
 jobs:
   e2e:
@@ -15,8 +28,14 @@ jobs:
     env:
       PAPERCLIP_E2E_SKIP_LLM: ${{ inputs.skip_llm && 'true' || 'false' }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      VALIDATION_TARGET: ${{ inputs.validation_target || 'e2e' }}
+      PROTECTED_REF: ${{ inputs.protected_ref || 'alpha' }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # A dispatch that targets protected Alpha must validate that ref,
+          # rather than merely succeeding after checking out the dispatch ref.
+          ref: ${{ inputs.validation_target == 'protected-alpha' && inputs.protected_ref || github.sha }}
 
       - uses: pnpm/action-setup@v6
         with:
@@ -31,10 +50,18 @@ jobs:
       - run: pnpm build
       - run: google-chrome --version
 
-      - name: Run e2e tests
+      - name: Validate protected Alpha target
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.validation_target == 'protected-alpha' }}
+        run: |
+          test "$PROTECTED_REF" = 'alpha'
+          git rev-parse --verify HEAD^{commit}
+
+      - name: Run e2e validator
         env:
           PAPERCLIP_PLAYWRIGHT_CHANNEL: "chrome"
-        run: pnpm run test:e2e
+        # Do not mask this command: its non-zero exit status is the workflow
+        # result for both PR and protected-Alpha dispatch validation.
+        run: exec pnpm run test:e2e
 
       - uses: actions/upload-artifact@v7
         if: always()
