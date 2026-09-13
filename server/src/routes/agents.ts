@@ -4811,7 +4811,11 @@ export function agentRoutes(
     const run = await getBoundCosTimerFixtureRun(req, res);
     if (!run) return;
     const logAccess = await heartbeat.getRunLogAccess(run.id);
-    if (!logAccess || logAccess.companyId !== run.companyId || logAccess.agentId !== run.agentId) {
+    // `run` was bound to the requesting actor, company, agent, and fixture
+    // parent above. `getRunLogAccess(run.id)` intentionally projects only
+    // the same run's id/company/log location, so do not widen that projection
+    // merely to repeat the agent check here.
+    if (!logAccess || logAccess.companyId !== run.companyId) {
       res.status(404).json({ error: "Heartbeat run not found" });
       return;
     }
