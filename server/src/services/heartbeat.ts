@@ -13955,7 +13955,10 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         })
         .from(heartbeatRuns)
         .innerJoin(agents, and(eq(agents.id, heartbeatRuns.agentId), eq(agents.companyId, companyId)))
-        .where(and(eq(heartbeatRuns.companyId, companyId), inArray(heartbeatRuns.status, ["queued", "running"]))),
+        .where(and(
+          eq(heartbeatRuns.companyId, companyId),
+          inArray(heartbeatRuns.status, ["queued", "running", "scheduled_retry"]),
+        )),
       db
         .select({
           id: issues.id,

@@ -28,8 +28,9 @@ presence flags, timestamps, and `safeWindowDisposition`.
 
 `safeWindowDisposition` is `hot_adoptable` only for a running detached local
 child-process adapter with recorded process metadata. It is `drain_required`
-for queued runs, server-stdio/ACP runs, non-local-child adapters, and runs
-without process metadata. `dispositionReason` states which rule applied.
+for queued or scheduled-retry runs, server-stdio/ACP runs, non-local-child
+adapters, and runs without process metadata. `dispositionReason` states which
+rule applied.
 
 ## Read-only boundary and limitations
 
