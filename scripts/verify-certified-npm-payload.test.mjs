@@ -3,38 +3,40 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { collectPaperclipRuntimeImports, verifyExtractedConsumer } from "./verify-certified-npm-payload.mjs";
+import { collectRuntimeModules, verifyExtractedConsumer } from "./verify-certified-npm-payload.mjs";
 
-function fixture({ dependencies = {}, source = "export default 1;" } = {}) {
+function fixture({ source = 'console.log("help")', modules = {} } = {}) {
   const root = mkdtempSync(join(tmpdir(), "paperclip-payload-test-"));
   mkdirSync(join(root, "package", "dist"), { recursive: true });
-  writeFileSync(join(root, "package", "package.json"), `${JSON.stringify({ name: "paperclipai", dependencies })}\n`);
+  writeFileSync(join(root, "package", "package.json"), '{"name":"paperclipai"}\n');
   writeFileSync(join(root, "package", "dist", "index.js"), source);
+  for (const [name, contents] of Object.entries(modules)) {
+    const dir = join(root, "package", "node_modules", name);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "package.json"), '{"name":"fixture","main":"index.js"}\n');
+    writeFileSync(join(dir, "index.js"), contents);
+  }
   return root;
 }
 
-test("accepts an extracted consumer whose residual Paperclip dependency is declared", () => {
-  const root = fixture({
-    dependencies: { "@paperclipai/server": "1.0.0" },
-    source: 'import { start } from "@paperclipai/server"; start();',
-  });
+test("resolves an actual extracted runtime module and executes --help", () => {
+  const root = fixture({ source: 'require("zod"); console.log("help")', modules: { zod: "module.exports = {};" } });
   try {
-    assert.deepEqual(verifyExtractedConsumer(root).declaredPaperclipDependencies, ["@paperclipai/server"]);
+    assert.deepEqual(verifyExtractedConsumer(root).runtimeModules, ["zod"]);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test("rejects an extracted consumer with an undeclared Paperclip runtime dependency", () => {
-  const root = fixture({ source: 'import { start } from "@paperclipai/server"; start();' });
+test("rejects a declared-but-missing extracted runtime module", () => {
+  const root = fixture({ source: 'require("zod"); console.log("help")' });
   try {
-    assert.throws(() => verifyExtractedConsumer(root), /unresolved @paperclipai runtime dependencies: @paperclipai\/server/);
+    assert.throws(() => verifyExtractedConsumer(root), /runtime module resolution failed/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test("does not mistake generated plugin source strings for runtime imports", () => {
-  const source = 'const generated = `import { definePlugin } from "@paperclipai/plugin-sdk"`; await import("@paperclipai/server");';
-  assert.deepEqual([...collectPaperclipRuntimeImports(source)], ["@paperclipai/server"]);
+test("collects import, dynamic import, and require module edges", () => {
+  assert.deepEqual(collectRuntimeModules('import z from "zod"; import("@paperclipai/server"); require("dotenv");'), ["@paperclipai/server", "dotenv", "zod"]);
 });

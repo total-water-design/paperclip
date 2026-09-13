@@ -13,10 +13,8 @@
  */
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { createRequire } from "node:module";
-import { resolve, dirname } from "node:path";
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { bundledCliNpmDependencies } from "./cli-bundled-npm-dependencies.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, "..");
@@ -41,24 +39,20 @@ const workspacePaths = [
   "packages/plugins/sdk",
 ];
 
-// Workspace packages that are NOT bundled and must stay as npm dependencies.
-// These get published separately and resolved at runtime.
-const externalWorkspacePackages = new Set([
-  "@paperclipai/server",
-]);
+// The certified CLI bundles its complete JavaScript runtime closure.  The
+// publish manifest must not imply an install/network fallback for dependencies
+// that are already embedded in dist/index.js.
+const externalWorkspacePackages = new Set();
 
 // Collect all external dependencies from all workspace packages
 const allDeps = {};
-const allOptionalDeps = {};
 
 for (const pkgPath of workspacePaths) {
   const pkg = readPkg(pkgPath);
   const deps = pkg.dependencies || {};
-  const optDeps = pkg.optionalDependencies || {};
 
   for (const [name, version] of Object.entries(deps)) {
-    if (name.startsWith("@paperclipai/") && !externalWorkspacePackages.has(name)) continue;
-    if (bundledCliNpmDependencies.has(name)) continue;
+    if (!externalWorkspacePackages.has(name)) continue;
     // For external workspace packages, read their version directly
     if (externalWorkspacePackages.has(name)) {
       const pkgDirMap = { "@paperclipai/server": "server" };
@@ -72,25 +66,10 @@ for (const pkgPath of workspacePaths) {
     }
   }
 
-  for (const [name, version] of Object.entries(optDeps)) {
-    allOptionalDeps[name] = version;
-  }
 }
 
-if (bundledCliNpmDependencies.has("embedded-postgres")) {
-  const requireFromDb = createRequire(resolve(repoRoot, "packages/db/package.json"));
-  const embeddedPostgresRoot = dirname(requireFromDb.resolve("embedded-postgres"));
-  const embeddedPostgresPackage = JSON.parse(
-    readFileSync(resolve(embeddedPostgresRoot, "..", "package.json"), "utf8"),
-  );
-  Object.assign(allOptionalDeps, embeddedPostgresPackage.optionalDependencies ?? {});
-}
-
-// Sort alphabetically
+// Sort alphabetically.
 const sortedDeps = Object.fromEntries(Object.entries(allDeps).sort(([a], [b]) => a.localeCompare(b)));
-const sortedOptDeps = Object.fromEntries(
-  Object.entries(allOptionalDeps).sort(([a], [b]) => a.localeCompare(b)),
-);
 
 // Read the CLI package metadata — prefer the dev backup if it exists
 const devPkgPath = resolve(repoRoot, "cli/package.dev.json");
@@ -114,10 +93,6 @@ const publishPkg = {
   engines: { node: ">=24.11.0" },
   dependencies: sortedDeps,
 };
-
-if (Object.keys(sortedOptDeps).length > 0) {
-  publishPkg.optionalDependencies = sortedOptDeps;
-}
 
 const output = JSON.stringify(publishPkg, null, 2) + "\n";
 const outPath = resolve(repoRoot, "cli/package.json");

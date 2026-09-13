@@ -1,131 +1,74 @@
 #!/usr/bin/env node
 
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 const PACKAGE_ROOT = "package";
-const PAPERCLIP_PACKAGE = /^(@paperclipai\/[a-z0-9-]+)(?:\/|$)/;
+const RUNTIME_MODULE = /(?:\bfrom\s*|\bimport\s*\(|\brequire\s*\()(["'])([^"']+)\1/g;
 
 function fail(message) {
   throw new Error(`certified payload: ${message}`);
 }
 
-function walk(root, current = root) {
-  const files = [];
-  for (const name of readdirSync(current).sort()) {
-    const path = join(current, name);
-    const stat = statSync(path);
-    if (stat.isDirectory()) files.push(...walk(root, path));
-    else if (stat.isFile()) files.push(path);
+function isRuntimeModule(specifier) {
+  return !specifier.startsWith(".") && !specifier.startsWith("/") && !specifier.startsWith("node:");
+}
+
+// This reads executable import/require syntax, never manifest declarations.
+// It captures each static external module edge Node must resolve after extract.
+export function collectRuntimeModules(source) {
+  const modules = new Set();
+  for (const match of source.matchAll(RUNTIME_MODULE)) {
+    if (isRuntimeModule(match[2])) modules.add(match[2]);
   }
-  return files;
+  return [...modules].sort();
 }
 
-function skipQuoted(source, start, quote) {
-  for (let index = start + 1; index < source.length; index += 1) {
-    if (source[index] === "\\") index += 1;
-    else if (source[index] === quote) return index + 1;
+function cleanEnvironment() {
+  return { PATH: process.env.PATH ?? "", HOME: "", NODE_PATH: "", npm_config_userconfig: "/dev/null" };
+}
+
+function resolveRuntimeModules(entryPath, modules) {
+  const resolver = [
+    'import { createRequire } from "node:module";',
+    'import { pathToFileURL } from "node:url";',
+    'const [entry, encoded] = process.argv.slice(1);',
+    'const require = createRequire(pathToFileURL(entry));',
+    'for (const specifier of JSON.parse(encoded)) require.resolve(specifier);',
+  ].join(" ");
+  try {
+    execFileSync(process.execPath, ["--input-type=module", "--eval", resolver, entryPath, JSON.stringify(modules)], {
+      cwd: resolve(entryPath, "..", ".."), env: cleanEnvironment(), stdio: "pipe",
+    });
+  } catch (error) {
+    const detail = Buffer.isBuffer(error.stderr) ? error.stderr.toString("utf8").trim() : "";
+    fail(`extracted runtime module resolution failed${detail ? `: ${detail}` : ""}`);
   }
-  return source.length;
 }
 
-function skipSpace(source, index) {
-  while (/\s/.test(source[index] ?? "")) index += 1;
-  return index;
-}
-
-function readQuotedSpecifier(source, index) {
-  if (source[index] !== '"' && source[index] !== "'") return null;
-  const end = source.indexOf(source[index], index + 1);
-  if (end === -1) return null;
-  return { value: source.slice(index + 1, end), end: end + 1 };
-}
-
-export function collectPaperclipRuntimeImports(source) {
-  const imports = new Set();
-  for (let index = 0; index < source.length;) {
-    const char = source[index];
-    if (char === '"' || char === "'" || char === "`") {
-      index = skipQuoted(source, index, char);
-      continue;
-    }
-    if (source.startsWith("//", index)) {
-      index = source.indexOf("\n", index + 2);
-      if (index === -1) break;
-      continue;
-    }
-    if (source.startsWith("/*", index)) {
-      index = source.indexOf("*/", index + 2);
-      if (index === -1) break;
-      index += 2;
-      continue;
-    }
-    const word = source.slice(index).match(/^(import|require)\b/)?.[1];
-    if (!word) {
-      index += 1;
-      continue;
-    }
-    let cursor = skipSpace(source, index + word.length);
-    if (word === "import" && source[cursor] !== "(") {
-      const from = source.slice(cursor).match(/\bfrom\s*(["'])/);
-      if (!from) {
-        index = cursor;
-        continue;
-      }
-      cursor += from.index + from[0].length - 1;
-    } else if (source[cursor] === "(") {
-      cursor = skipSpace(source, cursor + 1);
-    } else {
-      index = cursor;
-      continue;
-    }
-    const specifier = readQuotedSpecifier(source, cursor);
-    if (specifier) {
-      const match = specifier.value.match(PAPERCLIP_PACKAGE);
-      if (match) imports.add(match[1]);
-      index = specifier.end;
-    } else index = cursor + 1;
+function executeHelp(entryPath) {
+  try {
+    execFileSync(process.execPath, [entryPath, "--help"], {
+      cwd: resolve(entryPath, "..", ".."), env: cleanEnvironment(), stdio: "pipe", timeout: 15_000,
+    });
+  } catch (error) {
+    const detail = Buffer.isBuffer(error.stderr) ? error.stderr.toString("utf8").trim() : "";
+    fail(`extracted --help execution failed${detail ? `: ${detail}` : ""}`);
   }
-  return imports;
 }
 
 export function verifyExtractedConsumer(extractedRoot) {
   const packageRoot = resolve(extractedRoot, PACKAGE_ROOT);
   const manifestPath = join(packageRoot, "package.json");
   const entryPath = join(packageRoot, "dist", "index.js");
-  let manifest;
-  try {
-    manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
-  } catch {
-    fail("extracted consumer has no readable package/package.json");
-  }
-  try {
-    statSync(entryPath);
-  } catch {
-    fail("extracted consumer has no dist/index.js entrypoint");
-  }
-
-  const declared = new Set([
-    ...Object.keys(manifest.dependencies ?? {}),
-    ...Object.keys(manifest.optionalDependencies ?? {}),
-  ]);
-  const unresolved = new Set();
-  for (const file of walk(packageRoot)) {
-    if (!file.endsWith(".js") && !file.endsWith(".mjs") && !file.endsWith(".cjs")) continue;
-    const source = readFileSync(file, "utf8");
-    for (const importedPackage of collectPaperclipRuntimeImports(source)) {
-      if (!declared.has(importedPackage)) unresolved.add(importedPackage);
-    }
-  }
-  if (unresolved.size > 0) {
-    fail(`extracted consumer has unresolved @paperclipai runtime dependencies: ${[...unresolved].sort().join(", ")}`);
-  }
-  return {
-    entryPath: "package/dist/index.js",
-    declaredPaperclipDependencies: [...declared].filter((name) => name.startsWith("@paperclipai/")).sort(),
-  };
+  try { JSON.parse(readFileSync(manifestPath, "utf8")); } catch { fail("extracted consumer has no readable package/package.json"); }
+  try { statSync(entryPath); } catch { fail("extracted consumer has no dist/index.js entrypoint"); }
+  const runtimeModules = collectRuntimeModules(readFileSync(entryPath, "utf8"));
+  resolveRuntimeModules(entryPath, runtimeModules);
+  executeHelp(entryPath);
+  return { entryPath: "package/dist/index.js", runtimeModules };
 }
 
 export function verifyArchive(archivePath) {
@@ -147,7 +90,7 @@ function readArchiveArg(argv) {
 if (process.argv[1] === new URL(import.meta.url).pathname) {
   try {
     const result = verifyArchive(readArchiveArg(process.argv.slice(2)));
-    console.log(`certified payload: extracted consumer resolves @paperclipai dependencies (${result.declaredPaperclipDependencies.join(", ") || "bundled"})`);
+    console.log(`certified payload: extracted runtime resolved (${result.runtimeModules.join(", ") || "bundled"}) and --help passed`);
   } catch (error) {
     console.error(error.message);
     process.exit(1);
