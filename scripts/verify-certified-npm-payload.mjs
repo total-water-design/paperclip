@@ -37,11 +37,10 @@ function cleanEnvironment() {
 
 function resolveRuntimeModules(entryPath, modules) {
   const resolver = [
-    'import { createRequire } from "node:module";',
     'import { pathToFileURL } from "node:url";',
     'const [entry, encoded] = process.argv.slice(1);',
-    'const require = createRequire(pathToFileURL(entry));',
-    'for (const specifier of JSON.parse(encoded)) require.resolve(specifier);',
+    'const parent = pathToFileURL(entry).href;',
+    'for (const specifier of JSON.parse(encoded)) await import.meta.resolve(specifier, parent);',
   ].join(" ");
   try {
     execFileSync(process.execPath, ["--input-type=module", "--eval", resolver, entryPath, JSON.stringify(modules)], {
