@@ -5396,10 +5396,15 @@ export function shouldAutoCheckoutIssueForWake(input: {
   if (executionState?.status === "pending") return false;
 
   const issueStatus = readNonEmptyString(input.issueStatus);
+  // A blocked disposition can be intentionally durable without a first-class
+  // dependency (for example, a structured unblock owner/action).  A wake is
+  // still useful for context and audit, but it is not authority to resume the
+  // work.  Checking it out would promote it to in_progress and erase that
+  // disposition's descriptor through the normal status-transition path.
+  if (issueStatus === "blocked") return false;
   if (
     issueStatus !== "todo" &&
     issueStatus !== "backlog" &&
-    issueStatus !== "blocked" &&
     issueStatus !== "in_progress"
   ) {
     return false;
@@ -14228,7 +14233,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       })
     ) {
       try {
-        await issuesSvc.checkout(issueId, agent.id, ["todo", "backlog", "blocked"], run.id);
+        await issuesSvc.checkout(issueId, agent.id, ["todo", "backlog"], run.id);
         context[PAPERCLIP_HARNESS_CHECKOUT_KEY] = true;
       } catch (error) {
         if (!isCheckoutConflictError(error)) throw error;
