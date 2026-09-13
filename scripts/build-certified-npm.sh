@@ -40,6 +40,8 @@ for package in server packages/plugins/sdk packages/shared; do
   mkdir -p "$destination"
   tar --exclude=node_modules --exclude=ui-dist -C "$repo_root/$package" -cf - . | tar -C "$destination" -xf -
 done
+mkdir -p "$stage/package/node_modules/dotenv"
+tar -h -C "$repo_root" -cf - node_modules/dotenv | tar --strip-components=2 -C "$stage/package/node_modules/dotenv" -xf -
 
 epoch="$(git -C "$repo_root" show -s --format=%ct "$source_sha")"
 COPYFILE_DISABLE=1 tar --sort=name --format=posix --mtime="@$epoch" --owner=0 --group=0 --numeric-owner --pax-option=delete=atime,delete=ctime -C "$stage" -cf - package | gzip -n -9 > "$archive"

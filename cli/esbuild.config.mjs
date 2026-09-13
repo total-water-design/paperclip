@@ -44,6 +44,9 @@ const externalWorkspacePackages = new Set([
 
 // Collect all external (non-workspace) npm package names
 const externals = new Set();
+// dotenv is CommonJS and intentionally performs dynamic built-in requires;
+// keep its verified package closure instead of emitting an invalid ESM shim.
+externals.add("dotenv");
 for (const p of workspacePaths) {
   const pkg = JSON.parse(readFileSync(resolve(repoRoot, p, "package.json"), "utf8"));
   for (const name of Object.keys(pkg.dependencies || {})) {
