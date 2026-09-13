@@ -32,6 +32,7 @@ import {
   formatWorktreeSeedFailureDiagnostic,
   inspectLegacyWorktreeDatabase,
   markWorktreeSeedPending,
+  observeManagedFullSeedManifest,
   pauseSeededScheduledRoutines,
   quarantineSeededWorktreeExecutionState,
   readWorktreeSeedManifest,
@@ -45,6 +46,7 @@ import {
   resolvePnpmInstallInvocation,
   resolveCurrentWorktreeEndpoint,
   resolveManagedFullSeedCommandInvocation,
+  resolveManagedFullSeedSystemdArgs,
   resolveWorktreeSeedMigrationRevision,
   resolveWorktreeSeedBackupEngine,
   resolveWorktreeSeedSystemdUserBusAddress,
@@ -169,6 +171,51 @@ describe("managed full-seed command invocation", () => {
       executable: "/usr/bin/node",
       args: ["/opt/paperclip/dist/index.js", "worktree", "ensure-seeded"],
     });
+  });
+});
+
+describe("managed full-seed detached operation", () => {
+  it("submits a transient unit without waiting on the foreground client", () => {
+    const args = resolveManagedFullSeedSystemdArgs({
+      unit: "paperclip-worktree-seed-test",
+      targetCwd: "/repo",
+      expectedCompanyId: "company-1",
+      inheritedRegistrationEnv: ["--setenv=PAPERCLIP_PROJECT_WORKSPACE_ID=workspace-1"],
+      command: { executable: "/usr/bin/node", args: ["/repo/cli/dist/index.js", "worktree", "ensure-seeded"] },
+    });
+
+    expect(args).not.toContain("--wait");
+    expect(args).toEqual(expect.arrayContaining([
+      "--collect",
+      "--unit=paperclip-worktree-seed-test",
+      "--setenv=PAPERCLIP_SEED_EXPECTED_COMPANY_ID=company-1",
+      "/usr/bin/node",
+      "/repo/cli/dist/index.js",
+    ]));
+  });
+
+  it.each(["verified", "failed"] as const)("observes a terminal %s manifest", async (state) => {
+    const manifest = { state } as ReturnType<typeof readWorktreeSeedManifest>;
+
+    await expect(observeManagedFullSeedManifest({
+      configPath: "/repo/.paperclip/config.json",
+      unit: "paperclip-worktree-seed-test",
+      readManifest: () => manifest,
+    })).resolves.toBe(manifest);
+  });
+
+  it("fails observation at its bounded deadline when no terminal evidence appears", async () => {
+    let now = 0;
+
+    await expect(observeManagedFullSeedManifest({
+      configPath: "/repo/.paperclip/config.json",
+      unit: "paperclip-worktree-seed-test",
+      timeoutMs: 10,
+      pollMs: 5,
+      readManifest: () => null,
+      now: () => now,
+      sleep: async (ms) => { now += ms; },
+    })).rejects.toThrow("did not produce terminal manifest evidence");
   });
 });
 

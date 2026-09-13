@@ -43,6 +43,11 @@ export type WorktreeSeedManifest = {
   attemptId: string;
   startedAt: string | null;
   finishedAt: string | null;
+  managedExecutor?: {
+    unit: string;
+    submittedAt: string;
+    timeoutAt: string;
+  };
   diagnostics: Array<{
     phase: WorktreeSeedPhase;
     status: "started" | "succeeded" | "failed";

@@ -1823,6 +1823,8 @@ const WORKTREE_SEED_DIAGNOSTIC_MESSAGE_LIMIT = 512;
 const WORKTREE_FULL_SEED_SNAPSHOT_TIMEOUT_MS = 240_000;
 const WORKTREE_FULL_SEED_EXECUTOR_ENV = "PAPERCLIP_WORKTREE_SEED_MANAGED_EXECUTOR";
 const WORKTREE_FULL_SEED_EXECUTOR_TIMEOUT_SEC = 60 * 60;
+const WORKTREE_FULL_SEED_EXECUTOR_OBSERVATION_GRACE_MS = 30_000;
+const WORKTREE_FULL_SEED_EXECUTOR_OBSERVATION_POLL_MS = 500;
 const activeSeedInterruptHandlers = new Map<string, (signal: NodeJS.Signals) => void>();
 
 type ManagedFullSeedExecutor = (input: {
@@ -1860,6 +1862,33 @@ export function resolveManagedFullSeedCommandInvocation(input: {
   return { executable, args: [entrypoint, ...commandArgs] };
 }
 
+export function resolveManagedFullSeedSystemdArgs(input: {
+  unit: string;
+  targetCwd: string;
+  expectedCompanyId?: string;
+  inheritedRegistrationEnv: string[];
+  command: ManagedFullSeedCommandInvocation;
+}): string[] {
+  const expectedCompanyEnv = input.expectedCompanyId === undefined
+    ? []
+    : [`--setenv=PAPERCLIP_SEED_EXPECTED_COMPANY_ID=${input.expectedCompanyId}`];
+  return [
+    "--user",
+    "--collect",
+    "--quiet",
+    "--service-type=exec",
+    "--property=KillMode=control-group",
+    `--property=TimeoutStartSec=${WORKTREE_FULL_SEED_EXECUTOR_TIMEOUT_SEC}s`,
+    `--unit=${input.unit}`,
+    `--working-directory=${input.targetCwd}`,
+    `--setenv=${WORKTREE_FULL_SEED_EXECUTOR_ENV}=1`,
+    ...input.inheritedRegistrationEnv,
+    ...expectedCompanyEnv,
+    input.command.executable,
+    ...input.command.args,
+  ];
+}
+
 /**
  * Agent hosts do not always export DBUS_SESSION_BUS_ADDRESS even when the
  * lingering user manager and its socket are available.  Derive only the
@@ -1888,6 +1917,33 @@ export function resolveWorktreeSeedSystemdUserBusAddress(
   return isSocket(busPath) ? `unix:path=${busPath}` : undefined;
 }
 
+export async function observeManagedFullSeedManifest(input: {
+  configPath: string;
+  unit: string;
+  timeoutMs?: number;
+  pollMs?: number;
+  readManifest?: typeof readWorktreeSeedManifest;
+  now?: () => number;
+  sleep?: (ms: number) => Promise<void>;
+}): Promise<WorktreeSeedManifest> {
+  const timeoutMs = input.timeoutMs
+    ?? (WORKTREE_FULL_SEED_EXECUTOR_TIMEOUT_SEC * 1_000) + WORKTREE_FULL_SEED_EXECUTOR_OBSERVATION_GRACE_MS;
+  const pollMs = input.pollMs ?? WORKTREE_FULL_SEED_EXECUTOR_OBSERVATION_POLL_MS;
+  const readManifest = input.readManifest ?? readWorktreeSeedManifest;
+  const now = input.now ?? Date.now;
+  const sleep = input.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const deadline = now() + timeoutMs;
+
+  while (true) {
+    const manifest = readManifest(input.configPath);
+    if (manifest?.state === "verified" || manifest?.state === "failed") return manifest;
+    if (now() >= deadline) {
+      throw new Error(`Paperclip managed full-seed executor ${input.unit} did not produce terminal manifest evidence before its bounded observation deadline.`);
+    }
+    await sleep(Math.min(pollMs, Math.max(1, deadline - now())));
+  }
+}
+
 /**
  * Full logical snapshots can outlast an agent heartbeat.  Run the outer CLI
  * invocation in a transient systemd user service so the execution host may
@@ -1914,29 +1970,31 @@ async function runManagedFullSeedExecutor(input: {
     "PAPERCLIP_PROJECT_WORKSPACE_ID",
     "PAPERCLIP_WORKTREES_DIR",
   ].flatMap((key) => process.env[key] === undefined ? [] : [`--setenv=${key}=${process.env[key]}`]);
-  const expectedCompanyEnv = input.expectedCompanyId === undefined
-    ? []
-    : [`--setenv=PAPERCLIP_SEED_EXPECTED_COMPANY_ID=${input.expectedCompanyId}`];
   const userBusAddress = resolveWorktreeSeedSystemdUserBusAddress();
   const executorEnv = userBusAddress
     ? { ...process.env, DBUS_SESSION_BUS_ADDRESS: userBusAddress }
     : process.env;
-  const args = [
-    "--user",
-    "--wait",
-    "--collect",
-    "--quiet",
-    "--service-type=exec",
-    "--property=KillMode=control-group",
-    `--property=TimeoutStartSec=${WORKTREE_FULL_SEED_EXECUTOR_TIMEOUT_SEC}s`,
-    `--unit=${unit}`,
-    `--working-directory=${input.targetCwd}`,
-    `--setenv=${WORKTREE_FULL_SEED_EXECUTOR_ENV}=1`,
-    ...inheritedRegistrationEnv,
-    ...expectedCompanyEnv,
-    command.executable,
-    ...command.args,
-  ];
+  const args = resolveManagedFullSeedSystemdArgs({
+    unit,
+    targetCwd: input.targetCwd,
+    expectedCompanyId: input.expectedCompanyId,
+    inheritedRegistrationEnv,
+    command,
+  });
+
+  const submittedAt = new Date();
+  updateWorktreeSeedManifest({
+    configPath: input.configPath,
+    phase: "pending",
+    status: "started",
+    state: "pending",
+    message: `Submitted Paperclip managed full-seed executor ${unit}.`,
+    managedExecutor: {
+      unit,
+      submittedAt: submittedAt.toISOString(),
+      timeoutAt: new Date(submittedAt.getTime() + (WORKTREE_FULL_SEED_EXECUTOR_TIMEOUT_SEC * 1_000)).toISOString(),
+    },
+  });
 
   await new Promise<void>((resolve, reject) => {
     const child = spawn("systemd-run", args, { stdio: "inherit", env: executorEnv });
@@ -1950,6 +2008,7 @@ async function runManagedFullSeedExecutor(input: {
       ));
     });
   });
+  await observeManagedFullSeedManifest({ configPath: input.configPath, unit });
 }
 
 export function formatWorktreeSeedFailureDiagnostic(
@@ -2048,6 +2107,14 @@ export function readWorktreeSeedManifest(configPath: string): WorktreeSeedManife
     && typeof diagnostic.at === "string"
     && (diagnostic.message === undefined || typeof diagnostic.message === "string")
   ));
+  const managedExecutorValid = value.managedExecutor === undefined || (
+    value.managedExecutor
+    && typeof value.managedExecutor === "object"
+    && typeof value.managedExecutor.unit === "string"
+    && value.managedExecutor.unit.length > 0
+    && typeof value.managedExecutor.submittedAt === "string"
+    && typeof value.managedExecutor.timeoutAt === "string"
+  );
   const verifiedTerminalValid = value.state !== "verified" || (
     value.phase === "complete"
     && typeof value.snapshotAt === "string"
@@ -2075,6 +2142,7 @@ export function readWorktreeSeedManifest(configPath: string): WorktreeSeedManife
     || typeof value.attemptId !== "string"
     || value.attemptId.length === 0
     || !diagnosticsValid
+    || !managedExecutorValid
     || !verifiedTerminalValid
   ) {
     throw new Error(`Invalid worktree seed manifest at ${manifestPath}.`);
@@ -2130,6 +2198,7 @@ function updateWorktreeSeedManifest(input: {
   message?: string;
   snapshotAt?: string | null;
   migrationRevision?: string | null;
+  managedExecutor?: WorktreeSeedManifest["managedExecutor"];
   now?: Date;
 }): WorktreeSeedManifest {
   const markers = resolveWorktreeSeedMarkerPaths(input.configPath);
@@ -2152,6 +2221,7 @@ function updateWorktreeSeedManifest(input: {
     snapshotAt: input.snapshotAt === undefined ? current.snapshotAt : input.snapshotAt,
     migrationRevision:
       input.migrationRevision === undefined ? current.migrationRevision : input.migrationRevision,
+    managedExecutor: input.managedExecutor === undefined ? current.managedExecutor : input.managedExecutor,
     startedAt: current.startedAt ?? (input.status === "started" ? at : null),
     finishedAt: nextState === "verified" || nextState === "failed" ? at : null,
     diagnostics: [...current.diagnostics, diagnostic].slice(-WORKTREE_SEED_DIAGNOSTIC_LIMIT),
