@@ -49,8 +49,6 @@ for (const p of workspacePaths) {
   for (const name of Object.keys(pkg.dependencies || {})) {
     if (externalWorkspacePackages.has(name)) {
       externals.add(name);
-    } else if (!name.startsWith("@paperclipai/") && !bundledCliNpmDependencies.has(name)) {
-      externals.add(name);
     }
   }
   for (const name of Object.keys(pkg.optionalDependencies || {})) {
