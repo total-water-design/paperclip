@@ -188,6 +188,48 @@ describeEmbeddedPostgres("agent service clearError", () => {
     });
   });
 
+  it("resolves a UUID assignment reference only within its company", async () => {
+    const companyId = randomUUID();
+    const otherCompanyId = randomUUID();
+    const agentId = randomUUID();
+
+    await db.insert(companies).values([
+      {
+        id: companyId,
+        name: "Assignment company",
+        issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+        requireBoardApprovalForNewAgents: false,
+      },
+      {
+        id: otherCompanyId,
+        name: "Unrelated company",
+        issuePrefix: `T${otherCompanyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+        requireBoardApprovalForNewAgents: false,
+      },
+    ]);
+    await db.insert(agents).values({
+      id: agentId,
+      companyId,
+      name: "Systems Integration Manager",
+      role: "pm",
+      status: "running",
+      adapterType: "codex_local",
+      adapterConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+
+    const svc = agentService(db);
+    await expect(svc.resolveByReference(companyId, agentId)).resolves.toMatchObject({
+      ambiguous: false,
+      agent: { id: agentId, companyId, status: "running" },
+    });
+    await expect(svc.resolveByReference(otherCompanyId, agentId)).resolves.toEqual({
+      ambiguous: false,
+      agent: null,
+    });
+  });
+
   it("keeps resume-style terminal and pending-approval protections", async () => {
     const companyId = randomUUID();
     const terminatedAgentId = randomUUID();

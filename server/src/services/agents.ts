@@ -1249,11 +1249,23 @@ export function agentService(db: Db) {
       }
 
       if (isUuidLike(raw)) {
-        const byId = await getById(raw);
-        if (!byId || byId.companyId !== companyId) {
+        // Resolve an ID inside the caller's company at the database boundary.
+        // A global lookup followed by a company check can transiently disagree
+        // with company-scoped inventory/assignment reads, and unnecessarily
+        // touches another tenant's row before returning a 404.
+        const row = await db
+          .select()
+          .from(agents)
+          .where(and(eq(agents.id, raw), eq(agents.companyId, companyId)))
+          .then((rows) => rows[0] ?? null);
+        if (!row) {
           return { agent: null, ambiguous: false } as const;
         }
-        return { agent: byId, ambiguous: false } as const;
+        const [companyRows, hydrated] = await Promise.all([
+          listCompanyAgentRows(companyId),
+          hydrateAgentSpend([row]).then((rows) => rows[0]!),
+        ]);
+        return { agent: normalizeAgentRow(hydrated, companyRows), ambiguous: false } as const;
       }
 
       const urlKey = normalizeAgentUrlKey(raw);
