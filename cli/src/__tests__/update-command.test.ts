@@ -151,6 +151,53 @@ describe("update command", () => {
     expect(fs.realpathSync(paths.currentPath)).toBe(fs.realpathSync(oldPayload));
   });
 
+  it("discards only an unsafe retained git record without changing current or restarting", async () => {
+    const paths = resolveInstallStorePaths(); initializeInstallStore(paths);
+    const activePayload = payloadPathFor(paths, "npm", "2026.831.1");
+    const executable = createPayload(activePayload, "2026.831.1");
+    const validSha = "7".repeat(40); const invalidSha = "4".repeat(40);
+    const validPayload = payloadPathFor(paths, "git", validSha.slice(0, 12));
+    const invalidPayload = payloadPathFor(paths, "git", invalidSha.slice(0, 12));
+    createPayload(validPayload, "0.3.1");
+    fs.mkdirSync(invalidPayload, { recursive: true });
+    fs.writeFileSync(path.join(invalidPayload, "package.json"), "{}");
+    flipCurrentAtomic(activePayload, paths);
+    const manifest: InstallManifest = {
+      schemaVersion: 1,
+      ...record(activePayload, "2026.831.1"),
+      previous: [
+        { source: "git", version: "0.3.1", channel: "pinned", repo: "paperclipai/paperclip", ref: validSha, sha: validSha, payloadPath: validPayload, installedAt: "2026-07-22T00:00:00.000Z" },
+        { source: "git", version: "0.3.1", channel: "pinned", repo: "paperclipai/paperclip", ref: invalidSha, sha: invalidSha, payloadPath: invalidPayload, installedAt: "2026-07-22T00:00:01.000Z" },
+      ],
+    };
+    writeInstallManifestAtomic(manifest, paths);
+    const restartActiveService = vi.fn(async () => true);
+
+    await updateCommand({ discardUnsafePrevious: invalidSha }, { paths, executablePath: executable, restartActiveService });
+
+    expect(fs.realpathSync(paths.currentPath)).toBe(fs.realpathSync(activePayload));
+    expect(readInstallManifest(paths)).toEqual({ ...manifest, previous: [manifest.previous[0]!] });
+    expect(restartActiveService).not.toHaveBeenCalled();
+    expect(fs.existsSync(invalidPayload)).toBe(true);
+  });
+
+  it("refuses to discard a bootable retained payload and refuses rollback to an unsafe one", async () => {
+    const paths = resolveInstallStorePaths(); initializeInstallStore(paths);
+    const activePayload = payloadPathFor(paths, "npm", "2026.831.1");
+    const executable = createPayload(activePayload, "2026.831.1");
+    const sha = "4".repeat(40); const unsafePayload = payloadPathFor(paths, "git", sha.slice(0, 12));
+    const bootableSha = "7".repeat(40); const bootablePayload = payloadPathFor(paths, "git", bootableSha.slice(0, 12));
+    fs.mkdirSync(unsafePayload, { recursive: true }); createPayload(bootablePayload, "0.3.1"); flipCurrentAtomic(activePayload, paths);
+    writeInstallManifestAtomic({ schemaVersion: 1, ...record(activePayload, "2026.831.1"), previous: [
+      { source: "git", version: "0.3.1", channel: "pinned", repo: "paperclipai/paperclip", ref: sha, sha, payloadPath: unsafePayload, installedAt: "2026-07-22T00:00:00.000Z" },
+      { source: "git", version: "0.3.1", channel: "pinned", repo: "paperclipai/paperclip", ref: bootableSha, sha: bootableSha, payloadPath: bootablePayload, installedAt: "2026-07-22T00:00:01.000Z" },
+    ] }, paths);
+
+    await expect(updateCommand({ discardUnsafePrevious: bootableSha }, { paths, executablePath: executable })).rejects.toThrow("Refusing to discard bootable");
+    expect(() => rollbackManagedInstall(paths)).toThrow("not bootable");
+    expect(fs.realpathSync(paths.currentPath)).toBe(fs.realpathSync(activePayload));
+  });
+
   it("explains how to recover when the pre-update database is unreachable", async () => {
     const paths = resolveInstallStorePaths(); initializeInstallStore(paths);
     const oldPayload = payloadPathFor(paths, "npm", "1.0.0"); const executable = createPayload(oldPayload, "1.0.0"); flipCurrentAtomic(oldPayload, paths);

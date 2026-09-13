@@ -5,7 +5,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import * as p from "@clack/prompts";
 import pc from "picocolors";
-import { buildNextManifest, flipCurrentAtomic, isManagedExecutable, pruneInstallPayloads, readInstallManifest, resolveInstallStorePaths, withInstallStoreLock, writeInstallManifestAtomic, type InstallChannel, type InstallManifest, type InstallRecord, type InstallStorePaths } from "../install-store.js";
+import { buildNextManifest, flipCurrentAtomic, isBootableManagedPayload, isManagedExecutable, pruneInstallPayloads, readInstallManifest, resolveInstallStorePaths, withInstallStoreLock, writeInstallManifestAtomic, type InstallChannel, type InstallManifest, type InstallRecord, type InstallStorePaths } from "../install-store.js";
 import { dbBackupCommand } from "./db-backup.js";
 import { installGitPayload, installNpmPayload, PUBLIC_NPM_REGISTRY, resolveGitHubRef, resolvePublishedVersion, type CommandRunner } from "./install.js";
 import { resolvePaperclipInstanceId, resolvePaperclipInstanceRoot } from "../config/home.js";
@@ -16,7 +16,7 @@ import { packageVersion } from "../version.js";
 
 const execFileAsync = promisify(execFile);
 export type InstallMode = "managed" | "global-npm" | "npx" | "source" | "unknown";
-export type UpdateOptions = { canary?: boolean; latest?: boolean; version?: string; rollback?: boolean; check?: boolean; dryRun?: boolean; json?: boolean; yes?: boolean; backup?: boolean };
+export type UpdateOptions = { canary?: boolean; latest?: boolean; version?: string; rollback?: boolean; discardUnsafePrevious?: string; check?: boolean; dryRun?: boolean; json?: boolean; yes?: boolean; backup?: boolean };
 type Dependencies = { executablePath: string; runCommand: CommandRunner; backup: () => Promise<void>; confirm: (message: string) => Promise<boolean>; now: () => Date; paths: InstallStorePaths; restartActiveService: (expectedVersion: string) => Promise<boolean>; hasInstanceData: () => boolean };
 
 const DATABASE_UNREACHABLE_CODES = new Set(["ECONNREFUSED", "EHOSTUNREACH", "ENETUNREACH", "ETIMEDOUT"]);
@@ -130,13 +130,38 @@ export function rollbackManagedInstall(paths = resolveInstallStorePaths()): Inst
   if (!manifest) throw new Error("No managed install was found to roll back.");
   const target = manifest.previous[0];
   if (!target) throw new Error("No previous managed payload is available for rollback.");
-  if (!fs.existsSync(target.payloadPath)) throw new Error(`Previous payload is missing: ${target.payloadPath}`);
+  if (!isBootableManagedPayload(target.payloadPath, paths)) {
+    throw new Error(`Previous payload is not bootable and cannot be used for rollback: ${target.payloadPath}`);
+  }
   const current: InstallRecord = { source: manifest.source, version: manifest.version, channel: manifest.channel, payloadPath: manifest.payloadPath, repo: manifest.repo, ref: manifest.ref, sha: manifest.sha, installedAt: manifest.installedAt };
   const next: InstallManifest = { schemaVersion: manifest.schemaVersion, ...target, previous: [current, ...manifest.previous.slice(1)].slice(0, 2) };
   const oldTarget = fs.readlinkSync(paths.currentPath);
   flipCurrentAtomic(target.payloadPath, paths);
   try { writeInstallManifestAtomic(next, paths); } catch (error) { flipCurrentAtomic(path.resolve(paths.cliRoot, oldTarget), paths); throw error; }
   return next;
+}
+
+function discardUnsafePrevious(
+  sha: string,
+  executablePath: string,
+  paths = resolveInstallStorePaths(),
+): { manifest: InstallManifest; removed: InstallRecord } {
+  if (!/^[0-9a-f]{40}$/i.test(sha)) {
+    throw new Error("--discard-unsafe-previous requires a full 40-character git commit SHA.");
+  }
+  const manifest = readInstallManifest(paths);
+  if (!manifest) throw new Error("No managed install was found to repair.");
+  if (!isBootableManagedPayload(manifest.payloadPath, paths) || !isManagedExecutable(executablePath, manifest, paths)) {
+    throw new Error("Refusing to repair retention because the active managed payload is not bootable and selected by current.");
+  }
+  const target = manifest.previous.find((record) => record.source === "git" && record.sha?.toLowerCase() === sha.toLowerCase());
+  if (!target) throw new Error(`No retained git payload matches ${sha}.`);
+  if (isBootableManagedPayload(target.payloadPath, paths)) {
+    throw new Error(`Refusing to discard bootable retained payload ${sha}; use the normal retention lifecycle.`);
+  }
+  const next: InstallManifest = { ...manifest, previous: manifest.previous.filter((record) => record !== target) };
+  writeInstallManifestAtomic(next, paths);
+  return { manifest: next, removed: target };
 }
 
 async function defaultConfirm(message: string): Promise<boolean> {
@@ -170,6 +195,24 @@ export async function updateCommand(options: UpdateOptions, overrides: Partial<D
   const runCommand = overrides.runCommand ?? execFileAsync;
   const mode = detectInstallMode(executablePath, paths);
   const manifest = readInstallManifest(paths);
+  if (options.discardUnsafePrevious) {
+    if (options.rollback || options.canary || options.latest || options.version || options.check) {
+      throw new Error("--discard-unsafe-previous cannot be combined with update, rollback, or check options.");
+    }
+    if (mode !== "managed") throw new Error("--discard-unsafe-previous is only available for managed installs.");
+    const sha = options.discardUnsafePrevious;
+    if (options.dryRun) {
+      const target = manifest?.previous.find((record) => record.source === "git" && record.sha?.toLowerCase() === sha.toLowerCase());
+      if (!target || isBootableManagedPayload(target.payloadPath, paths)) {
+        throw new Error(`No unsafe retained git payload matches ${sha}.`);
+      }
+      emit(options, { mode, action: "discard-unsafe-previous", dryRun: true, sha, payloadPath: target.payloadPath }, `Would discard unsafe retained git payload ${sha.slice(0, 12)} without changing current or restarting the service.`);
+      return;
+    }
+    const repaired = await withInstallStoreLock(async () => discardUnsafePrevious(sha, executablePath, paths), paths, { initialize: false });
+    emit(options, { mode, action: "discard-unsafe-previous", sha, payloadPath: repaired.removed.payloadPath, previousCount: repaired.manifest.previous.length }, `Discarded unsafe retained git payload ${sha.slice(0, 12)} without changing current or restarting the service.`);
+    return;
+  }
   if (options.rollback) {
     if (mode !== "managed") throw new Error("--rollback is only available for managed installs.");
     if (options.dryRun) { emit(options, { mode, action: "rollback", dryRun: true, target: manifest?.previous[0]?.version ?? null }, `Would roll back to ${manifest?.previous[0]?.version ?? "the previous payload"}.`); return; }

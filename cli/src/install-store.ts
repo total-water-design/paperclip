@@ -260,6 +260,25 @@ function assertPayloadPath(payloadPath: string, paths: InstallStorePaths): void 
   }
 }
 
+/**
+ * Return whether a retained payload has the minimum on-disk shape required by
+ * the managed shim.  This is deliberately filesystem-only: it is suitable for
+ * refusing a broken rollback target without executing code from that target.
+ */
+export function isBootableManagedPayload(
+  payloadPath: string,
+  paths = resolveInstallStorePaths(),
+): boolean {
+  try {
+    assertPayloadPath(payloadPath, paths);
+    const entrypoint = path.join(payloadPath, "node_modules", "paperclipai", "dist", "index.js");
+    const entrypointStat = fs.lstatSync(entrypoint);
+    return entrypointStat.isFile() && !entrypointStat.isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
 export function flipCurrentAtomic(
   payloadPath: string,
   paths = resolveInstallStorePaths(),
