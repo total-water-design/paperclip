@@ -2,19 +2,21 @@
 
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { builtinModules } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 const PACKAGE_ROOT = "package";
 const STATIC_IMPORT = /^\s*import\s+(?:.*\sfrom\s+)?["']([^"']+)["']/;
 const CALL_IMPORT = /\b(?:import|require)\(\s*(["'])([^"']+)\1\s*\)/g;
+const BUILTIN_MODULES = new Set(builtinModules.map((name) => name.replace(/^node:/, "")));
 
 function fail(message) {
   throw new Error(`certified payload: ${message}`);
 }
 
 function isRuntimeModule(specifier) {
-  return !specifier.startsWith(".") && !specifier.startsWith("/") && !specifier.startsWith("node:") && !specifier.startsWith("@embedded-postgres/");
+  return !specifier.startsWith(".") && !specifier.startsWith("/") && !specifier.startsWith("node:") && !BUILTIN_MODULES.has(specifier) && !specifier.startsWith("@embedded-postgres/");
 }
 
 // This reads executable import/require syntax, never manifest declarations.
