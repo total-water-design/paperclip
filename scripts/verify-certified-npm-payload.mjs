@@ -16,7 +16,7 @@ function fail(message) {
 }
 
 function isRuntimeModule(specifier) {
-  return !specifier.startsWith(".") && !specifier.startsWith("/") && !specifier.startsWith("node:") && !BUILTIN_MODULES.has(specifier) && !specifier.startsWith("@embedded-postgres/") && !specifier.startsWith("@paperclipai/plugin-sdk/");
+  return !specifier.startsWith(".") && !specifier.startsWith("/") && !specifier.startsWith("node:") && !BUILTIN_MODULES.has(specifier) && !specifier.startsWith("@embedded-postgres/") && !specifier.startsWith("@paperclipai/plugin-sdk/") && !specifier.startsWith("@rollup/");
 }
 
 // This reads executable import/require syntax, never manifest declarations.
