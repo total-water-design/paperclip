@@ -24,6 +24,16 @@ tree retains the Codex closed-consumer tests and implementation while retaining
 the COS bounded heartbeat route, reporting-subtree authorization, activation
 identity verifier, and calendar-versioned package metadata.
 
+## Post-reconciliation test-seam repair
+
+Focused closed-consumer verification initially failed because the inherited
+bridge used a process-global fixed loopback port (`31337`) already occupied by
+an unrelated host service. The repair binds the bridge to an ephemeral
+loopback port and injects that selected proxy URL only into the bridge's final
+child process. This preserves the confined allowlist proxy and its closed
+consumer/backpressure behavior, eliminates host-port coupling, and does not
+alter runtime activation, identity, privileges, or egress policy.
+
 ## Scope boundary
 
 This record covers source reconciliation only. It does not authorize or record
