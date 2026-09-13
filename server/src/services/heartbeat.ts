@@ -2659,6 +2659,9 @@ interface WakeupOptions {
   requestedByActorType?: "user" | "agent" | "system";
   requestedByActorId?: string | null;
   contextSnapshot?: Record<string, unknown>;
+  // Internal callers that need an independently addressable run can opt out
+  // of normal active-run coalescing. General wake routes do not expose this.
+  forceNewRun?: boolean;
 }
 
 type UsageTotals = {
@@ -19096,10 +19099,12 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       sameScopeScheduledRetryRun ??
       (shouldQueueFollowupForRunningWake ? null : sameScopeRunningRun ?? null);
 
-    const coalescedTargetRun = filterZombieCoalesceTarget(
-      rawCoalescedTarget,
-      liveRunExecutions,
-    );
+    const coalescedTargetRun = opts.forceNewRun
+      ? null
+      : filterZombieCoalesceTarget(
+        rawCoalescedTarget,
+        liveRunExecutions,
+      );
 
     if (coalescedTargetRun) {
       const mergedContextSnapshot = mergeCoalescedContextSnapshot(

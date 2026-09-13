@@ -80,6 +80,11 @@ const mockBudgetService = vi.hoisted(() => ({
 
 const mockHeartbeatService = vi.hoisted(() => ({
   cancelActiveForAgent: vi.fn(),
+  getRun: vi.fn(),
+  getRunLogAccess: vi.fn(),
+  listEvents: vi.fn(),
+  readLog: vi.fn(),
+  wakeup: vi.fn(),
 }));
 
 const mockIssueApprovalService = vi.hoisted(() => ({
@@ -346,6 +351,49 @@ function resetMockDefaults() {
 describe.sequential("agent cross-tenant route authorization", () => {
   beforeEach(() => {
     resetMockDefaults();
+  });
+
+  it("denies all COS fixture reads in production and requests a distinct fixture run", async () => {
+    const parentRunId = "77777777-7777-4777-8777-777777777777";
+    const fixtureRunId = "88888888-8888-4888-8888-888888888888";
+    const parentRun = {
+      id: parentRunId, companyId, agentId, status: "running", invocationSource: "timer",
+      createdAt: new Date(), startedAt: new Date(), finishedAt: null, contextSnapshot: {}, resultJson: { secret: "must-not-leak" },
+    };
+    const fixtureRun = {
+      ...parentRun, id: fixtureRunId, status: "queued",
+      contextSnapshot: { cosTimerFixtureParentRunId: parentRunId, cosTimerFixture: true },
+    };
+    mockHeartbeatService.getRun.mockImplementation(async (id: string) =>
+      id === parentRunId ? parentRun : id === fixtureRunId ? fixtureRun : null,
+    );
+    mockHeartbeatService.wakeup.mockResolvedValue(fixtureRun);
+    const app = await createApp({ type: "agent", agentId, companyId, runId: parentRunId, source: "agent_jwt" });
+
+    const wake = await requestApp(app, (baseUrl) =>
+      request(baseUrl).post(`/api/agents/${agentId}/cos-timer-fixture-wake`).send({ idempotencyKey: "fixture-1" }),
+    );
+    expect(wake.status).toBe(202);
+    expect(wake.body).toEqual(expect.objectContaining({ id: fixtureRunId, agentId, invocationSource: "timer" }));
+    expect(wake.body.id).not.toBe(parentRunId);
+    expect(wake.body).not.toHaveProperty("resultJson");
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(agentId, expect.objectContaining({
+      forceNewRun: true,
+      contextSnapshot: { cosTimerFixtureParentRunId: parentRunId, cosTimerFixture: true },
+    }));
+
+    vi.stubEnv("NODE_ENV", "production");
+    const responses = await Promise.all([
+      requestApp(app, (baseUrl) => request(baseUrl).get(`/api/agents/${agentId}/cos-timer-fixture-runs/${fixtureRunId}`)),
+      requestApp(app, (baseUrl) => request(baseUrl).get(`/api/agents/${agentId}/cos-timer-fixture-runs/${fixtureRunId}/events`)),
+      requestApp(app, (baseUrl) => request(baseUrl).get(`/api/agents/${agentId}/cos-timer-fixture-runs/${fixtureRunId}/log`)),
+      requestApp(app, (baseUrl) => request(baseUrl).post(`/api/agents/${agentId}/cos-timer-fixture-wake`).send({})),
+    ]);
+    vi.unstubAllEnvs();
+    for (const response of responses) expect(response.status).toBe(403);
+    // One lookup validated the parent pre-wake; production reads perform none.
+    expect(mockHeartbeatService.getRun).toHaveBeenCalledTimes(1);
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledTimes(1);
   });
 
   it("enforces company boundaries before mutating or reading agent keys", async () => {

@@ -1,6 +1,7 @@
 import { Router, type NextFunction, type Request, type Response } from "express";
 import { generateKeyPairSync, randomUUID } from "node:crypto";
 import path from "node:path";
+import { z } from "zod";
 import type { Db } from "@paperclipai/db";
 import { agents as agentsTable, companies, heartbeatRuns, issues as issuesTable, projects as projectsTable } from "@paperclipai/db";
 import { and, desc, eq, inArray, not, sql } from "drizzle-orm";
@@ -216,6 +217,11 @@ function mergeDesiredSkillEntries(
 
 const RUN_LOG_DEFAULT_LIMIT_BYTES = 256_000;
 const RUN_LOG_MAX_LIMIT_BYTES = 1024 * 1024;
+const COS_TIMER_FIXTURE_LOG_LIMIT_BYTES = 16 * 1024;
+
+const cosTimerFixtureWakeSchema = z.object({
+  idempotencyKey: z.string().trim().min(1).max(128).optional(),
+}).strict();
 
 function readRunLogLimitBytes(value: unknown) {
   const parsed = Number(value ?? RUN_LOG_DEFAULT_LIMIT_BYTES);
@@ -4713,6 +4719,105 @@ export function agentRoutes(
       source: req.body.source,
       skippedResponse: (agent) => buildSkippedWakeupResponse(agent, req.body.payload ?? null),
     });
+  });
+
+  type CosTimerFixtureRun = Awaited<ReturnType<typeof heartbeat.getRun>>;
+  const denyCosTimerFixture = (res: Response) => res.status(403).json({ error: "COS timer fixture access is not allowed" });
+  const fixtureRunResponse = (run: NonNullable<CosTimerFixtureRun>) => ({
+    id: run.id,
+    agentId: run.agentId,
+    status: run.status,
+    invocationSource: run.invocationSource,
+    createdAt: run.createdAt,
+    startedAt: run.startedAt,
+    finishedAt: run.finishedAt,
+  });
+  async function getBoundCosTimerFixtureRun(req: Request, res: Response) {
+    const agentId = req.params.id as string;
+    const runId = req.params.runId as string;
+    // Fail closed before any fixture/run read is attempted in production.
+    if (process.env.NODE_ENV === "production") {
+      denyCosTimerFixture(res);
+      return null;
+    }
+    if (req.actor.type !== "agent" || req.actor.agentId !== agentId || !req.actor.runId) {
+      denyCosTimerFixture(res);
+      return null;
+    }
+    const run = await heartbeat.getRun(runId);
+    const context = run ? asRecord(run.contextSnapshot) : null;
+    const isCurrentOrFixtureChild = run?.id === req.actor.runId || context?.cosTimerFixtureParentRunId === req.actor.runId;
+    if (!run || run.companyId !== req.actor.companyId || run.agentId !== agentId || !isCurrentOrFixtureChild) {
+      res.status(404).json({ error: "Heartbeat run not found" });
+      return null;
+    }
+    return run;
+  }
+
+  router.post("/agents/:id/cos-timer-fixture-wake", validate(cosTimerFixtureWakeSchema), async (req, res) => {
+    const agentId = req.params.id as string;
+    if (process.env.NODE_ENV === "production" || req.actor.type !== "agent" || req.actor.agentId !== agentId || !req.actor.runId) {
+      denyCosTimerFixture(res);
+      return;
+    }
+    const agent = await getAccessibleResource(req, res, svc.getById(agentId), "Agent not found");
+    if (!agent) return;
+    const parentRun = await heartbeat.getRun(req.actor.runId);
+    if (!parentRun || parentRun.companyId !== agent.companyId || parentRun.agentId !== agentId) {
+      denyCosTimerFixture(res);
+      return;
+    }
+    const run = await heartbeat.wakeup(agentId, {
+      source: "timer",
+      triggerDetail: "system",
+      reason: "cos_timer_fixture",
+      idempotencyKey: req.body.idempotencyKey ?? null,
+      requestedByActorType: "agent",
+      requestedByActorId: agentId,
+      // A fixture wake must be independently observable and never merge into
+      // the caller's run, even when its task scope would normally coalesce.
+      forceNewRun: true,
+      contextSnapshot: { cosTimerFixtureParentRunId: req.actor.runId, cosTimerFixture: true },
+    });
+    if (!run) {
+      res.status(202).json({ status: "skipped" });
+      return;
+    }
+    await logActivity(db, {
+      companyId: agent.companyId,
+      actorType: "agent",
+      actorId: agentId,
+      agentId,
+      runId: run.id,
+      action: "heartbeat.cos_timer_fixture_invoked",
+      entityType: "heartbeat_run",
+      entityId: run.id,
+      details: { parentRunId: req.actor.runId },
+    });
+    res.status(202).json(fixtureRunResponse(run));
+  });
+
+  router.get("/agents/:id/cos-timer-fixture-runs/:runId", async (req, res) => {
+    const run = await getBoundCosTimerFixtureRun(req, res);
+    if (run) res.json(fixtureRunResponse(run));
+  });
+  router.get("/agents/:id/cos-timer-fixture-runs/:runId/events", async (req, res) => {
+    const run = await getBoundCosTimerFixtureRun(req, res);
+    if (!run) return;
+    const events = await heartbeat.listEvents(run.id, 0, 50);
+    res.json(events.map((event) => ({ seq: event.seq, eventType: event.eventType, stream: event.stream, level: event.level, createdAt: event.createdAt })));
+  });
+  router.get("/agents/:id/cos-timer-fixture-runs/:runId/log", async (req, res) => {
+    const run = await getBoundCosTimerFixtureRun(req, res);
+    if (!run) return;
+    const logAccess = await heartbeat.getRunLogAccess(run.id);
+    if (!logAccess || logAccess.companyId !== run.companyId || logAccess.agentId !== run.agentId) {
+      res.status(404).json({ error: "Heartbeat run not found" });
+      return;
+    }
+    const result = await heartbeat.readLog(logAccess, { offset: 0, limitBytes: COS_TIMER_FIXTURE_LOG_LIMIT_BYTES });
+    res.set("Cache-Control", "no-cache, no-store");
+    res.json(await runRedactions.redactForRun(run.companyId, run.id, redactCurrentUserValue(result, await getCurrentUserRedactionOptions())));
   });
 
   router.post("/agents/:id/heartbeat/invoke", async (req, res) => {
