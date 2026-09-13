@@ -6,6 +6,7 @@ import path from "node:path";
 import test from "node:test";
 
 const repo = path.resolve(import.meta.dirname, "..");
+const packageVersion = JSON.parse(readFileSync(path.join(repo, "cli/package.json"), "utf8")).version;
 const required = new Map([
   ["package/dist/deploy/systemd/paperclip-service-install", "payload_root="],
   ["package/dist/deploy/systemd/paperclip-preflight", "PAPERCLIP_SERVICE_MANAGED"],
@@ -28,7 +29,7 @@ test("certified npm archive contains the complete reviewed service payload safel
       env: { ...process.env, PAPERCLIP_ARTIFACT_DIR: root, PAPERCLIP_TMPDIR: root },
       stdio: "pipe",
     });
-    const archive = path.join(root, "paperclipai-0.3.1.tgz");
+    const archive = path.join(root, `paperclipai-${packageVersion}.tgz`);
     const listing = execFileSync("tar", ["-tzf", archive], { encoding: "utf8" }).trim().split("\n");
     assert.ok(listing.every((entry) => entry === "package/" || (entry.startsWith("package/") && !entry.includes("../") && !entry.startsWith("/"))), "archive paths must remain beneath package/");
     for (const name of required.keys()) assert.ok(listing.includes(name), `missing ${name}`);
