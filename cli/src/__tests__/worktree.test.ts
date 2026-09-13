@@ -768,6 +768,67 @@ describe("worktree helpers", () => {
     }
   });
 
+  it.each([
+    {
+      name: "returns without a verified manifest",
+      executor: vi.fn(async () => {}),
+      expectedError: "exited without a verified seed manifest",
+    },
+    {
+      name: "fails before writing verified evidence",
+      executor: vi.fn(async () => { throw new Error("managed executor was reaped"); }),
+      expectedError: "managed executor was reaped",
+    },
+  ])("terminalizes a full seed when the managed executor $name", async ({ executor, expectedError }) => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "paperclip-worktree-managed-full-seed-failure-"));
+    try {
+      const sourceConfigPath = path.join(tempRoot, "source", "config.json");
+      const targetRoot = path.join(tempRoot, "worktree");
+      const targetConfigPath = path.join(targetRoot, ".paperclip", "config.json");
+      const targetPaths = resolveWorktreeLocalPaths({
+        cwd: targetRoot,
+        homeDir: path.join(tempRoot, "worktree-home"),
+        instanceId: "managed-full-seed-failure-test",
+      });
+      const sourceConfig = buildSourceConfig();
+      const targetConfig = buildWorktreeConfig({
+        sourceConfig,
+        paths: targetPaths,
+        serverPort: 3197,
+        databasePort: 54997,
+      });
+      fs.mkdirSync(path.dirname(sourceConfigPath), { recursive: true });
+      fs.mkdirSync(path.dirname(targetConfigPath), { recursive: true });
+      fs.writeFileSync(sourceConfigPath, `${JSON.stringify(sourceConfig)}\n`);
+      fs.writeFileSync(path.join(path.dirname(sourceConfigPath), ".env"), "PAPERCLIP_INSTANCE_ID=source\n");
+      fs.writeFileSync(targetConfigPath, `${JSON.stringify(targetConfig)}\n`);
+      fs.writeFileSync(
+        path.join(targetRoot, ".paperclip", ".env"),
+        `PAPERCLIP_HOME=${targetPaths.homeDir}\nPAPERCLIP_INSTANCE_ID=${targetPaths.instanceId}\n`,
+      );
+      markWorktreeSeedPending({ configPath: targetConfigPath, sourceConfigPath, seedMode: "full" });
+
+      await expect(ensureWorktreeSeeded(
+        { config: targetConfigPath, fromConfig: sourceConfigPath },
+        { runManagedFullSeedExecutor: executor },
+      )).rejects.toThrow(expectedError);
+
+      expect(executor).toHaveBeenCalledWith({ configPath: targetConfigPath, targetCwd: targetRoot });
+      expect(readWorktreeSeedManifest(targetConfigPath)).toMatchObject({
+        state: "failed",
+        diagnostics: expect.arrayContaining([
+          expect.objectContaining({
+            status: "failed",
+            message: "Paperclip managed full-seed executor exited without verified seed evidence.",
+          }),
+        ]),
+      });
+      expect(fs.existsSync(path.join(targetRoot, ".paperclip", "seed.lock"))).toBe(false);
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it("treats an unregistered markerless config as a normal non-worktree boot", async () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "paperclip-worktree-unregistered-markerless-"));
     try {
