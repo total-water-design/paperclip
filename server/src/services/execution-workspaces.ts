@@ -791,7 +791,7 @@ async function inspectGitCloseReadiness(workspace: ExecutionWorkspace, context?:
   agentId?: string | null;
   runId?: string | null;
   requestId?: string;
-}): Promise<{
+}, statusCacheTtlMs = 60_000): Promise<{
   git: ExecutionWorkspaceCloseGitReadiness | null;
   warnings: string[];
   statusInspectionSucceeded: boolean;
@@ -868,7 +868,7 @@ async function inspectGitCloseReadiness(workspace: ExecutionWorkspace, context?:
           `workspace:${workspace.id}`,
           ...(workspace.sourceIssueId ? [`issue:${workspace.sourceIssueId}`] : []),
         ],
-        cacheTtlMs: 60_000,
+        cacheTtlMs: statusCacheTtlMs,
         context: {
           workspaceId: workspace.id,
           issueIdentifiers: context?.issueIdentifiers,
@@ -1467,7 +1467,10 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
     }
 
     const [current, currentHeadSha, currentBranchName] = await Promise.all([
-      inspectGitCloseReadiness(toExecutionWorkspace(workspace)),
+      // Cleanup is a correctness boundary: do not reuse a close-readiness
+      // status scan after the delivery assessment, because the worktree may
+      // have changed in the intervening cleanup hook.
+      inspectGitCloseReadiness(toExecutionWorkspace(workspace), undefined, 0),
       readGitStdout(["rev-parse", "HEAD"], workspacePath).catch(() => null),
       readGitStdout(["symbolic-ref", "--quiet", "--short", "HEAD"], workspacePath).catch(() => null),
     ]);

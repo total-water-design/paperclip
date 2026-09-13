@@ -1,12 +1,16 @@
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
-import { approvalComments, approvals } from "@paperclipai/db";
+import { approvalComments, approvals, issueApprovals, issues } from "@paperclipai/db";
 import { notFound, unprocessable } from "../errors.js";
 import { redactCurrentUserText } from "../log-redaction.js";
 import { agentService } from "./agents.js";
 import { budgetService } from "./budgets.js";
 import { notifyHireApproved } from "./hire-hook.js";
 import { instanceSettingsService } from "./instance-settings.js";
+import {
+  boardApprovalRequestIdentity,
+  openBoardApprovalDeduplicationKey,
+} from "./approval-governance.js";
 
 export function approvalService(db: Db) {
   const agentsSvc = agentService(db);
@@ -16,6 +20,111 @@ export function approvalService(db: Db) {
   const resolvableStatuses = Array.from(canResolveStatuses);
   type ApprovalRecord = typeof approvals.$inferSelect;
   type ResolutionResult = { approval: ApprovalRecord; applied: boolean };
+
+  async function createOrReuseBoardApproval(input: {
+    companyId: string;
+    data: Omit<typeof approvals.$inferInsert, "companyId" | "openDeduplicationKey">;
+    issueIds: string[];
+    linkedByAgentId?: string | null;
+    linkedByUserId?: string | null;
+    openDeduplicationKey: string;
+    authorizationFingerprint: string;
+    reuseApprovedAuthorization: boolean;
+  }): Promise<{ approval: ApprovalRecord; created: boolean }> {
+    const uniqueIssueIds = Array.from(new Set(input.issueIds)).sort();
+    return db.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`board-approval:${input.companyId}:${input.openDeduplicationKey}`}, 0))`);
+
+      const openCandidates = await tx
+        .select()
+        .from(approvals)
+        .where(and(
+          eq(approvals.companyId, input.companyId),
+          eq(approvals.type, "request_board_approval"),
+          inArray(approvals.status, resolvableStatuses),
+        ))
+        .orderBy(asc(approvals.createdAt), asc(approvals.id));
+
+      for (const candidate of openCandidates) {
+        const linkedIssueIds = await tx
+          .select({ issueId: issueApprovals.issueId })
+          .from(issueApprovals)
+          .where(eq(issueApprovals.approvalId, candidate.id))
+          .then((rows) => rows.map((row) => row.issueId).sort());
+        if (linkedIssueIds.length !== uniqueIssueIds.length) continue;
+        if (!linkedIssueIds.every((issueId, index) => issueId === uniqueIssueIds[index])) continue;
+
+        const candidateKey = candidate.openDeduplicationKey ?? openBoardApprovalDeduplicationKey({
+          type: candidate.type,
+          payload: candidate.payload,
+          issueIds: linkedIssueIds,
+        });
+        if (candidateKey === input.openDeduplicationKey) {
+          return { approval: candidate, created: false };
+        }
+      }
+
+      if (input.reuseApprovedAuthorization) {
+        const approvedCandidates = await tx
+          .select()
+          .from(approvals)
+          .where(and(
+            eq(approvals.companyId, input.companyId),
+            eq(approvals.type, "request_board_approval"),
+            eq(approvals.status, "approved"),
+          ))
+          .orderBy(desc(approvals.updatedAt));
+        for (const candidate of approvedCandidates) {
+          const linkedIssueIds = await tx
+            .select({ issueId: issueApprovals.issueId })
+            .from(issueApprovals)
+            .where(eq(issueApprovals.approvalId, candidate.id))
+            .then((rows) => rows.map((row) => row.issueId).sort());
+          if (linkedIssueIds.length !== uniqueIssueIds.length) continue;
+          if (!linkedIssueIds.every((issueId, index) => issueId === uniqueIssueIds[index])) continue;
+          const candidateIdentity = boardApprovalRequestIdentity({
+            type: candidate.type,
+            payload: candidate.payload,
+            issueIds: linkedIssueIds,
+          });
+          if (candidateIdentity.authorizationFingerprint === input.authorizationFingerprint) {
+            return { approval: candidate, created: false };
+          }
+        }
+      }
+
+      if (uniqueIssueIds.length > 0) {
+        const issueRows = await tx
+          .select({ id: issues.id, companyId: issues.companyId })
+          .from(issues)
+          .where(inArray(issues.id, uniqueIssueIds));
+        if (issueRows.length !== uniqueIssueIds.length) throw notFound("One or more issues not found");
+        if (issueRows.some((issue) => issue.companyId !== input.companyId)) {
+          throw unprocessable("Issue and approval must belong to the same company");
+        }
+      }
+
+      const approval = await tx
+        .insert(approvals)
+        .values({
+          ...input.data,
+          companyId: input.companyId,
+          openDeduplicationKey: input.openDeduplicationKey,
+        })
+        .returning()
+        .then((rows) => rows[0]);
+      if (uniqueIssueIds.length > 0) {
+        await tx.insert(issueApprovals).values(uniqueIssueIds.map((issueId) => ({
+          companyId: input.companyId,
+          issueId,
+          approvalId: approval.id,
+          linkedByAgentId: input.linkedByAgentId ?? null,
+          linkedByUserId: input.linkedByUserId ?? null,
+        })));
+      }
+      return { approval, created: true };
+    });
+  }
 
   function redactApprovalComment<T extends { body: string }>(comment: T, censorUsernameInLogs: boolean): T {
     return {
@@ -121,23 +230,38 @@ export function approvalService(db: Db) {
         .returning()
         .then((rows) => rows[0]),
 
-    // Cancel an open (pending/revision_requested) approval without a board
-    // decision — e.g. when its paired agent is terminated during duplicate
-    // cleanup. Idempotent: a no-op on already-resolved approvals.
-    cancel: async (id: string, reason?: string | null) => {
+    createOrReuseBoardApproval,
+
+    cancel: async (
+      id: string,
+      reason: string,
+      actor: { agentId?: string | null; userId?: string | null } = {},
+    ): Promise<ResolutionResult> => {
+      const existing = await getExistingApproval(id);
+      if (existing.status === "cancelled") {
+        return { approval: existing, applied: false };
+      }
+      if (!canResolveStatuses.has(existing.status)) {
+        throw unprocessable("Only pending or revision requested approvals can be cancelled");
+      }
       const now = new Date();
       const updated = await db
         .update(approvals)
         .set({
           status: "cancelled",
-          decisionNote: reason ?? null,
-          decidedAt: now,
+          cancellationReason: reason,
+          cancelledByAgentId: actor.agentId ?? null,
+          cancelledByUserId: actor.userId ?? null,
+          cancelledAt: now,
           updatedAt: now,
         })
         .where(and(eq(approvals.id, id), inArray(approvals.status, resolvableStatuses)))
         .returning()
         .then((rows) => rows[0] ?? null);
-      return updated;
+      if (updated) return { approval: updated, applied: true };
+      const latest = await getExistingApproval(id);
+      if (latest.status === "cancelled") return { approval: latest, applied: false };
+      throw unprocessable("Only pending or revision requested approvals can be cancelled");
     },
 
     approve: async (id: string, decidedByUserId: string, decisionNote?: string | null) => {
@@ -257,6 +381,72 @@ export function approvalService(db: Db) {
       }
 
       const now = new Date();
+      if (existing.type === "request_board_approval") {
+        const nextPayload = payload ?? existing.payload;
+        const linkedIssueIds = await db
+          .select({ issueId: issueApprovals.issueId })
+          .from(issueApprovals)
+          .where(eq(issueApprovals.approvalId, id))
+          .then((rows) => rows.map((row) => row.issueId).sort());
+        const openDeduplicationKey = openBoardApprovalDeduplicationKey({
+          type: existing.type,
+          payload: nextPayload,
+          issueIds: linkedIssueIds,
+        });
+        return db.transaction(async (tx) => {
+          await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`board-approval:${existing.companyId}:${openDeduplicationKey}`}, 0))`);
+          const current = await tx
+            .select()
+            .from(approvals)
+            .where(eq(approvals.id, id))
+            .then((rows) => rows[0] ?? null);
+          if (!current || current.status !== "revision_requested") {
+            throw unprocessable("Only revision requested approvals can be resubmitted");
+          }
+          const candidates = await tx
+            .select()
+            .from(approvals)
+            .where(and(
+              eq(approvals.companyId, existing.companyId),
+              eq(approvals.type, "request_board_approval"),
+              inArray(approvals.status, resolvableStatuses),
+            ));
+          for (const candidate of candidates) {
+            if (candidate.id === id) continue;
+            const candidateIssueIds = await tx
+              .select({ issueId: issueApprovals.issueId })
+              .from(issueApprovals)
+              .where(eq(issueApprovals.approvalId, candidate.id))
+              .then((rows) => rows.map((row) => row.issueId).sort());
+            if (candidateIssueIds.length !== linkedIssueIds.length) continue;
+            if (!candidateIssueIds.every((issueId, index) => issueId === linkedIssueIds[index])) continue;
+            const candidateKey = candidate.openDeduplicationKey ?? openBoardApprovalDeduplicationKey({
+              type: candidate.type,
+              payload: candidate.payload,
+              issueIds: candidateIssueIds,
+            });
+            if (candidateKey === openDeduplicationKey) {
+              throw unprocessable(
+                `Equivalent open Board approval ${candidate.id} already exists; use that canonical request`,
+              );
+            }
+          }
+          return tx
+            .update(approvals)
+            .set({
+              status: "pending",
+              payload: nextPayload,
+              openDeduplicationKey,
+              decisionNote: null,
+              decidedByUserId: null,
+              decidedAt: null,
+              updatedAt: now,
+            })
+            .where(and(eq(approvals.id, id), eq(approvals.status, "revision_requested")))
+            .returning()
+            .then((rows) => rows[0]);
+        });
+      }
       return db
         .update(approvals)
         .set({

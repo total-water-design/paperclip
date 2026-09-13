@@ -860,7 +860,10 @@ describeEmbeddedPostgres("low-trust red-team HTTP route regression suite", () =>
   it("relays blocked and cancelled stops once without laundering child prose", async () => {
     const fixture = await seedLowTrustFixture(db);
     const app = createApp(db, boardActor(fixture));
-    const unblockDescriptor = { owner: "board", action: "Review the low-trust stop" } as const;
+    const unblockDescriptor = {
+      owner: { agentId: fixture.agents.standard.id },
+      action: "Review the low-trust stop",
+    } as const;
 
     await db
       .delete(issueApprovals)
