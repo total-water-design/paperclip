@@ -620,6 +620,7 @@ describe.sequential("issue thread interaction routes", () => {
       });
 
     expect(res.status).toBe(201);
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledTimes(1);
     expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
       ASSIGNEE_AGENT_ID,
       expect.objectContaining({
@@ -632,6 +633,100 @@ describe.sequential("issue thread interaction routes", () => {
         contextSnapshot: expect.objectContaining({ wakeReason: "interaction_pending" }),
       }),
     );
+  });
+
+  it.each(["blocked", "in_review"] as const)("wakes the eligible assignee once for a pending interaction on a %s issue", async (status) => {
+    mockIssueService.getById.mockResolvedValueOnce(createIssue({ status }));
+    mockInteractionService.create.mockResolvedValueOnce({
+      id: `interaction-assignee-${status}`,
+      companyId: "company-1",
+      issueId: ISSUE_ID,
+      kind: "ask_user_questions",
+      status: "pending",
+      continuationPolicy: "wake_assignee",
+      addresseeAgentId: null,
+      requestedResolverPolicy: "anyone",
+      effectiveResolverPolicy: "anyone",
+      idempotencyKey: null,
+      sourceCommentId: null,
+      sourceRunId: RUN_1,
+      createdByAgentId: CREATED_AGENT_ID,
+      payload: { version: 1, questions: [] },
+      result: null,
+      createdAt: "2026-07-25T12:00:00.000Z",
+      updatedAt: "2026-07-25T12:00:00.000Z",
+    });
+
+    const res = await request(await createApp())
+      .post(`/api/issues/${ISSUE_ID}/interactions`)
+      .send({
+        kind: "ask_user_questions",
+        payload: {
+          version: 1,
+          questions: [{
+            id: "scope",
+            prompt: "Which scope?",
+            selectionMode: "single",
+            options: [{ id: "phase-1", label: "Phase 1" }],
+          }],
+        },
+      });
+
+    expect(res.status).toBe(201);
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledTimes(1);
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
+      ASSIGNEE_AGENT_ID,
+      expect.objectContaining({
+        reason: "interaction_pending",
+        idempotencyKey: `interaction-pending:interaction-assignee-${status}`,
+        payload: expect.objectContaining({ issueId: ISSUE_ID }),
+      }),
+    );
+  });
+
+  it("does not wake an assignee excluded by not_creator", async () => {
+    mockIssueService.getById.mockResolvedValueOnce(createIssue({
+      status: "blocked",
+      assigneeAgentId: CREATED_AGENT_ID,
+    }));
+    mockInteractionService.create.mockResolvedValueOnce({
+      id: "interaction-not-creator",
+      companyId: "company-1",
+      issueId: ISSUE_ID,
+      kind: "ask_user_questions",
+      status: "pending",
+      continuationPolicy: "wake_assignee",
+      addresseeAgentId: null,
+      requestedResolverPolicy: "not_creator",
+      effectiveResolverPolicy: "not_creator",
+      idempotencyKey: null,
+      sourceCommentId: null,
+      sourceRunId: RUN_1,
+      createdByAgentId: CREATED_AGENT_ID,
+      payload: { version: 1, questions: [] },
+      result: null,
+      createdAt: "2026-07-25T12:00:00.000Z",
+      updatedAt: "2026-07-25T12:00:00.000Z",
+    });
+
+    const res = await request(await createApp())
+      .post(`/api/issues/${ISSUE_ID}/interactions`)
+      .send({
+        kind: "ask_user_questions",
+        resolverPolicy: "not_creator",
+        payload: {
+          version: 1,
+          questions: [{
+            id: "scope",
+            prompt: "Which scope?",
+            selectionMode: "single",
+            options: [{ id: "phase-1", label: "Phase 1" }],
+          }],
+        },
+      });
+
+    expect(res.status).toBe(201);
+    expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
   });
 
   it("does not route agent attention for a human-only interaction", async () => {

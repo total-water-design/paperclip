@@ -11291,19 +11291,28 @@ export function issueRoutes(
       },
     });
 
-    if (
-      interaction.addresseeAgentId
-      && issueThreadInteractionAttentionAgentAllowed({
-        agentId: interaction.addresseeAgentId,
+    // A pending interaction is actionable attention for its assignee only when
+    // that assignee passes the exact same audience gate used at resolution
+    // time. Named addressees stay eligible too, but a set keeps an assignee who
+    // is also the addressee to one wake for this newly-created card.
+    const wakeAgentIds = new Set([
+      issue.assigneeAgentId,
+      interaction.addresseeAgentId,
+    ].filter((agentId): agentId is string => Boolean(agentId)));
+    const governedAction = interaction.kind === "request_confirmation"
+      && typeof interaction.payload === "object"
+      && interaction.payload !== null
+      && "toolAction" in interaction.payload
+      && interaction.payload.toolAction !== undefined;
+    for (const agentId of wakeAgentIds) {
+      if (!issueThreadInteractionAttentionAgentAllowed({
+        agentId,
         interaction,
-        governedAction: interaction.kind === "request_confirmation"
-          && typeof interaction.payload === "object"
-          && interaction.payload !== null
-          && "toolAction" in interaction.payload
-          && interaction.payload.toolAction !== undefined,
-      })
-    ) {
-      void heartbeat.wakeup(interaction.addresseeAgentId, {
+        governedAction,
+      })) {
+        continue;
+      }
+      void heartbeat.wakeup(agentId, {
         source: "automation",
         triggerDetail: "system",
         reason: "interaction_pending",
@@ -11332,8 +11341,8 @@ export function issueRoutes(
         err,
         issueId: issue.id,
         interactionId: interaction.id,
-        agentId: interaction.addresseeAgentId,
-      }, "failed to wake addressee on issue interaction creation"));
+        agentId,
+      }, "failed to wake eligible resolver on issue interaction creation"));
     }
 
     res.status(201).json(interaction);
