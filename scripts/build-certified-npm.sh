@@ -34,8 +34,12 @@ cp -R "$repo_root/cli/dist" "$stage/package/"
 # node_modules is deliberately excluded: every direct non-workspace runtime
 # dependency is bundled in dist/index.js and platform-only binaries stay out of
 # the bounded archive.
-mkdir -p "$stage/package/node_modules/@paperclipai/server"
-tar --exclude=node_modules --exclude=dist --exclude=ui-dist -C "$repo_root/server" -cf - . | tar -C "$stage/package/node_modules/@paperclipai/server" -xf -
+for package in server packages/plugins/sdk packages/shared; do
+  name="$(node -p "require('$repo_root/$package/package.json').name")"
+  destination="$stage/package/node_modules/$name"
+  mkdir -p "$destination"
+  tar --exclude=node_modules --exclude=ui-dist -C "$repo_root/$package" -cf - . | tar -C "$destination" -xf -
+done
 
 epoch="$(git -C "$repo_root" show -s --format=%ct "$source_sha")"
 COPYFILE_DISABLE=1 tar --sort=name --format=posix --mtime="@$epoch" --owner=0 --group=0 --numeric-owner --pax-option=delete=atime,delete=ctime -C "$stage" -cf - package | gzip -n -9 > "$archive"
