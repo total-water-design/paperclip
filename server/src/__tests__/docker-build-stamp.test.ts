@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
  * Drift guard for the Docker build-stamp wiring.
  *
  * The server build runs scripts/write-build-stamp.mjs, which stamps the built
- * commit into dist/build-info.json. The build context has no .git, so the
+ * immutable source SHA into dist/build-manifest.json. The build context has no .git, so the
  * script reads PAPERCLIP_BUILD_COMMIT instead. Docker exposes an ARG to the
  * next RUN as an environment variable, but an ARG goes out of scope at the end
  * of its stage. So the build stage must declare `ARG PAPERCLIP_BUILD_COMMIT`

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { parseBuildCommit, readBuildCommit } from "../build-commit.js";
+import { parseBuildCommit, parseBuildManifest, readBuildCommit } from "../build-commit.js";
 
 describe("parseBuildCommit", () => {
   it("normalizes a full deployment commit", () => {
@@ -27,16 +27,23 @@ describe("readBuildCommit", () => {
     expect(readTextFile).not.toHaveBeenCalled();
   });
 
-  it("reads the deployment marker when no environment commit is set", () => {
+  it("reads the immutable build manifest when no environment commit is set", () => {
     expect(
       readBuildCommit({
         environmentCommit: null,
-        buildCommitPath: "/app/.paperclip-build-commit",
+        buildManifestPath: "/app/dist/build-manifest.json",
         readTextFile: (path) => {
-          expect(path).toBe("/app/.paperclip-build-commit");
-          return "0123456789abcdef0123456789abcdef01234567\n";
+          expect(path).toBe("/app/dist/build-manifest.json");
+          return '{"schemaVersion":1,"sourceSha":"0123456789abcdef0123456789abcdef01234567"}\n';
         },
       }),
     ).toBe("0123456789abcdef0123456789abcdef01234567");
+  });
+});
+
+describe("parseBuildManifest", () => {
+  it("rejects manifests without a schema-versioned full source SHA", () => {
+    expect(parseBuildManifest('{"schemaVersion":1,"sourceSha":"abcdef0"}')).toBeNull();
+    expect(parseBuildManifest('{"schemaVersion":2,"sourceSha":"0123456789abcdef0123456789abcdef01234567"}')).toBeNull();
   });
 });

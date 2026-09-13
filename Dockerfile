@@ -60,7 +60,7 @@ COPY . .
 RUN pnpm --filter @paperclipai/ui build
 RUN pnpm --filter @paperclipai/plugin-sdk build
 # The server build runs scripts/write-build-stamp.mjs, which stamps the built
-# commit into dist/build-info.json. The build context has no .git, so the
+# immutable source SHA into dist/build-manifest.json. The build context has no .git, so the
 # script reads PAPERCLIP_BUILD_COMMIT instead. Docker exposes an ARG to the
 # next RUN as an environment variable, so declare it here — in the build
 # stage — before the server build. The production stage below declares the

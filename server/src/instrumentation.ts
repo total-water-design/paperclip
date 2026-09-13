@@ -35,6 +35,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { parseBuildManifest } from "./build-commit.js";
 import { checkExactPeerVersions } from "./peer-version-check.js";
 
 export { checkExactPeerVersions } from "./peer-version-check.js";
@@ -380,28 +381,25 @@ async function importExporter(protocol: ExporterProtocol): Promise<{
 }
 
 /**
- * Read the commit SHA from the build stamp. The server `build` script writes
- * `dist/build-info.json` next to the compiled module. Return the SHA, or null
+ * Read the immutable source SHA from the build manifest. The server `build`
+ * script writes `dist/build-manifest.json` next to the compiled module. Return
+ * the SHA, or null
  * when the stamp is absent or unreadable. In `tsx` dev mode the module runs
  * from `src`, where no stamp exists, so this returns null and the caller falls
  * back to a runtime git lookup.
  */
 export function readBuildStamp(): string | null {
   try {
-    const stampUrl = new URL("./build-info.json", import.meta.url);
+    const stampUrl = new URL("./build-manifest.json", import.meta.url);
     const raw = readFileSync(stampUrl, "utf8");
-    const parsed = JSON.parse(raw) as { commit?: unknown };
-    if (typeof parsed.commit === "string" && parsed.commit.length > 0) {
-      return parsed.commit;
-    }
-    return null;
+    return parseBuildManifest(raw);
   } catch {
     return null;
   }
 }
 
 /**
- * Read the current commit SHA with `git rev-parse --short HEAD`. Return the
+ * Read the current commit SHA with `git rev-parse HEAD`. Return the
  * SHA, or null on any failure. This covers dev mode, where the process runs
  * from a git checkout. A missing `git` or a checkout with no `.git` returns
  * null and is not fatal.
@@ -414,7 +412,7 @@ export function readBuildStamp(): string | null {
  */
 export function readGitCommit(): string | null {
   try {
-    const out = execFileSync("git", ["rev-parse", "--short", "HEAD"], {
+    const out = execFileSync("git", ["rev-parse", "HEAD"], {
       cwd: new URL("./", import.meta.url),
       stdio: ["ignore", "pipe", "ignore"],
     })

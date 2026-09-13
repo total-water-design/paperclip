@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
-import { and, asc, desc, eq, inArray, isNotNull, isNull, ne } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, ne, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
   agents,
@@ -2413,6 +2413,26 @@ export function issueThreadInteractionService(db: Db, opts: IssueThreadInteracti
               payload: data.payload,
             })
             .returning();
+
+          // A pending human-only card is a Board review path. Keep that path
+          // visible in the issue lifecycle at the same transaction boundary as
+          // the card itself: otherwise a blocked/in-progress issue can carry a
+          // Board-only decision without appearing in the Board review queue.
+          // The issue-row lock above makes this conditional transition safe
+          // against concurrent interaction creation and terminal transitions.
+          if (
+            policy.effectiveResolverPolicy === "human_only"
+            && issueRow.status !== "in_review"
+          ) {
+            await tx
+              .update(issues)
+              .set({
+                status: "in_review",
+                statusVersion: sql`${issues.statusVersion} + 1`,
+                updatedAt: new Date(),
+              })
+              .where(and(eq(issues.id, issue.id), eq(issues.companyId, issue.companyId)));
+          }
 
           // An agent replacing its own still-pending card supersedes the older
           // one so the thread never accumulates stale sibling cards. This covers

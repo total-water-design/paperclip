@@ -249,6 +249,44 @@ describeEmbeddedPostgres("issueThreadInteractionService", () => {
     });
   });
 
+  it.each(["blocked", "in_progress"] as const)(
+    "moves a %s issue into Board review when it creates a pending human-only interaction",
+    async (status) => {
+      const { companyId, issueId } = await seedConfirmationIssue(`Human-only ${status}`);
+      await db.update(issues).set({ status }).where(eq(issues.id, issueId));
+
+      const created = await interactionsSvc.create({ id: issueId, companyId }, {
+        kind: "request_confirmation",
+        resolverPolicy: "human_only",
+        payload: { version: 1, prompt: "Board approval required" },
+      }, { userId: "local-board" });
+
+      expect(created).toMatchObject({ status: "pending", effectiveResolverPolicy: "human_only" });
+      const persisted = await db.select({ status: issues.status, statusVersion: issues.statusVersion })
+        .from(issues)
+        .where(eq(issues.id, issueId))
+        .then((rows) => rows[0]);
+      expect(persisted?.status).toBe("in_review");
+      expect(persisted?.statusVersion).toBeGreaterThan(0);
+    },
+  );
+
+  it("leaves an ordinary pending interaction on its existing lifecycle status", async () => {
+    const { companyId, issueId } = await seedConfirmationIssue("Ordinary interaction lifecycle");
+
+    await interactionsSvc.create({ id: issueId, companyId }, {
+      kind: "request_confirmation",
+      resolverPolicy: "anyone",
+      payload: { version: 1, prompt: "Any eligible resolver may approve" },
+    }, { userId: "local-board" });
+
+    const persisted = await db.select({ status: issues.status, statusVersion: issues.statusVersion })
+      .from(issues)
+      .where(eq(issues.id, issueId))
+      .then((rows) => rows[0]);
+    expect(persisted).toMatchObject({ status: "in_progress", statusVersion: 0 });
+  });
+
   it("cancels addressed interactions before deleting the addressee", async () => {
     const { companyId, issueId } = await seedConfirmationIssue("Deleted interaction addressee");
     const creatorAgentId = randomUUID();

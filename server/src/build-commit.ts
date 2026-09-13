@@ -4,8 +4,8 @@ import { fileURLToPath } from "node:url";
 type ReadTextFile = (path: string) => string;
 
 const FULL_SHA_RE = /^[0-9a-f]{40}$/i;
-const DEFAULT_BUILD_COMMIT_PATH = fileURLToPath(
-  new URL("../../.paperclip-build-commit", import.meta.url),
+const DEFAULT_BUILD_MANIFEST_PATH = fileURLToPath(
+  new URL("./build-manifest.json", import.meta.url),
 );
 
 export function parseBuildCommit(value: string | null | undefined): string | null {
@@ -13,10 +13,21 @@ export function parseBuildCommit(value: string | null | undefined): string | nul
   return FULL_SHA_RE.test(commit) ? commit.toLowerCase() : null;
 }
 
+export function parseBuildManifest(value: string | null | undefined): string | null {
+  try {
+    const parsed = JSON.parse(value ?? "") as { schemaVersion?: unknown; sourceSha?: unknown };
+    return parsed.schemaVersion === 1 && typeof parsed.sourceSha === "string"
+      ? parseBuildCommit(parsed.sourceSha)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 export function readBuildCommit(
   opts: {
     environmentCommit?: string | null;
-    buildCommitPath?: string;
+    buildManifestPath?: string;
     readTextFile?: ReadTextFile;
   } = {},
 ): string | null {
@@ -29,7 +40,7 @@ export function readBuildCommit(
 
   try {
     const readTextFile = opts.readTextFile ?? ((path: string) => readFileSync(path, "utf8"));
-    return parseBuildCommit(readTextFile(opts.buildCommitPath ?? DEFAULT_BUILD_COMMIT_PATH));
+    return parseBuildManifest(readTextFile(opts.buildManifestPath ?? DEFAULT_BUILD_MANIFEST_PATH));
   } catch {
     return null;
   }
