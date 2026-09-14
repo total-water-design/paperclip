@@ -1,6 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveInstallationId } from '../get-bot-token.mjs';
+import { generateKeyPairSync } from 'node:crypto';
+import { generateJWT, resolveInstallationId } from '../get-bot-token.mjs';
+
+test('generateJWT: uses the TWDS fork-owned Commitperclip app ID', () => {
+  const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const jwt = generateJWT(privateKey.export({ type: 'pkcs1', format: 'pem' }));
+  const [, encodedPayload] = jwt.split('.');
+  const payload = JSON.parse(Buffer.from(encodedPayload, 'base64url').toString('utf8'));
+
+  assert.equal(payload.iss, '4752201');
+});
 
 test('resolveInstallationId: uses the repo installation endpoint when repo context is available', async () => {
   const seenPaths = [];
