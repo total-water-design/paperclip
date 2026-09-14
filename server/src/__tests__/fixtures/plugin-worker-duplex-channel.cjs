@@ -50,6 +50,9 @@
 //     scripted data and exit in one stdout write. The host then reads the open
 //     reply and the notifications in one batch, so a test proves the host holds
 //     and replays a frame that arrives before the route binds.
+//   - `dataDelayMs`: when positive, the fixture delays scripted data and exit
+//     frames after the open reply. Tests that exercise a post-bind limit use this
+//     to avoid accidentally exercising the separately bounded pre-bind path.
 const readline = require("node:readline");
 
 function send(message) {
@@ -222,9 +225,14 @@ rl.on("line", (line) => {
     // Emit the scripted data and the exit after the open reply, so the host
     // binds the route first. Each frame echoes the exact pair; a test overrides
     // `sid` or `rid` to force a mismatch.
-    setImmediate(() => {
+    const emitScriptedFrames = () => {
       process.stdout.write(scriptedFrameLines(directive, hostRouteId, workerSessionId));
-    });
+    };
+    if (typeof directive.dataDelayMs === "number" && directive.dataDelayMs > 0) {
+      setTimeout(emitScriptedFrames, directive.dataDelayMs);
+    } else {
+      setImmediate(emitScriptedFrames);
+    }
     return;
   }
 

@@ -373,6 +373,10 @@ describe("plugin worker manager duplex channel route", () => {
             { chunk: "bbbbb" }, // total 10 → buffered
             { chunk: "ccccc" }, // total 15 > 10 → end route
           ],
+          // This test exercises the post-bind buffered limit. Delay the scripted
+          // frames so a loaded runner cannot instead race into the independently
+          // bounded pre-bind hold before the open reply resolves.
+          dataDelayMs: 10,
         }),
       );
       // No listener attaches, so the data buffers. The cumulative bytes pass the
