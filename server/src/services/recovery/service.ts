@@ -631,7 +631,9 @@ function isOperatorCancelledRun(latestRun: LatestIssueRun): boolean {
   if (!latestRun || latestRun.status !== "cancelled") return false;
   if (latestRun.errorCode === "operator_interrupted") return true;
   const result = parseObject(latestRun.resultJson);
-  return result.cancelledByActorType === "user" || result.cancelledByActorType === "board";
+  return result.cancelledByActorType === "user" ||
+    result.cancelledByActorType === "board" ||
+    result.cancellationKind === "authorized_manager_stale_reconciliation";
 }
 
 function isUnsuccessfulTerminalIssueRun(latestRun: LatestIssueRun) {

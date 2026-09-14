@@ -28,6 +28,7 @@
 import { promises as fs } from "node:fs";
 import { chromium } from "playwright";
 import { ciSmokeLabScenarios } from "./smoke-lab.catalog.ts";
+import { chromiumLaunchOptions } from "../playwright-shared";
 
 const BASE = (process.env.SMOKE_BASE ?? "http://127.0.0.1:3211").replace(/\/$/, "");
 const SHOT_DIR = process.env.SMOKE_SHOT_DIR ?? "/tmp/pap13350-shots";
@@ -108,6 +109,7 @@ async function main() {
   console.log(`smoke_run=${run.id}`);
 
   const browser = await chromium.launch({
+    ...chromiumLaunchOptions,
     ...(CHROMIUM_PATH ? { executablePath: CHROMIUM_PATH } : {}),
     headless: true,
   });
