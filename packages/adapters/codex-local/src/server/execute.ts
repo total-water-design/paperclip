@@ -1008,6 +1008,9 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
             homeDir: filesystemScope ? effectiveCodexHome : null,
             networkScope,
             networkAllowlist: resolveCodexLocalProcessNetworkAllowlist(config, context),
+            // These endpoints are available to the Codex parent process only.
+            // Shell commands receive the separate task proxy below.
+            networkControlPlaneAllowlist: ["chatgpt.com", "api.openai.com"],
             networkTrustedUrls: [
               paperclipBaseEnv.PAPERCLIP_API_URL,
               ...runtimeMcpGateways.map((gateway) => gateway.endpointPath),
@@ -1220,6 +1223,9 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         {
           resumeSessionId,
           skipGitRepoCheck: executionTargetIsSandbox,
+          taskNetworkAllowlist: localProcessSandbox?.networkScope === "allowlist"
+            ? resolveCodexLocalProcessNetworkAllowlist(config, context)
+            : null,
         },
       );
       const args = execArgs.args;
