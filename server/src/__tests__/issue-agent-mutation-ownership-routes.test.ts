@@ -86,6 +86,7 @@ const mockIssueThreadInteractionService = vi.hoisted(() => ({
   listForIssue: vi.fn(async () => []),
 }));
 const mockIssueApprovalService = vi.hoisted(() => ({
+  getLinkedApproval: vi.fn(),
   link: vi.fn(),
   unlink: vi.fn(),
   listApprovalsForIssue: vi.fn(async () => []),
@@ -550,6 +551,13 @@ describe("agent issue mutation checkout ownership", () => {
     mockHeartbeatService.cancelRun.mockResolvedValue(null);
     mockIssueApprovalService.link.mockReset();
     mockIssueApprovalService.unlink.mockReset();
+    mockIssueApprovalService.getLinkedApproval.mockReset();
+    mockIssueApprovalService.getLinkedApproval.mockResolvedValue({
+      id: "88888888-8888-4888-8888-888888888888",
+      companyId,
+      requestedByAgentId: ownerAgentId,
+      requestedByUserId: null,
+    });
     mockIssueApprovalService.listApprovalsForIssue.mockReset();
     mockIssueApprovalService.listApprovalsForIssue.mockResolvedValue([]);
     mockIssueThreadInteractionService.listForIssue.mockReset();
@@ -734,6 +742,47 @@ describe("agent issue mutation checkout ownership", () => {
       contentLength: 6,
     });
     mockStorageService.deleteObject.mockResolvedValue(undefined);
+  });
+
+  it.each([
+    ["requester", ownerActor(), "requester"],
+    ["COS", peerActor(), "chief_of_staff"],
+    ["CEO", peerActor(), "ceo"],
+    ["Board", boardActor(), "board"],
+  ])("allows the approval %s to unlink", async (_name, actor, role) => {
+    if (role !== "board") {
+      mockAgentService.getById.mockResolvedValue(makeAgent(
+        role === "requester" ? ownerAgentId : peerAgentId,
+        { role },
+      ));
+    }
+    const res = await request(await createApp(actor))
+      .delete(`/api/issues/${issueId}/approvals/88888888-8888-4888-8888-888888888888`);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(mockIssueApprovalService.unlink).toHaveBeenCalledWith(
+      issueId,
+      "88888888-8888-4888-8888-888888888888",
+    );
+  });
+
+  it("denies an unrelated manager even when canCreateAgents is true", async () => {
+    mockAgentService.getById.mockResolvedValue(makeAgent(peerAgentId, {
+      role: "manager",
+      permissions: { canCreateAgents: true },
+    }));
+    const res = await request(await createApp(peerActor()))
+      .delete(`/api/issues/${issueId}/approvals/88888888-8888-4888-8888-888888888888`);
+    expect(res.status, JSON.stringify(res.body)).toBe(403);
+    expect(mockIssueApprovalService.unlink).not.toHaveBeenCalled();
+  });
+
+  it("does not expose a foreign or nonexistent approval through unlink", async () => {
+    mockIssueApprovalService.getLinkedApproval.mockResolvedValue(null);
+    const res = await request(await createApp(ownerActor()))
+      .delete(`/api/issues/${issueId}/approvals/99999999-9999-4999-8999-999999999999`);
+    expect(res.status, JSON.stringify(res.body)).toBe(404);
+    expect(res.body.error).toBe("Approval link not found");
+    expect(mockIssueApprovalService.unlink).not.toHaveBeenCalled();
   });
 
   it("attributes a timer-started COS run when it checks out its assigned source issue", async () => {
@@ -1232,7 +1281,11 @@ describe("agent issue mutation checkout ownership", () => {
 
     expect(res.status, JSON.stringify(res.body)).toBe(403);
     expect(res.body.error).toContain(expectedError);
-    expect(mockIssueService.assertCheckoutOwner).toHaveBeenCalledWith(issueId, ownerAgentId, ownerRunId);
+    if (_name === "issue approval unlink") {
+      expect(mockIssueService.assertCheckoutOwner).not.toHaveBeenCalled();
+    } else {
+      expect(mockIssueService.assertCheckoutOwner).toHaveBeenCalledWith(issueId, ownerAgentId, ownerRunId);
+    }
     expect(mockWorkProductService.createForIssue).not.toHaveBeenCalled();
     expect(mockWorkProductService.update).not.toHaveBeenCalled();
     expect(mockWorkProductService.remove).not.toHaveBeenCalled();

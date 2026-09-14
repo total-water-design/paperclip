@@ -3742,6 +3742,39 @@ export function issueRoutes(
     return false;
   }
 
+  async function assertCanUnlinkIssueApproval(
+    req: Request,
+    res: Response,
+    companyId: string,
+    approval: { requestedByAgentId: string | null; requestedByUserId: string | null },
+  ) {
+    assertCompanyAccess(req, companyId);
+    if (req.actor.type === "board") {
+      return approval.requestedByUserId === req.actor.userId
+        || req.actor.source === "local_implicit"
+        || req.actor.isInstanceAdmin
+        || (req.actor.companyIds ?? []).includes(companyId);
+    }
+    if (!req.actor.agentId) {
+      res.status(403).json({ error: "Forbidden" });
+      return false;
+    }
+    const actorAgent = await agentsSvc.getById(req.actor.agentId);
+    if (!actorAgent || actorAgent.companyId !== companyId) {
+      res.status(403).json({ error: "Forbidden" });
+      return false;
+    }
+    const role = actorAgent.role.trim().toLowerCase();
+    if (
+      approval.requestedByAgentId === actorAgent.id
+      || role === "ceo"
+      || role === "chief_of_staff"
+      || role === "cos"
+    ) return true;
+    res.status(403).json({ error: "Missing permission to unlink approval" });
+    return false;
+  }
+
   function actorCanAccessCompany(req: Request, companyId: string) {
     if (req.actor.type === "none") return false;
     if (req.actor.type === "agent") return req.actor.companyId === companyId;
@@ -8460,9 +8493,13 @@ export function issueRoutes(
     const approvalId = req.params.approvalId as string;
     const issue = await getAccessibleResource(req, res, svc.getById(id), "Issue not found");
     if (!issue) return;
-    if (!(await assertAgentIssueMutationAllowed(req, res, issue))) return;
     if (!(await assertApprovalMutationAllowedByRunContext(req, res, issue))) return;
-    if (!(await assertCanManageIssueApprovalLinks(req, res, issue.companyId))) return;
+    const approval = await issueApprovalsSvc.getLinkedApproval(id, approvalId);
+    if (!approval || approval.companyId !== issue.companyId) {
+      res.status(404).json({ error: "Approval link not found" });
+      return;
+    }
+    if (!(await assertCanUnlinkIssueApproval(req, res, issue.companyId, approval))) return;
 
     await issueApprovalsSvc.unlink(id, approvalId);
 

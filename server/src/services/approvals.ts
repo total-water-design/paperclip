@@ -1,12 +1,13 @@
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
-import { approvalComments, approvals } from "@paperclipai/db";
+import { approvalComments, approvals, issueApprovals, issues } from "@paperclipai/db";
 import { notFound, unprocessable } from "../errors.js";
 import { redactCurrentUserText } from "../log-redaction.js";
 import { agentService } from "./agents.js";
 import { budgetService } from "./budgets.js";
 import { notifyHireApproved } from "./hire-hook.js";
 import { instanceSettingsService } from "./instance-settings.js";
+import { boardApprovalRequestIdentity } from "./approval-governance.js";
 
 export function approvalService(db: Db) {
   const agentsSvc = agentService(db);
@@ -16,6 +17,80 @@ export function approvalService(db: Db) {
   const resolvableStatuses = Array.from(canResolveStatuses);
   type ApprovalRecord = typeof approvals.$inferSelect;
   type ResolutionResult = { approval: ApprovalRecord; applied: boolean };
+
+  async function createOrReuseBoardApproval(input: {
+    companyId: string;
+    data: Omit<typeof approvals.$inferInsert, "companyId">;
+    issueIds: string[];
+    linkedByAgentId?: string | null;
+    linkedByUserId?: string | null;
+    fingerprint: string;
+    reuseApprovedAuthorization: boolean;
+  }): Promise<{ approval: ApprovalRecord; created: boolean }> {
+    const uniqueIssueIds = Array.from(new Set(input.issueIds)).sort();
+    return db.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`board-approval:${input.companyId}:${input.fingerprint}`}, 0))`);
+
+      const reusableStatuses = input.reuseApprovedAuthorization
+        ? ["pending", "revision_requested", "approved"]
+        : ["pending", "revision_requested"];
+      const candidates = await tx
+        .select()
+        .from(approvals)
+        .where(and(
+          eq(approvals.companyId, input.companyId),
+          eq(approvals.type, "request_board_approval"),
+          inArray(approvals.status, reusableStatuses),
+        ))
+        .orderBy(desc(approvals.updatedAt));
+
+      for (const candidate of candidates) {
+        const linkedIssueIds = await tx
+          .select({ issueId: issueApprovals.issueId })
+          .from(issueApprovals)
+          .where(eq(issueApprovals.approvalId, candidate.id))
+          .then((rows) => rows.map((row) => row.issueId).sort());
+        if (linkedIssueIds.length !== uniqueIssueIds.length) continue;
+        if (!linkedIssueIds.every((issueId, index) => issueId === uniqueIssueIds[index])) continue;
+
+        const candidateIdentity = boardApprovalRequestIdentity({
+          type: candidate.type,
+          payload: candidate.payload,
+          issueIds: linkedIssueIds,
+        });
+        if (candidateIdentity.fingerprint === input.fingerprint) {
+          return { approval: candidate, created: false };
+        }
+      }
+
+      if (uniqueIssueIds.length > 0) {
+        const issueRows = await tx
+          .select({ id: issues.id, companyId: issues.companyId })
+          .from(issues)
+          .where(inArray(issues.id, uniqueIssueIds));
+        if (issueRows.length !== uniqueIssueIds.length) throw notFound("One or more issues not found");
+        if (issueRows.some((issue) => issue.companyId !== input.companyId)) {
+          throw unprocessable("Issue and approval must belong to the same company");
+        }
+      }
+
+      const approval = await tx
+        .insert(approvals)
+        .values({ ...input.data, companyId: input.companyId })
+        .returning()
+        .then((rows) => rows[0]);
+      if (uniqueIssueIds.length > 0) {
+        await tx.insert(issueApprovals).values(uniqueIssueIds.map((issueId) => ({
+          companyId: input.companyId,
+          issueId,
+          approvalId: approval.id,
+          linkedByAgentId: input.linkedByAgentId ?? null,
+          linkedByUserId: input.linkedByUserId ?? null,
+        })));
+      }
+      return { approval, created: true };
+    });
+  }
 
   function redactApprovalComment<T extends { body: string }>(comment: T, censorUsernameInLogs: boolean): T {
     return {
@@ -120,6 +195,8 @@ export function approvalService(db: Db) {
         .values({ ...data, companyId })
         .returning()
         .then((rows) => rows[0]),
+
+    createOrReuseBoardApproval,
 
     // Cancel an open (pending/revision_requested) approval without a board
     // decision — e.g. when its paired agent is terminated during duplicate

@@ -1330,10 +1330,12 @@ Terminal states: `done`, `cancelled`
 | GET    | `/api/approvals/:approvalId/issues`          | Issues linked to approval          |
 | GET    | `/api/approvals/:approvalId/comments`        | Approval comments                  |
 | POST   | `/api/approvals/:approvalId/comments`        | Add approval comment               |
+| POST   | `/api/approvals/:approvalId/cancel`          | Cancel an open approval (requester, COS, or Board) |
 | POST   | `/api/approvals/:approvalId/approve`         | Approve approval request           |
 | POST   | `/api/approvals/:approvalId/reject`          | Reject approval request            |
 | POST   | `/api/approvals/:approvalId/request-revision`| Board asks for revision            |
 | POST   | `/api/approvals/:approvalId/resubmit`        | Resubmit revised approval          |
+| DELETE | `/api/issues/:issueId/approvals/:approvalId` | Unlink an approval from an issue   |
 | POST   | `/api/companies/:companyId/cost-events`      | Report cost event                  |
 | GET    | `/api/companies/:companyId/costs/summary`    | Company cost summary               |
 | GET    | `/api/companies/:companyId/costs/by-agent`   | Costs by agent                     |

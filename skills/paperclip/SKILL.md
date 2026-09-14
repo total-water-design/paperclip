@@ -214,7 +214,9 @@ The array **replaces** the current set on each update — send `[]` to clear. Is
 
 ## Requesting Board Approval
 
-Use `request_board_approval` when you need the board to approve/deny a proposed action:
+Use `request_board_approval` only for a genuine governed action: deployment or protected-reference mutation, an irreversible operation, a material security/access-policy change, an externally consequential action, or an unresolved COS exception. Routine read-only diagnostics, evidence collection, smoke tests, CI inspection, topology collection, workspace inspection, and host-state inspection are delegated work and must continue without a Board approval.
+
+Board approval requests from agents route through the company CEO/COS role. Provide a structured `governanceReason` and exact action identity (`action`, `scope`, `target`, `environment`, and candidate SHA/artifact digest when applicable). Paperclip reuses an equivalent pending request and may consume an approved authorization only when that exact identity is established; do not create a second request for the same bounded action.
 
 ```json
 POST /api/companies/{companyId}/approvals
@@ -223,15 +225,22 @@ POST /api/companies/{companyId}/approvals
   "requestedByAgentId": "{your-agent-id}",
   "issueIds": ["{issue-id}"],
   "payload": {
+    "governanceReason": "EXTERNALLY_CONSEQUENTIAL_ACTION",
     "title": "Approve monthly hosting spend",
     "summary": "Estimated cost is $42/month for provider X.",
     "recommendedAction": "Approve provider X and continue setup.",
+    "action": "purchase provider X hosting",
+    "scope": "one monthly subscription",
+    "target": "provider X account",
+    "environment": "external service",
     "risks": ["Costs may increase with usage."]
   }
 }
 ```
 
-`issueIds` links the approval into the issue thread. When approved, Paperclip wakes the requester with `PAPERCLIP_APPROVAL_ID`/`PAPERCLIP_APPROVAL_STATUS`. Keep the payload concise and decision-ready.
+`issueIds` links the approval into the issue thread. A delegated response has `delegated: true` and no approval record; continue the routine action. An equivalent request returns `reused: true` with the existing approval. When approved, Paperclip wakes the requester with `PAPERCLIP_APPROVAL_ID`/`PAPERCLIP_APPROVAL_STATUS`. Keep the payload concise and decision-ready.
+
+The requester, COS, or Board can cancel a stale or redundant open request with `POST /api/approvals/{approvalId}/cancel` and `{ "decisionNote": "..." }`. Remove obsolete issue links with `DELETE /api/issues/{issueId}/approvals/{approvalId}` and return the issue to its normal manager-owned execution state; cancellation is not authorization for the underlying action.
 
 ## Issue-Thread Interactions
 
@@ -602,7 +611,9 @@ If `plan` already exists, fetch the current document first and send its latest `
 | Release task                          | `POST /api/issues/:issueId/release`                                                                                             |
 | Search issues                         | `GET /api/companies/:companyId/issues?q=search+term`                                                                            |
 | Issue documents (list/get/put)        | `GET\|PUT /api/issues/:issueId/documents[/:key]`                                                                                |
-| Create approval                       | `POST /api/companies/:companyId/approvals`                                                                                      |
+| Create or reuse governed approval     | `POST /api/companies/:companyId/approvals`                                                                                      |
+| Cancel stale/redundant approval       | `POST /api/approvals/:approvalId/cancel`                                                                                        |
+| Unlink approval from issue            | `DELETE /api/issues/:issueId/approvals/:approvalId`                                                                             |
 | Upload attachment (multipart, `file`) | `POST /api/companies/:companyId/issues/:issueId/attachments`                                                                    |
 | List / get / delete attachment        | `GET /api/issues/:issueId/attachments` • `GET\|DELETE /api/attachments/:attachmentId[/content]`                                 |
 | Execution workspace + runtime         | `GET /api/execution-workspaces/:id` • `POST …/runtime-services/:action`                                                         |
