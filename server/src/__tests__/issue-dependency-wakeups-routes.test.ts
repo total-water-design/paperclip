@@ -117,19 +117,25 @@ vi.mock("../services/issue-dependency-wakeups.js", async () => {
   };
 });
 
-async function createApp() {
+async function createApp(options: { unblockOwnerAgentId?: string } = {}) {
   const emptyRows: unknown[] = [];
-  const whereResult = {
-    limit: vi.fn(async () => emptyRows),
-    then: async (resolve: (rows: unknown[]) => unknown) => resolve(emptyRows),
-  };
-  const query: Record<string, unknown> = {};
-  query.innerJoin = vi.fn(() => query);
-  query.where = vi.fn(() => whereResult);
+  let selectCount = 0;
   const routeDb = {
-    select: vi.fn(() => ({
-      from: vi.fn(() => query),
-    })),
+    select: vi.fn(() => {
+      const rows = selectCount++ === 0 && options.unblockOwnerAgentId
+        ? [{ id: options.unblockOwnerAgentId }]
+        : emptyRows;
+      const whereResult = {
+        limit: vi.fn(async () => rows),
+        then: async (resolve: (selectedRows: unknown[]) => unknown) => resolve(rows),
+      };
+      const query: Record<string, unknown> = {};
+      query.innerJoin = vi.fn(() => query);
+      query.where = vi.fn(() => whereResult);
+      return {
+        from: vi.fn(() => query),
+      };
+    }),
     transaction: async (callback: (tx: Record<string, never>) => Promise<unknown>) => callback({}),
   };
   const [{ issueRoutes }, { errorHandler }] = await Promise.all([
@@ -289,12 +295,12 @@ describe("issue dependency wakeups in issue routes", () => {
       isDependencyReady: true,
     });
 
-    const res = await request(await createApp())
+    const res = await request(await createApp({ unblockOwnerAgentId: "22222222-2222-4222-8222-222222222222" }))
       .patch(`/api/issues/${parentIssueId}`)
       .send({
         status: "blocked",
         blockedByIssueIds: [childIssueId],
-        unblockDescriptor: { owner: "board", action: "Review the restored dependency" },
+        unblockDescriptor: { owner: { agentId: "22222222-2222-4222-8222-222222222222" }, action: "Review the restored dependency" },
       });
 
     expect(res.status).toBe(200);
@@ -636,12 +642,12 @@ describe("issue dependency wakeups in issue routes", () => {
       isDependencyReady: true,
     });
 
-    const res = await request(await createApp())
+    const res = await request(await createApp({ unblockOwnerAgentId: "22222222-2222-4222-8222-222222222222" }))
       .patch(`/api/issues/${parentIssueId}`)
       .send({
         status: "blocked",
         blockedByIssueIds: [childIssueId],
-        unblockDescriptor: { owner: "board", action: "Review the restored dependency" },
+        unblockDescriptor: { owner: { agentId: "22222222-2222-4222-8222-222222222222" }, action: "Review the restored dependency" },
       });
 
     expect(res.status).toBe(200);
