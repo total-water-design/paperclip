@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { findExistingComment } from '../run-quality-gates.mjs';
 
-test('findExistingComment: paginates until it finds the commitperclip comment', async () => {
+test('findExistingComment: paginates until it finds the TWDS COS Unblock Bot comment', async () => {
   const seenPaths = [];
   const comment = await findExistingComment(async (path) => {
     seenPaths.push(path);
@@ -16,7 +16,7 @@ test('findExistingComment: paginates until it finds the commitperclip comment', 
     if (path.endsWith('page=2')) {
       return [{
         id: 200,
-        user: { login: 'commitperclip[bot]' },
+        user: { login: 'twds-cos-unblock-bot[bot]' },
         body: 'Looks good.\n\n— commitperclip',
       }];
     }
@@ -30,11 +30,21 @@ test('findExistingComment: paginates until it finds the commitperclip comment', 
   ]);
 });
 
-test('findExistingComment: returns null when no signed comment exists', async () => {
+test('findExistingComment: ignores legacy commitperclip comments so it does not edit another app\'s comment', async () => {
   const comment = await findExistingComment(async () => ([
     {
       id: 1,
       user: { login: 'commitperclip[bot]' },
+      body: 'Looks good.\n\n— commitperclip',
+    },
+    {
+      id: 2,
+      user: { login: 'commitperclip' },
+      body: 'Looks good.\n\n— commitperclip',
+    },
+    {
+      id: 3,
+      user: { login: 'twds-cos-unblock-bot[bot]' },
       body: 'Unsigned status update',
     },
   ]), 'token', 'paperclipai/paperclip', 6469);
