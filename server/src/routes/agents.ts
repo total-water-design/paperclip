@@ -5386,29 +5386,104 @@ export function agentRoutes(
   });
 
   router.post("/heartbeat-runs/:runId/cancel", async (req, res) => {
-    assertBoard(req);
     const runId = req.params.runId as string;
     const existing = await getAccessibleResource(req, res, heartbeat.getRun(runId), "Heartbeat run not found");
     if (!existing) return;
-    // Stamp the cancellation as operator-initiated (this route is board-only).
-    // Recovery reads this to stand down instead of classifying the cancelled
-    // run as agent stranding and re-waking the agent the operator just stopped.
-    const run = await heartbeat.cancelRun(runId, "Cancelled by a board operator", {
-      resultJson: {
-        cancelledByActorType: "user",
-        cancelledByUserId: req.actor.userId ?? null,
-      },
+    let cancellation: {
+      reason: string;
+      resultJson: Record<string, unknown>;
+      actorType: "user" | "agent";
+      actorId: string;
+    };
+
+    if (req.actor.type === "board") {
+      assertBoard(req);
+      // Recovery reads this attribution to stand down instead of re-waking an
+      // agent that an operator deliberately stopped.
+      cancellation = {
+        reason: "Cancelled by a board operator",
+        resultJson: {
+          cancelledByActorType: "user",
+          cancelledByUserId: req.actor.userId ?? null,
+        },
+        actorType: "user",
+        actorId: req.actor.userId ?? "board",
+      };
+    } else {
+      // `existing` was looked up by an opaque run ID. Preserve the 404 gate
+      // before asserting company access so an agent cannot distinguish an
+      // inaccessible run from a missing one.
+      if (!hasCompanyAccess(req, existing.companyId)) {
+        throw notFound("Heartbeat run not found");
+      }
+      assertCompanyAccess(req, existing.companyId);
+      const issueId = readRunIssueId(parseObject(existing.contextSnapshot));
+      const issue = issueId ? await issueService(db).getById(issueId) : null;
+      if (!issue || issue.companyId !== existing.companyId || !issue.assigneeAgentId) {
+        throw forbidden("Agent cancellation is limited to a stale issue-bound run");
+      }
+
+      // `tasks:manage_active_checkouts` can be allowed by a direct grant or a
+      // legacy creator role. Those are valid for their general purpose, but
+      // must not widen reconciliation cancellation: it is specifically a
+      // manager operation over the owner of the run being terminated. An issue
+      // may have been reassigned since this run began, so its current assignee
+      // is not an authorization target for a destructive run operation.
+      const actorAgentId = req.actor.agentId;
+      if (!actorAgentId || !(await access.isManagerOf(existing.companyId, actorAgentId, existing.agentId))) {
+        throw forbidden("Agent cancellation requires manager authority over the run owner");
+      }
+
+      const accessDecision = await access.decide({
+        actor: req.actor,
+        action: "tasks:manage_active_checkouts",
+        resource: {
+          type: "issue",
+          companyId: issue.companyId,
+          issueId: issue.id,
+          projectId: issue.projectId,
+          parentIssueId: issue.parentId,
+          assigneeAgentId: issue.assigneeAgentId,
+          assigneeUserId: issue.assigneeUserId,
+          status: issue.status,
+        },
+      });
+      if (!accessDecision.allowed) {
+        throw forbidden(accessDecision.explanation, authorizationDeniedDetails(accessDecision));
+      }
+
+      const isTerminalOrBlocked = ["done", "cancelled", "blocked"].includes(issue.status);
+      const isSuperseded = issue.executionRunId !== existing.id;
+      if (!isTerminalOrBlocked && !isSuperseded) {
+        throw conflict("Agent managers may cancel only stale, blocked, terminal, or superseded issue runs");
+      }
+
+      cancellation = {
+        reason: "Cancelled by an authorized manager during stale-run reconciliation",
+        resultJson: {
+          cancelledByActorType: "agent",
+          cancelledByAgentId: req.actor.agentId ?? null,
+          cancellationKind: "authorized_manager_stale_reconciliation",
+        },
+        actorType: "agent",
+        actorId: req.actor.agentId ?? "agent",
+      };
+    }
+
+    const run = await heartbeat.cancelRun(runId, cancellation.reason, {
+      errorCode: "authorized_reconciliation_cancelled",
+      resultJson: cancellation.resultJson,
     });
 
     if (run) {
       await logActivity(db, {
         companyId: run.companyId,
-        actorType: "user",
-        actorId: req.actor.userId ?? "board",
+        actorType: cancellation.actorType,
+        actorId: cancellation.actorId,
         action: "heartbeat.cancelled",
         entityType: "heartbeat_run",
         entityId: run.id,
-        details: { agentId: run.agentId },
+        details: { agentId: run.agentId, cancellationKind: cancellation.resultJson.cancellationKind ?? "board_operator" },
       });
     }
 

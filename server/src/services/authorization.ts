@@ -2366,5 +2366,10 @@ export function authorizationService(db: Db) {
   return {
     decide,
     decidePrincipalGrant,
+    // Some destructive control-plane operations need the reporting-chain
+    // predicate itself, not merely an action that can also be granted through
+    // another authority path. Keep this scoped helper beside `decide` so route
+    // callers do not duplicate recursive-org traversal.
+    isManagerOf,
   };
 }
