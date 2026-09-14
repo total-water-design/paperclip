@@ -2,7 +2,7 @@
 /**
  * run-quality-gates.mjs
  * Orchestrates all quality gates. Fetches PR data once, runs all gates,
- * posts or updates a single consolidated comment via commitperclip.
+ * posts or updates a single consolidated comment via the TWDS COS Unblock Bot.
  *
  * Env: GH_TOKEN, GH_REPO, PR_NUMBER, PR_AUTHOR, PR_BRANCH
  * Exit: 0 if all quality gates pass, 1 if any fail.
@@ -20,6 +20,7 @@ import { checkReleaseBootstrap } from './check-pr-release-bootstrap.mjs';
 import { checkCoauthors, fetchAllPullRequestCommits } from './check-pr-coauthors.mjs';
 
 const COMMENT_SIGNATURE = '— commitperclip';
+const BOT_LOGIN = 'twds-cos-unblock-bot[bot]';
 
 function buildComment(author, failures, informational) {
   if (failures.length === 0 && informational.length === 0) {
@@ -57,8 +58,7 @@ export async function findExistingComment(fetchFromGitHub, token, repo, prNumber
     );
 
     const existing = comments.find(
-      c => (c.user.login === 'commitperclip[bot]' || c.user.login === 'commitperclip') &&
-           c.body.includes(COMMENT_SIGNATURE)
+      c => c.user.login === BOT_LOGIN && c.body.includes(COMMENT_SIGNATURE)
     );
     if (existing) return existing;
 
