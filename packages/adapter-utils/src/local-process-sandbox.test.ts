@@ -150,6 +150,30 @@ describe("local process sandbox", () => {
     expect(target.args).toContain("--bind");
     expect(target.args).not.toContain("--tmpfs");
     expect(target.env?.HTTP_PROXY).toBeUndefined();
+    expect(target.env?.NO_PROXY).toBe("");
+    expect(target.env?.no_proxy).toBe("");
+  });
+
+  it("limits the optional proxy bypass to sandbox-local loopback names", async () => {
+    const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-loopback-bypass-"));
+    cleanup.push(workspace);
+    const target = await buildLocalProcessSandboxSpawnTarget({
+      executable: process.execPath,
+      args: ["-e", "process.exit(0)"],
+      cwd: workspace,
+      options: {
+        workspaceDir: workspace,
+        networkScope: "allowlist",
+        networkAllowlist: ["api.openai.com"],
+        allowLoopbackProxyBypass: true,
+      },
+    });
+
+    expect(target.args).toContain("--unshare-net");
+    expect(target.env?.HTTP_PROXY).toBe("http://127.0.0.1:31337");
+    expect(target.env?.HTTPS_PROXY).toBe("http://127.0.0.1:31337");
+    expect(target.env?.NO_PROXY).toBe("127.0.0.1,localhost,::1");
+    expect(target.env?.no_proxy).toBe("127.0.0.1,localhost,::1");
   });
 
   it("forwards allowed proxy targets with a deep TMPDIR and rejects other hosts", async () => {

@@ -995,6 +995,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
             homeDir: filesystemScope ? effectiveCodexHome : null,
             networkScope,
             networkAllowlist: parseLocalProcessNetworkAllowlist(config.networkAllowlist),
+            allowLoopbackProxyBypass: config.allowLoopbackProxyBypass === true,
             networkTrustedUrls: [
               paperclipBaseEnv.PAPERCLIP_API_URL,
               ...runtimeMcpGateways.map((gateway) => gateway.endpointPath),

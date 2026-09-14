@@ -108,6 +108,7 @@ Core fields:
 - filesystemSandboxCommand (string, optional): Bubblewrap executable name or absolute path; defaults to "bwrap". Linux only.
 - networkScope (string, optional): "deny" blocks all network egress; "allowlist" permits only networkAllowlist targets through Paperclip's HTTP(S) proxy. Off by default.
 - networkAllowlist (string[], optional): exact hostnames, hostname:port entries, or origin URLs. Include the configured Codex provider origin, such as "api.openai.com" or a custom model provider gateway.
+- allowLoopbackProxyBypass (boolean, optional): with networkScope="allowlist", set NO_PROXY and no_proxy only to 127.0.0.1,localhost,::1 inside the private Bubblewrap namespace. This does not add an egress allowlist target or expose a host listener.
 
 Operational fields:
 - timeoutSec (number, optional): run timeout in seconds

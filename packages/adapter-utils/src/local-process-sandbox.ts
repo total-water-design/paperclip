@@ -28,6 +28,8 @@ export interface LocalProcessSandboxOptions {
   networkScope?: LocalProcessNetworkScope | null;
   networkAllowlist?: string[];
   networkTrustedUrls?: string[];
+  /** Permit only in-namespace loopback traffic to bypass the HTTP(S) proxy. */
+  allowLoopbackProxyBypass?: boolean;
   command?: string;
 }
 
@@ -475,8 +477,14 @@ export async function buildLocalProcessSandboxSpawnTarget(input: {
   if (networkScope) {
     args.push("--unshare-net");
     for (const key of PROXY_ENV_KEYS) env[key] = undefined;
-    env.NO_PROXY = "";
-    env.no_proxy = "";
+    // The private network namespace has no host-network route.  The only direct
+    // sockets this opt-in makes usable are listeners created by the same sandbox
+    // process tree, such as a browser test's ephemeral Flask server.
+    const noProxy = input.options.allowLoopbackProxyBypass
+      ? "127.0.0.1,localhost,::1"
+      : "";
+    env.NO_PROXY = noProxy;
+    env.no_proxy = noProxy;
   }
   if (networkScope === "allowlist") {
     const proxyUrl = `http://127.0.0.1:${SANDBOX_PROXY_PORT}`;
