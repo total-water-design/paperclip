@@ -11,6 +11,8 @@
 import { createSign } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
+// This fork owns the GitHub App that signs Commitperclip review tokens. The
+// upstream app ID cannot authenticate with the fork's private key.
 const APP_ID = '4752201';
 const OWNER_PATTERN = /^[a-zA-Z0-9_.-]+$/;
 const REPO_PATTERN = /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/;
