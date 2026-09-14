@@ -791,6 +791,8 @@ async function inspectGitCloseReadiness(workspace: ExecutionWorkspace, context?:
   agentId?: string | null;
   runId?: string | null;
   requestId?: string;
+  /** A destructive cleanup guard must not rely on a cached status result. */
+  freshStatus?: boolean;
 }): Promise<{
   git: ExecutionWorkspaceCloseGitReadiness | null;
   warnings: string[];
@@ -868,7 +870,7 @@ async function inspectGitCloseReadiness(workspace: ExecutionWorkspace, context?:
           `workspace:${workspace.id}`,
           ...(workspace.sourceIssueId ? [`issue:${workspace.sourceIssueId}`] : []),
         ],
-        cacheTtlMs: 60_000,
+        cacheTtlMs: context?.freshStatus ? 0 : 60_000,
         context: {
           workspaceId: workspace.id,
           issueIdentifiers: context?.issueIdentifiers,
@@ -1467,7 +1469,7 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
     }
 
     const [current, currentHeadSha, currentBranchName] = await Promise.all([
-      inspectGitCloseReadiness(toExecutionWorkspace(workspace)),
+      inspectGitCloseReadiness(toExecutionWorkspace(workspace), { freshStatus: true }),
       readGitStdout(["rev-parse", "HEAD"], workspacePath).catch(() => null),
       readGitStdout(["symbolic-ref", "--quiet", "--short", "HEAD"], workspacePath).catch(() => null),
     ]);
