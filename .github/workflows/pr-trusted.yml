@@ -74,7 +74,7 @@ jobs:
           # Reusable workflows retain the caller's github context and event
           # payload, so a pull_request caller must still report pull_request.
           [[ "$EVENT_NAME" == 'pull_request' ]] || fail_closed 'event is not pull_request'
-          [[ "$EVENT_REPOSITORY" == 'paperclipai/paperclip' ]] || fail_closed 'unexpected repository'
+          [[ "$EVENT_REPOSITORY" == 'total-water-design/paperclip' ]] || fail_closed 'unexpected repository'
           [[ "$EVENT_REPOSITORY_ID" == '1170821064' ]] || fail_closed 'unexpected repository ID'
           [[ "$EVENT_BASE_REPOSITORY_ID" == '1170821064' ]] || fail_closed 'unexpected base repository ID'
           [[ -n "$EVENT_BASE_REF" ]] || fail_closed 'missing base branch'
@@ -441,12 +441,37 @@ jobs:
 
       - name: Run grouped general test suites
         run: |
+          set -o pipefail
+          mkdir -p ci-failure-evidence
           if [ -n "${{ matrix.shard_count }}" ]; then
             pnpm test:run:general -- --group '${{ matrix.group }}' \
-              --shard-index ${{ matrix.shard_index }} --shard-count ${{ matrix.shard_count }}
+              --shard-index ${{ matrix.shard_index }} --shard-count ${{ matrix.shard_count }} \
+              2>&1 | tee ci-failure-evidence/general.raw.log
           else
-            pnpm test:run:general -- --group '${{ matrix.group }}'
+            pnpm test:run:general -- --group '${{ matrix.group }}' \
+              2>&1 | tee ci-failure-evidence/general.raw.log
           fi
+
+      - name: Redact failed general test output
+        if: ${{ failure() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          sed -E \
+            -e 's/(gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})/[REDACTED_GITHUB_TOKEN]/g' \
+            -e 's/((Authorization:|authorization:)[[:space:]]*(Bearer|bearer)[[:space:]]+)[^[:space:]]+/\1[REDACTED_BEARER_TOKEN]/g' \
+            -e 's/((token|password|secret|api[_-]?key)=)[^[:space:]&]+/\1[REDACTED]/gi' \
+            ci-failure-evidence/general.raw.log \
+            > ci-failure-evidence/general.redacted.log
+
+      - name: Upload failed general test output
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: failed-step-evidence-general-${{ matrix.group_label }}-${{ github.run_id }}
+          path: ci-failure-evidence/general.redacted.log
+          retention-days: 7
+          if-no-files-found: error
 
   verify:
     # Preserve the legacy required-check name while the underlying work runs in parallel.
@@ -466,6 +491,29 @@ jobs:
           test "$TYPECHECK_RELEASE_REGISTRY_RESULT" = "success"
           test "$GENERAL_TESTS_RESULT" = "success"
           test "$BUILD_RESULT" = "success"
+
+      - name: Record failed verify dependency states
+        if: ${{ failure() }}
+        env:
+          TYPECHECK_RELEASE_REGISTRY_RESULT: ${{ needs.typecheck_release_registry.result }}
+          GENERAL_TESTS_RESULT: ${{ needs.general_tests.result }}
+          BUILD_RESULT: ${{ needs.build.result }}
+        run: |
+          mkdir -p ci-failure-evidence
+          {
+            printf 'typecheck_release_registry=%s\n' "$TYPECHECK_RELEASE_REGISTRY_RESULT"
+            printf 'general_tests=%s\n' "$GENERAL_TESTS_RESULT"
+            printf 'build=%s\n' "$BUILD_RESULT"
+          } > ci-failure-evidence/verify-dependency-states.txt
+
+      - name: Upload failed verify dependency states
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: failed-step-evidence-verify-${{ github.run_id }}
+          path: ci-failure-evidence/verify-dependency-states.txt
+          retention-days: 7
+          if-no-files-found: error
 
   build:
     name: Build
@@ -565,7 +613,32 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Run serialized server test shard
-        run: pnpm test:run:serialized -- --shard-index ${{ matrix.shard_index }} --shard-count ${{ matrix.shard_count }}
+        run: |
+          set -o pipefail
+          mkdir -p ci-failure-evidence
+          pnpm test:run:serialized -- --shard-index ${{ matrix.shard_index }} --shard-count ${{ matrix.shard_count }} \
+            2>&1 | tee ci-failure-evidence/serialized-server.raw.log
+
+      - name: Redact failed serialized server test output
+        if: ${{ failure() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          sed -E \
+            -e 's/(gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})/[REDACTED_GITHUB_TOKEN]/g' \
+            -e 's/((Authorization:|authorization:)[[:space:]]*(Bearer|bearer)[[:space:]]+)[^[:space:]]+/\1[REDACTED_BEARER_TOKEN]/g' \
+            -e 's/((token|password|secret|api[_-]?key)=)[^[:space:]&]+/\1[REDACTED]/gi' \
+            ci-failure-evidence/serialized-server.raw.log \
+            > ci-failure-evidence/serialized-server.redacted.log
+
+      - name: Upload failed serialized server test output
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: failed-step-evidence-serialized-server-${{ matrix.shard_label }}-${{ github.run_id }}
+          path: ci-failure-evidence/serialized-server.redacted.log
+          retention-days: 7
+          if-no-files-found: error
 
   canary_dry_run:
     name: Canary Dry Run
