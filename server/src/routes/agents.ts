@@ -5417,6 +5417,15 @@ export function agentRoutes(
         throw forbidden("Agent cancellation is limited to a stale issue-bound run");
       }
 
+      // `tasks:manage_active_checkouts` can be allowed by a direct grant or a
+      // legacy creator role. Those are valid for their general purpose, but
+      // must not widen reconciliation cancellation: it is specifically a
+      // manager operation over the target assignee's reporting chain.
+      const actorAgentId = req.actor.agentId;
+      if (!actorAgentId || !(await access.isManagerOf(existing.companyId, actorAgentId, issue.assigneeAgentId))) {
+        throw forbidden("Agent cancellation requires manager authority over the issue assignee");
+      }
+
       const accessDecision = await access.decide({
         actor: req.actor,
         action: "tasks:manage_active_checkouts",
