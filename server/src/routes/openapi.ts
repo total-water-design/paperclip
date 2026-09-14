@@ -4578,9 +4578,9 @@ registry.registerPath({
   method: "post",
   path: "/api/heartbeat-runs/{runId}/cancel",
   tags: ["runs"],
-  summary: "Cancel a heartbeat run (board, or an authorized manager for stale issue-bound runs)",
+  summary: "Cancel a heartbeat run (board, or an authorized manager of the run owner for stale issue-bound runs)",
   request: { params: z.object({ runId: z.string() }) },
-  responses: { 200: r.ok(), 401: r.unauthorized },
+  responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden, 404: r.notFound, 409: r.conflict },
 });
 
 registry.registerPath({

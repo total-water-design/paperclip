@@ -5410,6 +5410,12 @@ export function agentRoutes(
         actorId: req.actor.userId ?? "board",
       };
     } else {
+      // `existing` was looked up by an opaque run ID. Preserve the 404 gate
+      // before asserting company access so an agent cannot distinguish an
+      // inaccessible run from a missing one.
+      if (!hasCompanyAccess(req, existing.companyId)) {
+        throw notFound("Heartbeat run not found");
+      }
       assertCompanyAccess(req, existing.companyId);
       const issueId = readRunIssueId(parseObject(existing.contextSnapshot));
       const issue = issueId ? await issueService(db).getById(issueId) : null;
@@ -5420,10 +5426,12 @@ export function agentRoutes(
       // `tasks:manage_active_checkouts` can be allowed by a direct grant or a
       // legacy creator role. Those are valid for their general purpose, but
       // must not widen reconciliation cancellation: it is specifically a
-      // manager operation over the target assignee's reporting chain.
+      // manager operation over the owner of the run being terminated. An issue
+      // may have been reassigned since this run began, so its current assignee
+      // is not an authorization target for a destructive run operation.
       const actorAgentId = req.actor.agentId;
-      if (!actorAgentId || !(await access.isManagerOf(existing.companyId, actorAgentId, issue.assigneeAgentId))) {
-        throw forbidden("Agent cancellation requires manager authority over the issue assignee");
+      if (!actorAgentId || !(await access.isManagerOf(existing.companyId, actorAgentId, existing.agentId))) {
+        throw forbidden("Agent cancellation requires manager authority over the run owner");
       }
 
       const accessDecision = await access.decide({

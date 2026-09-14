@@ -1875,8 +1875,9 @@ describe.sequential("agent permission routes", () => {
     expect(mockHeartbeatService.cancelRun).not.toHaveBeenCalled();
   });
 
-  it("allows an authorized manager to cancel a blocked issue run and records reconciliation attribution", async () => {
+  it("allows an authorized manager to cancel a blocked run after its issue was reassigned and records reconciliation attribution", async () => {
     const targetAgentId = "44444444-4444-4444-8444-444444444444";
+    const currentAssigneeAgentId = "66666666-6666-4666-8666-666666666666";
     const targetIssueId = "55555555-5555-4555-8555-555555555555";
     mockHeartbeatService.getRun.mockResolvedValue({
       id: "run-1",
@@ -1890,7 +1891,7 @@ describe.sequential("agent permission routes", () => {
       companyId,
       projectId: null,
       parentId: null,
-      assigneeAgentId: targetAgentId,
+      assigneeAgentId: currentAssigneeAgentId,
       assigneeUserId: null,
       executionRunId: "run-1",
       status: "blocked",
@@ -1909,8 +1910,9 @@ describe.sequential("agent permission routes", () => {
     expect(res.status).toBe(200);
     expect(mockAccessService.decide).toHaveBeenCalledWith(expect.objectContaining({
       action: "tasks:manage_active_checkouts",
-      resource: expect.objectContaining({ issueId: targetIssueId, assigneeAgentId: targetAgentId }),
+      resource: expect.objectContaining({ issueId: targetIssueId, assigneeAgentId: currentAssigneeAgentId }),
     }));
+    expect(mockAccessService.isManagerOf).toHaveBeenCalledWith(companyId, agentId, targetAgentId);
     expect(mockHeartbeatService.cancelRun).toHaveBeenCalledWith(
       "run-1",
       "Cancelled by an authorized manager during stale-run reconciliation",
@@ -1962,6 +1964,28 @@ describe.sequential("agent permission routes", () => {
     const res = await requestApp(app, (baseUrl) => request(baseUrl).post("/api/heartbeat-runs/run-1/cancel").send({}));
 
     expect(res.status).toBe(403);
+    expect(mockAccessService.decide).not.toHaveBeenCalled();
+    expect(mockHeartbeatService.cancelRun).not.toHaveBeenCalled();
+  });
+
+  it("rejects a manager of the current assignee when the run owner is outside the manager chain", async () => {
+    const runOwnerAgentId = "44444444-4444-4444-8444-444444444444";
+    const currentAssigneeAgentId = "66666666-6666-4666-8666-666666666666";
+    const targetIssueId = "55555555-5555-4555-8555-555555555555";
+    mockHeartbeatService.getRun.mockResolvedValue({
+      id: "run-1", companyId, agentId: runOwnerAgentId, status: "running", contextSnapshot: { issueId: targetIssueId },
+    });
+    mockIssueService.getById.mockResolvedValue({
+      id: targetIssueId, companyId, projectId: null, parentId: null, assigneeAgentId: currentAssigneeAgentId,
+      assigneeUserId: null, executionRunId: "other-run", status: "in_progress",
+    });
+    mockAccessService.isManagerOf.mockResolvedValue(false);
+
+    const app = createApp({ type: "agent", agentId, companyId, runId: "manager-run", source: "agent_jwt" });
+    const res = await requestApp(app, (baseUrl) => request(baseUrl).post("/api/heartbeat-runs/run-1/cancel").send({}));
+
+    expect(res.status).toBe(403);
+    expect(mockAccessService.isManagerOf).toHaveBeenCalledWith(companyId, agentId, runOwnerAgentId);
     expect(mockAccessService.decide).not.toHaveBeenCalled();
     expect(mockHeartbeatService.cancelRun).not.toHaveBeenCalled();
   });
