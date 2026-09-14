@@ -10,4 +10,4 @@ permissions:
 
 jobs:
   ci:
-    uses: paperclipai/paperclip/.github/workflows/pr-trusted.yml@1da6b37fc56dacf5e7ffbd31da35756a1cba41f8
+    uses: total-water-design/paperclip/.github/workflows/pr-trusted.yml@cec8ac25d998bcce5f51cf49645f79998becebaf
