@@ -1,0 +1,124 @@
+name: bc273553 hosted-runner diagnostic
+
+# This workflow deliberately does not check out repository or candidate code.
+# It is a manual, read-only capability probe for the fixed bc273553 validation lane.
+on:
+  workflow_dispatch:
+    inputs:
+      lane_ref:
+        description: "Diagnostic lane reference (recorded only; never checked out or executed)"
+        required: true
+        default: bc2735538b98aa95da107f49613ebd749d03fa3a
+        type: string
+
+# No repository, package, OIDC, or write permissions are needed for a host-only
+# diagnostic. Keep this workflow unable to alter refs, deployments, or artifacts.
+permissions: {}
+
+jobs:
+  hosted_runner_namespace_and_port_diagnostic:
+    name: Read-only hosted-runner diagnostic
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Refuse any lane other than bc273553
+        shell: bash
+        env:
+          LANE_REF: ${{ inputs.lane_ref }}
+        run: |
+          set -euo pipefail
+          readonly expected_lane_ref='bc2735538b98aa95da107f49613ebd749d03fa3a'
+          test "$LANE_REF" = "$expected_lane_ref"
+          printf 'lane_ref=%s\n' "$LANE_REF"
+          printf '%s\n' 'The lane reference is recorded only: this workflow does not checkout, download, or execute candidate code.'
+
+      - name: Record hosted runner identity and operating system
+        shell: bash
+        env:
+          GITHUB_JOB: ${{ github.job }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_RUN_NUMBER: ${{ github.run_number }}
+          GITHUB_WORKFLOW_REF: ${{ github.workflow_ref }}
+          RUNNER_ARCH: ${{ runner.arch }}
+          RUNNER_NAME: ${{ runner.name }}
+          RUNNER_OS: ${{ runner.os }}
+        run: |
+          set -euo pipefail
+          printf 'github_job=%s\n' "$GITHUB_JOB"
+          printf 'github_run_id=%s\n' "$GITHUB_RUN_ID"
+          printf 'github_run_attempt=%s\n' "$GITHUB_RUN_ATTEMPT"
+          printf 'github_run_number=%s\n' "$GITHUB_RUN_NUMBER"
+          printf 'github_workflow_ref=%s\n' "$GITHUB_WORKFLOW_REF"
+          printf 'runner_name=%s\n' "$RUNNER_NAME"
+          printf 'runner_os=%s\n' "$RUNNER_OS"
+          printf 'runner_arch=%s\n' "$RUNNER_ARCH"
+          uname -a
+          sed -n '1,20p' /etc/os-release
+
+      - name: Record Bubblewrap version and unprivileged namespace probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          readonly probe_stdout="$RUNNER_TEMP/bwrap-probe.stdout"
+          readonly probe_stderr="$RUNNER_TEMP/bwrap-probe.stderr"
+          readonly version_stdout="$RUNNER_TEMP/bwrap-version.stdout"
+          readonly version_stderr="$RUNNER_TEMP/bwrap-version.stderr"
+
+          set +e
+          bwrap --version >"$version_stdout" 2>"$version_stderr"
+          version_exit_code=$?
+          set -e
+          printf 'bwrap_version_exit_code=%s\n' "$version_exit_code"
+          printf '%s\n' 'bwrap_version_stdout:'
+          sed -n '1,80p' "$version_stdout"
+          printf '%s\n' 'bwrap_version_stderr:'
+          sed -n '1,80p' "$version_stderr"
+
+          set +e
+          bwrap \
+            --unshare-user \
+            --unshare-pid \
+            --unshare-ipc \
+            --unshare-uts \
+            --unshare-net \
+            --die-with-parent \
+            --ro-bind / / \
+            --proc /proc \
+            --dev /dev \
+            --tmpfs /tmp \
+            --chdir / \
+            /bin/sh -c 'id; for namespace in user pid ipc uts net; do readlink "/proc/self/ns/$namespace"; done' \
+            >"$probe_stdout" 2>"$probe_stderr"
+          probe_exit_code=$?
+          set -e
+          printf 'bwrap_namespace_probe_exit_code=%s\n' "$probe_exit_code"
+          printf '%s\n' 'bwrap_namespace_probe_stdout:'
+          sed -n '1,120p' "$probe_stdout"
+          printf '%s\n' 'bwrap_namespace_probe_stderr:'
+          sed -n '1,120p' "$probe_stderr"
+          printf '%s\n' 'The probe requests only user, PID, IPC, UTS, and network namespaces; it does not request privileged namespaces or modify host state.'
+
+      - name: Inventory listener state for the Paperclip bridge port
+        shell: bash
+        run: |
+          set -euo pipefail
+          readonly inventory_stdout="$RUNNER_TEMP/listener-inventory.stdout"
+          readonly inventory_stderr="$RUNNER_TEMP/listener-inventory.stderr"
+
+          set +e
+          ss -ltnp '( sport = :31337 )' >"$inventory_stdout" 2>"$inventory_stderr"
+          inventory_exit_code=$?
+          set -e
+          printf 'listener_inventory_exit_code=%s\n' "$inventory_exit_code"
+          printf '%s\n' 'listener_inventory_stdout:'
+          sed -n '1,120p' "$inventory_stdout"
+          printf '%s\n' 'listener_inventory_stderr:'
+          sed -n '1,120p' "$inventory_stderr"
+
+          if awk 'NR > 1 && $4 ~ /^(127\.0\.0\.1|0\.0\.0\.0):31337$/ { found = 1 } END { exit(found ? 0 : 1) }' "$inventory_stdout"; then
+            printf '%s\n' '127.0.0.1:31337 listener status=IN_USE (a loopback or IPv4 wildcard listener was reported; no listener is stopped or rebound).'
+          else
+            printf '%s\n' '127.0.0.1:31337 listener status=UNUSED (no loopback or IPv4 wildcard listener was reported by ss).'
+          fi
