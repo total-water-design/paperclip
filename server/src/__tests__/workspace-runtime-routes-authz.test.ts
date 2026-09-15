@@ -293,7 +293,12 @@ describe.sequential("workspace runtime service route authorization", () => {
     });
     mockExecutionWorkspaceService.update.mockResolvedValue(buildExecutionWorkspace());
     mockAssertCanManageProjectWorkspaceRuntimeServices.mockResolvedValue(undefined);
-    mockAssertCanManageExecutionWorkspaceRuntimeServices.mockResolvedValue(undefined);
+    mockAssertCanManageExecutionWorkspaceRuntimeServices.mockResolvedValue({
+      actorType: "agent",
+      agentId: "agent-1",
+      runId: "run-1",
+      issueId: "issue-1",
+    });
   });
 
   it("rejects agent callers for project workspace runtime service mutations when workspace auth denies access", async () => {
@@ -495,7 +500,7 @@ describe.sequential("workspace runtime service route authorization", () => {
       executionWorkspaceId,
       issueId: "55555555-5555-4555-8555-555555555555",
       scopeType: "run",
-      scopeId: "66666666-6666-4666-8666-666666666666",
+      scopeId: "run-1",
       serviceName: "academy-browser",
       status: "running",
       lifecycle: "shared",
@@ -564,16 +569,17 @@ describe.sequential("workspace runtime service route authorization", () => {
     }));
   });
 
-  it("fails closed when an attachment target is exposed or authorization is denied", async () => {
+  it("fails closed when an attachment target is exposed, cross-run, unhealthy, or unauthorized", async () => {
     const exposedService = {
       ...buildExecutionWorkspace().runtimeServices[0],
       id: "44444444-4444-4444-8444-444444444444",
       companyId: "company-1",
       executionWorkspaceId,
       scopeType: "run",
-      scopeId: "66666666-6666-4666-8666-666666666666",
+      scopeId: "run-1",
       serviceName: "academy-browser",
       status: "running",
+      healthStatus: "healthy",
       lifecycle: "shared",
       port: 37111,
       url: "http://127.0.0.1:37111",
@@ -595,6 +601,32 @@ describe.sequential("workspace runtime service route authorization", () => {
       .send({ runtimeServiceId: exposedService.id });
     expect(ineligible.status).toBe(422);
     expect(ineligible.body.error).toContain("not eligible");
+    expect(mockLogActivity).not.toHaveBeenCalled();
+
+    mockExecutionWorkspaceService.getById.mockResolvedValue(
+      buildExecutionWorkspace({
+        id: executionWorkspaceId,
+        runtimeServices: [{ ...exposedService, exposure: null, scopeId: "other-run" }],
+      }),
+    );
+    const crossRun = await request(app)
+      .post(`/api/execution-workspaces/${executionWorkspaceId}/runtime-services/attach`)
+      .send({ runtimeServiceId: exposedService.id });
+    expect(crossRun.status).toBe(422);
+    expect(crossRun.body.error).toContain("not eligible");
+    expect(mockLogActivity).not.toHaveBeenCalled();
+
+    mockExecutionWorkspaceService.getById.mockResolvedValue(
+      buildExecutionWorkspace({
+        id: executionWorkspaceId,
+        runtimeServices: [{ ...exposedService, exposure: null, healthStatus: "unhealthy" }],
+      }),
+    );
+    const unhealthy = await request(app)
+      .post(`/api/execution-workspaces/${executionWorkspaceId}/runtime-services/attach`)
+      .send({ runtimeServiceId: exposedService.id });
+    expect(unhealthy.status).toBe(422);
+    expect(unhealthy.body.error).toContain("not eligible");
     expect(mockLogActivity).not.toHaveBeenCalled();
 
     const { forbidden } = await import("../errors.js");

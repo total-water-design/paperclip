@@ -304,9 +304,11 @@ export function executionWorkspaceRoutes(db: Db, opts: { pluginWorkerManager?: P
       }
       if (
         runtimeService.status !== "running"
+        || runtimeService.healthStatus !== "healthy"
         || runtimeService.lifecycle !== "shared"
         || runtimeService.scopeType !== "run"
-        || !runtimeService.scopeId
+        || !authorization.runId
+        || runtimeService.scopeId !== authorization.runId
         || !loopbackOnly
         || runtimeService.exposure !== null
       ) {
