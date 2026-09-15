@@ -33,6 +33,8 @@ const mockWorkspaceRuntimeLeaseService = vi.hoisted(() => ({
 }));
 const mockHeartbeatService = vi.hoisted(() => ({}));
 const mockLogActivity = vi.hoisted(() => vi.fn());
+const mockStartRuntimeServices = vi.hoisted(() => vi.fn());
+const mockStopRuntimeServices = vi.hoisted(() => vi.fn());
 const mockGetTelemetryClient = vi.hoisted(() => vi.fn());
 const mockAccessService = vi.hoisted(() => ({
   decide: vi.fn(),
@@ -59,8 +61,8 @@ vi.mock("../services/index.js", () => ({
 
 vi.mock("../services/workspace-runtime.js", () => ({
   cleanupExecutionWorkspaceArtifacts: vi.fn(),
-  startRuntimeServicesForWorkspaceControl: vi.fn(),
-  stopRuntimeServicesForExecutionWorkspace: vi.fn(),
+  startRuntimeServicesForWorkspaceControl: mockStartRuntimeServices,
+  stopRuntimeServicesForExecutionWorkspace: mockStopRuntimeServices,
   stopRuntimeServicesForProjectWorkspace: vi.fn(),
 }));
 
@@ -89,8 +91,8 @@ function registerWorkspaceRouteMocks() {
 
   vi.doMock("../services/workspace-runtime.js", () => ({
     cleanupExecutionWorkspaceArtifacts: vi.fn(),
-    startRuntimeServicesForWorkspaceControl: vi.fn(),
-    stopRuntimeServicesForExecutionWorkspace: vi.fn(),
+    startRuntimeServicesForWorkspaceControl: mockStartRuntimeServices,
+    stopRuntimeServicesForExecutionWorkspace: mockStopRuntimeServices,
     stopRuntimeServicesForProjectWorkspace: vi.fn(),
   }));
 
@@ -291,7 +293,12 @@ describe.sequential("workspace runtime service route authorization", () => {
     });
     mockExecutionWorkspaceService.update.mockResolvedValue(buildExecutionWorkspace());
     mockAssertCanManageProjectWorkspaceRuntimeServices.mockResolvedValue(undefined);
-    mockAssertCanManageExecutionWorkspaceRuntimeServices.mockResolvedValue(undefined);
+    mockAssertCanManageExecutionWorkspaceRuntimeServices.mockResolvedValue({
+      actorType: "agent",
+      agentId: "agent-1",
+      runId: "run-1",
+      issueId: "issue-1",
+    });
   });
 
   it("rejects agent callers for project workspace runtime service mutations when workspace auth denies access", async () => {
@@ -483,6 +490,156 @@ describe.sequential("workspace runtime service route authorization", () => {
     expect(mockExecutionWorkspaceService.getById).toHaveBeenCalledWith(executionWorkspaceId);
     expect(mockAssertCanManageExecutionWorkspaceRuntimeServices).toHaveBeenCalled();
   }, 15000);
+
+  it("attaches an eligible loopback runtime without restarting, recreating, or changing its identity", async () => {
+    const runtimeService = {
+      id: "44444444-4444-4444-8444-444444444444",
+      companyId: "company-1",
+      projectId: "project-1",
+      projectWorkspaceId: null,
+      executionWorkspaceId,
+      issueId: "55555555-5555-4555-8555-555555555555",
+      scopeType: "run",
+      scopeId: "run-1",
+      serviceName: "academy-browser",
+      status: "running",
+      lifecycle: "shared",
+      reuseKey: "reuse-key",
+      command: "python -m flask run",
+      cwd: "/tmp/workspace",
+      port: 37111,
+      url: "http://127.0.0.1:37111",
+      provider: "local_process",
+      providerRef: "pid-123",
+      ownerAgentId: "agent-1",
+      startedByRunId: "run-1",
+      lastUsedAt: new Date(),
+      startedAt: new Date("2026-09-15T20:35:54.070Z"),
+      stoppedAt: null,
+      healthStatus: "healthy",
+      exposure: null,
+      configIndex: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    const workspace = buildExecutionWorkspace({ id: executionWorkspaceId, runtimeServices: [runtimeService] });
+    mockExecutionWorkspaceService.getById.mockResolvedValue(workspace);
+    const app = await createExecutionWorkspaceApp({
+      type: "agent",
+      agentId: "agent-1",
+      companyId: "company-1",
+      source: "agent_key",
+      runId: "run-1",
+    });
+
+    const res = await request(app)
+      .post(`/api/execution-workspaces/${executionWorkspaceId}/runtime-services/attach`)
+      .send({ runtimeServiceId: runtimeService.id });
+
+    expect(res.status).toBe(200);
+    expect(res.body.attachment).toEqual({
+      runtimeServiceId: runtimeService.id,
+      purpose: "non_production_evidence",
+      url: runtimeService.url,
+      loopbackOnly: true,
+      exposure: null,
+    });
+    expect(mockExecutionWorkspaceService.update).not.toHaveBeenCalled();
+    expect(mockStartRuntimeServices).not.toHaveBeenCalled();
+    expect(mockStopRuntimeServices).not.toHaveBeenCalled();
+    expect(mockLogActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      action: "execution_workspace.runtime_attached",
+      runId: "run-1",
+      details: expect.objectContaining({
+        outcome: "attached",
+        timestamp: expect.any(String),
+        runtimeService: expect.objectContaining({
+          id: runtimeService.id,
+          serviceName: "academy-browser",
+          sourceRef: "main",
+          scopeType: "run",
+          scopeId: runtimeService.scopeId,
+          lifecycle: "shared",
+          port: 37111,
+          url: "http://127.0.0.1:37111",
+          providerRef: "pid-123",
+          exposure: null,
+        }),
+      }),
+    }));
+  });
+
+  it("fails closed when an attachment target is exposed, cross-run, unhealthy, or unauthorized", async () => {
+    const exposedService = {
+      ...buildExecutionWorkspace().runtimeServices[0],
+      id: "44444444-4444-4444-8444-444444444444",
+      companyId: "company-1",
+      executionWorkspaceId,
+      scopeType: "run",
+      scopeId: "run-1",
+      serviceName: "academy-browser",
+      status: "running",
+      healthStatus: "healthy",
+      lifecycle: "shared",
+      port: 37111,
+      url: "http://127.0.0.1:37111",
+      exposure: { type: "tailscale_https" },
+    };
+    mockExecutionWorkspaceService.getById.mockResolvedValue(
+      buildExecutionWorkspace({ id: executionWorkspaceId, runtimeServices: [exposedService] }),
+    );
+    const app = await createExecutionWorkspaceApp({
+      type: "agent",
+      agentId: "agent-1",
+      companyId: "company-1",
+      source: "agent_key",
+      runId: "run-1",
+    });
+
+    const ineligible = await request(app)
+      .post(`/api/execution-workspaces/${executionWorkspaceId}/runtime-services/attach`)
+      .send({ runtimeServiceId: exposedService.id });
+    expect(ineligible.status).toBe(422);
+    expect(ineligible.body.error).toContain("not eligible");
+    expect(mockLogActivity).not.toHaveBeenCalled();
+
+    mockExecutionWorkspaceService.getById.mockResolvedValue(
+      buildExecutionWorkspace({
+        id: executionWorkspaceId,
+        runtimeServices: [{ ...exposedService, exposure: null, scopeId: "other-run" }],
+      }),
+    );
+    const crossRun = await request(app)
+      .post(`/api/execution-workspaces/${executionWorkspaceId}/runtime-services/attach`)
+      .send({ runtimeServiceId: exposedService.id });
+    expect(crossRun.status).toBe(422);
+    expect(crossRun.body.error).toContain("not eligible");
+    expect(mockLogActivity).not.toHaveBeenCalled();
+
+    mockExecutionWorkspaceService.getById.mockResolvedValue(
+      buildExecutionWorkspace({
+        id: executionWorkspaceId,
+        runtimeServices: [{ ...exposedService, exposure: null, healthStatus: "unhealthy" }],
+      }),
+    );
+    const unhealthy = await request(app)
+      .post(`/api/execution-workspaces/${executionWorkspaceId}/runtime-services/attach`)
+      .send({ runtimeServiceId: exposedService.id });
+    expect(unhealthy.status).toBe(422);
+    expect(unhealthy.body.error).toContain("not eligible");
+    expect(mockLogActivity).not.toHaveBeenCalled();
+
+    const { forbidden } = await import("../errors.js");
+    mockAssertCanManageExecutionWorkspaceRuntimeServices.mockRejectedValueOnce(
+      forbidden("Missing permission to manage workspace runtime services"),
+    );
+    const denied = await request(app)
+      .post(`/api/execution-workspaces/${executionWorkspaceId}/runtime-services/attach`)
+      .send({ runtimeServiceId: exposedService.id });
+    expect(denied.status).toBe(403);
+    expect(denied.body.error).toContain("Missing permission");
+    expect(mockLogActivity).not.toHaveBeenCalled();
+  });
 
   it("rejects agent callers that patch execution workspace command config", async () => {
     mockExecutionWorkspaceService.getById.mockResolvedValue(buildExecutionWorkspace({ id: executionWorkspaceId }));

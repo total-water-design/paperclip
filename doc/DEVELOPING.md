@@ -716,6 +716,8 @@ Heavier setup that is only needed by a managed runtime service can use `workspac
 
 Managed runtime control actions (`start`, `stop`, `restart`, and job `run`) are mutually exclusive per execution workspace. An overlapping control is rejected with `409 workspace_runtime_control_in_progress` instead of racing the active operation, and authorization is still checked first, so the conflict never widens who may control a workspace.
 
+`POST /api/execution-workspaces/{id}/runtime-services/attach` is a separate, non-production evidence attachment action. It requires `runtimeServiceId` and the same runtime-management authorization as lifecycle controls. It accepts only an existing running, shared, run-scoped service with a loopback-only `http://127.0.0.1:<port>` URL and no exposure. It does not start, stop, recreate, reconfigure, or expose the service. The response returns the existing URL as a non-production evidence attachment, and the activity log records the actor, run, target identity, outcome, and timestamp.
+
 Local managed runtime services write stdout and stderr directly to append-only
 files under the instance's `runtime-service-logs/` directory. The child inherits
 the file descriptors rather than supervisor-owned pipes, so request-logging
