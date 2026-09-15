@@ -1308,6 +1308,7 @@ describe("sandbox callback bridge", () => {
       { method: "GET", path: "/api/agents/agent-1/skills" },
       { method: "POST", path: "/api/agents/agent-1/skills/sync" },
       { method: "PATCH", path: "/api/agents/agent-1/instructions-path" },
+      { method: "PATCH", path: "/api/agents/agent-1" },
       { method: "GET", path: "/api/companies/co-1" },
       { method: "GET", path: "/api/companies/co-1/dashboard" },
       { method: "GET", path: "/api/companies/co-1/agents" },
@@ -1390,6 +1391,10 @@ describe("sandbox callback bridge", () => {
       { method: "POST", path: "/api/agents/agent-1/pause" },
       { method: "POST", path: "/api/agents/agent-1/terminate" },
       { method: "POST", path: "/api/agents/agent-1/keys" },
+      // Keep the base PATCH route exact: privileged agent subroutes are not
+      // exposed merely because an authorized run may update reportsTo/metadata.
+      { method: "PATCH", path: "/api/agents/agent-1/permissions" },
+      { method: "PATCH", path: "/api/agents/agent-1/runtime-state" },
       { method: "POST", path: "/api/companies/co-1/exports" },
       { method: "POST", path: "/api/companies/co-1/imports/apply" },
       { method: "POST", path: "/api/companies/co-1/archive" },
