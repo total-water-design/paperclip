@@ -22,15 +22,35 @@ trap 'if [[ -f "$repo_root/cli/package.dev.json" ]]; then mv "$repo_root/cli/pac
 "$repo_root/scripts/build-npm.sh" "$@"
 stage="$(mktemp -d "${PAPERCLIP_TMPDIR:-/tmp}/paperclip-package.XXXXXX")"
 trap 'rm -rf "$stage"; if [[ -f "$repo_root/cli/package.dev.json" ]]; then mv "$repo_root/cli/package.dev.json" "$repo_root/cli/package.json"; fi; cp "$readme_backup" "$repo_root/cli/README.md"; rm -f "$readme_backup"' EXIT
-mkdir -p "$stage/package"
-cp "$repo_root/cli/package.json" "$stage/package/package.json"
-cp "$repo_root/cli/README.md" "$stage/package/README.md"
+mkdir -p "$stage/cli-package/package"
+cp "$repo_root/cli/package.json" "$stage/cli-package/package/package.json"
+cp "$repo_root/cli/README.md" "$stage/cli-package/package/README.md"
 mv "$repo_root/cli/package.dev.json" "$repo_root/cli/package.json"
 cp "$readme_backup" "$repo_root/cli/README.md"
 node "$repo_root/scripts/paperclip-artifact-identity.mjs" identity --repo "$repo_root" --output-dir "$repo_root/cli/dist" --source-sha "$source_sha" --build-command "$canonical_command"
-cp -R "$repo_root/cli/dist" "$stage/package/"
-
+cp -R "$repo_root/cli/dist" "$stage/cli-package/package/"
 epoch="$(git -C "$repo_root" show -s --format=%ct "$source_sha")"
+
+# The host-side staging gate extracts this archive and runs `npm install` in
+# that directory.  An npm package does not install itself in node_modules when
+# used that way, so wrap the actual CLI package in a tiny staging manifest that
+# declares the CLI as an explicit local-file dependency.  This guarantees the
+# required node_modules/paperclipai/dist/index.js path exists after install.
+inner_archive="$stage/paperclipai-cli.tgz"
+COPYFILE_DISABLE=1 tar --sort=name --format=posix --mtime="@$epoch" --owner=0 --group=0 --numeric-owner --pax-option=delete=atime,delete=ctime -C "$stage/cli-package" -cf - package | gzip -n -9 > "$inner_archive"
+mkdir -p "$stage/package"
+cat > "$stage/package/package.json" <<EOF
+{
+  "name": "paperclipai-staging-payload",
+  "version": "$version",
+  "private": true,
+  "dependencies": {
+    "paperclipai": "file:./paperclipai-cli.tgz"
+  }
+}
+EOF
+cp "$inner_archive" "$stage/package/paperclipai-cli.tgz"
+
 COPYFILE_DISABLE=1 tar --sort=name --format=posix --mtime="@$epoch" --owner=0 --group=0 --numeric-owner --pax-option=delete=atime,delete=ctime -C "$stage" -cf - package | gzip -n -9 > "$archive"
 node "$repo_root/scripts/paperclip-artifact-identity.mjs" certify --identity "$repo_root/cli/dist/paperclip-artifact-identity.json" --archive "$archive" --executable "$repo_root/cli/dist/index.js" --manifest "$manifest"
 printf 'certified archive: %s\ncertification manifest: %s\n' "$archive" "$manifest"
