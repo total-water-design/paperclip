@@ -267,7 +267,7 @@ export function executionWorkspaceRoutes(db: Db, opts: { pluginWorkerManager?: P
   async function handleExecutionWorkspaceRuntimeCommand(req: Request, res: Response) {
     const id = req.params.id as string;
     const action = String(req.params.action ?? "").trim().toLowerCase();
-    if (action !== "start" && action !== "stop" && action !== "restart" && action !== "repair" && action !== "run") {
+    if (action !== "attach" && action !== "start" && action !== "stop" && action !== "restart" && action !== "repair" && action !== "run") {
       res.status(404).json({ error: "Workspace command action not found" });
       return;
     }
@@ -281,6 +281,85 @@ export function executionWorkspaceRoutes(db: Db, opts: { pluginWorkerManager?: P
       executionWorkspaceId: existing.id,
       sourceIssueId: existing.sourceIssueId,
     });
+
+    if (action === "attach") {
+      const target = req.body as { runtimeServiceId?: string | null };
+      if (!target.runtimeServiceId) {
+        res.status(422).json({ error: "Runtime service attachment requires an existing runtime service ID" });
+        return;
+      }
+
+      const runtimeService = (existing.runtimeServices ?? []).find((service) => service.id === target.runtimeServiceId);
+      if (!runtimeService) {
+        res.status(404).json({ error: "Runtime service not found for this execution workspace" });
+        return;
+      }
+
+      let loopbackOnly = false;
+      try {
+        const url = runtimeService.url ? new URL(runtimeService.url) : null;
+        loopbackOnly = url !== null && url.protocol === "http:" && url.hostname === "127.0.0.1" && Number(url.port) === runtimeService.port;
+      } catch {
+        loopbackOnly = false;
+      }
+      if (
+        runtimeService.status !== "running"
+        || runtimeService.lifecycle !== "shared"
+        || runtimeService.scopeType !== "run"
+        || !runtimeService.scopeId
+        || !loopbackOnly
+        || runtimeService.exposure !== null
+      ) {
+        res.status(422).json({ error: "Runtime service is not eligible for non-production attachment" });
+        return;
+      }
+
+      const actor = getActorInfo(req);
+      const timestamp = new Date().toISOString();
+      await logActivity(db, {
+        companyId: existing.companyId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+        agentApiKeyId: actor.agentApiKeyId,
+        action: "execution_workspace.runtime_attached",
+        entityType: "execution_workspace",
+        entityId: existing.id,
+        details: {
+          outcome: "attached",
+          timestamp,
+          runtimeService: {
+            id: runtimeService.id,
+            serviceName: runtimeService.serviceName,
+            executionWorkspaceId: runtimeService.executionWorkspaceId,
+            sourceRef: existing.baseRef,
+            scopeType: runtimeService.scopeType,
+            scopeId: runtimeService.scopeId,
+            lifecycle: runtimeService.lifecycle,
+            status: runtimeService.status,
+            port: runtimeService.port,
+            url: runtimeService.url,
+            provider: runtimeService.provider,
+            providerRef: runtimeService.providerRef,
+            startedAt: runtimeService.startedAt,
+            exposure: runtimeService.exposure,
+          },
+        },
+      });
+
+      res.json({
+        workspace: existing,
+        attachment: {
+          runtimeServiceId: runtimeService.id,
+          purpose: "non_production_evidence",
+          url: runtimeService.url,
+          loopbackOnly: true,
+          exposure: null,
+        },
+      });
+      return;
+    }
 
     const workspaceCwd = existing.cwd;
     if (!workspaceCwd) {
