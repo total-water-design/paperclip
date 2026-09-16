@@ -489,6 +489,7 @@ describeEmbeddedPostgres("stale issue execution lock routes", () => {
     const { companyId, agentId, failedRunId, currentRunId } = await seedCompanyAgentAndRuns();
     const issueId = randomUUID();
     const otherAgentId = randomUUID();
+    const otherAgentCurrentRunId = randomUUID();
     await db.insert(agents).values({
       id: otherAgentId,
       companyId,
@@ -515,7 +516,17 @@ describeEmbeddedPostgres("stale issue execution lock routes", () => {
       executionLockedAt: null,
     });
 
-    const res = await request(createApp(agentActor(companyId, otherAgentId, currentRunId)))
+    await db.insert(heartbeatRuns).values({
+      id: otherAgentCurrentRunId,
+      companyId,
+      agentId: otherAgentId,
+      status: "running",
+      invocationSource: "manual",
+      startedAt: new Date(),
+      contextSnapshot: { issueId },
+    });
+
+    const res = await request(createApp(agentActor(companyId, otherAgentId, otherAgentCurrentRunId)))
       .post(`/api/issues/${issueId}/checkout`)
       .send({
         agentId: otherAgentId,
@@ -537,8 +548,8 @@ describeEmbeddedPostgres("stale issue execution lock routes", () => {
     expect(row).toEqual({
       status: "in_progress",
       assigneeAgentId: otherAgentId,
-      checkoutRunId: currentRunId,
-      executionRunId: currentRunId,
+      checkoutRunId: otherAgentCurrentRunId,
+      executionRunId: otherAgentCurrentRunId,
     });
   });
 });
