@@ -443,13 +443,13 @@ describe("assertGitSensitiveAdapterWorkspaceValid", () => {
     );
   });
 
-  it("accepts a checkout whose origin matches the intended workspace repository", async () => {
+  it("accepts LF- and CRLF-terminated origins that match the intended workspace repository", async () => {
     const cwd = await createGitCheckout({ withRemote: true });
     const input = buildWorkspaceValidationInput();
     const repoUrl = "https://github.com/example/repo.git";
 
     try {
-      for (const intendedRepoUrl of [repoUrl, `${repoUrl}\r\n`]) {
+      for (const intendedRepoUrl of [repoUrl, `${repoUrl}\n`, `${repoUrl}\r\n`]) {
         await expect(
           assertGitSensitiveAdapterWorkspaceValid(
             buildWorkspaceValidationInput({
