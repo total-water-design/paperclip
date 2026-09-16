@@ -61,9 +61,12 @@ jobs:
           record identity "${root_env[@]}" bash -c 'id; test "$(id -u)" = 0; test "$(id -g)" = 0'
           record no-new-privs "${root_env[@]}" grep '^NoNewPrivs:[[:space:]]*0$' /proc/self/status
           record pid-proc "${root_env[@]}" bash -c 'test "$$" -eq "$(awk "{print \$1}" /proc/$$/stat)"; test -r "/proc/$$/status"'
-          record node "${root_env[@]}" bash -c 'node --version; test "$(node --version | cut -d. -f1)" = v24'
-          record pnpm "${root_env[@]}" bash -c 'pnpm --version; test "$(pnpm --version)" = 9.15.4'
-          record visudo-version "${root_env[@]}" bash -c 'actual="$(visudo -V | awk "/^Sudo version / {print \$3; exit}")"; printf "visudo=%s\\n" "$actual"; dpkg --compare-versions "$actual" ge 1.9.15p5'
+          # Only the staging-root proof needs root.  Keep the runner's normal
+          # Node, pnpm and visudo environment intact for the remaining
+          # capability checks and test execution.
+          record node bash -c 'node --version; test "$(node --version | cut -d. -f1)" = v24'
+          record pnpm bash -c 'pnpm --version; test "$(pnpm --version)" = 9.15.4'
+          record visudo-version bash -c 'actual="$(visudo -V | awk "/^Sudo version / {print \$3; exit}")"; printf "visudo=%s\\n" "$actual"; dpkg --compare-versions "$actual" ge 1.9.15p5'
           record staging-root "${root_env[@]}" bash -c 'test ! -e "$1" && install -d -o 0 -g 0 -m 0700 "$1" && realpath "$1" && stat -c "%n uid=%u gid=%g mode=%a type=%F" "$1" && ls -ladn "$1" && find "$1" -xdev -printf "%p uid=%u gid=%g mode=%m type=%y\\n" && test -z "$(find "$1" -mindepth 1 -print -quit)"' _ "$STAGING_ROOT"
           {
             printf '## TOT-2922 preconditions (raw)\n\n```text\n'
@@ -104,7 +107,7 @@ jobs:
           : > "$EVIDENCE_DIR/hot-restart-cases.raw.txt"
           for case_name in "${cases[@]}"; do
             printf '\n=== %s ===\n' "$case_name" | tee -a "$EVIDENCE_DIR/hot-restart-cases.raw.txt"
-            sudo -n env "PATH=$PATH" "COREPACK_HOME=$COREPACK_HOME" pnpm exec vitest run server/src/__tests__/heartbeat-process-recovery.test.ts \
+            pnpm exec vitest run server/src/__tests__/heartbeat-process-recovery.test.ts \
               -t "$case_name" --reporter=verbose 2>&1 | tee -a "$EVIDENCE_DIR/hot-restart-cases.raw.txt"
           done
           # Preserve the exact asserted classifications and raw test output together.
@@ -121,7 +124,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sudo -n env "PATH=$PATH" visudo -c -f deploy/recovery/paperclip-recovery 2>&1 \
+          visudo -c -f deploy/recovery/paperclip-recovery 2>&1 \
             | tee "$EVIDENCE_DIR/visudo.raw.txt"
 
       - name: Assert staging root stayed empty and remove it
