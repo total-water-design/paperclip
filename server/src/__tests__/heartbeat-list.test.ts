@@ -331,8 +331,8 @@ describeEmbeddedPostgres("heartbeat list", () => {
     }
 
     const svc = heartbeatService(db);
-    const page1 = await svc.list(companyId, agentId, 25, 0);
-    const page2 = await svc.list(companyId, agentId, 25, 25);
+    const page1 = await svc.list(companyId, agentId, 25, { offset: 0 });
+    const page2 = await svc.list(companyId, agentId, 25, { offset: 25 });
 
     expect(page1).toHaveLength(25);
     expect(page2).toHaveLength(5);
@@ -472,13 +472,8 @@ describeEmbeddedPostgres("heartbeat list", () => {
     expect(only.stdoutExcerpt ?? null).toBeNull();
     expect(only.stderrExcerpt ?? null).toBeNull();
 
-    // resultJson is the summarized/bounded form, not the raw oversized payload.
-    const result = only.resultJson as Record<string, unknown> | null;
-    expect(result).not.toBeNull();
-    expect(typeof result?.summary).toBe("string");
-    if (typeof result?.stdout === "string") {
-      expect((result.stdout as string).length).toBeLessThan(oversizedStdout.length);
-    }
+    // latest-failed uses the bounded summary projection and never returns raw results.
+    expect(only.resultJson).toBeNull();
   });
 
 });

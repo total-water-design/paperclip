@@ -19719,7 +19719,8 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     },
 
     stats: async (companyId: string, agentId?: string) => {
-      const since = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
+      const now = new Date();
+      const since = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - 13));
       const condition = agentId
         ? and(eq(heartbeatRuns.companyId, companyId), eq(heartbeatRuns.agentId, agentId), gt(heartbeatRuns.createdAt, since))
         : and(eq(heartbeatRuns.companyId, companyId), gt(heartbeatRuns.createdAt, since));
@@ -19763,8 +19764,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         .select({ ...heartbeatRunSummaryListColumns, ...heartbeatRunListContextColumns })
         .from(heartbeatRuns)
         .where(and(eq(heartbeatRuns.companyId, companyId), inArray(heartbeatRuns.id, failedIds)))
-        .orderBy(desc(heartbeatRuns.createdAt), desc(heartbeatRuns.id))
-        .limit(500);
+        .orderBy(desc(heartbeatRuns.createdAt), desc(heartbeatRuns.id));
       return rows.map((row) => {
         const {
           contextIssueId, contextTaskId, contextTaskKey, contextCommentId,

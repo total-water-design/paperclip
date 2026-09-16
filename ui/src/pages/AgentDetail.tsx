@@ -881,7 +881,7 @@ export function AgentDetail() {
   const { data: heartbeats } = useQuery({
     queryKey: [...queryKeys.heartbeats(resolvedCompanyId!, agent?.id ?? undefined), "limit", 200],
     queryFn: () => heartbeatsApi.list(resolvedCompanyId!, agent?.id ?? undefined, 200),
-    enabled: !!resolvedCompanyId && !!agent?.id && needsDashboardData,
+    enabled: !!resolvedCompanyId && !!agent?.id && shouldLoadHeartbeats,
   });
   const { data: heartbeatStats } = useQuery({
     queryKey: [...queryKeys.heartbeats(resolvedCompanyId!, agent?.id ?? undefined), "stats"],

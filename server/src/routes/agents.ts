@@ -5303,8 +5303,8 @@ export function agentRoutes(
     let offset: number | undefined;
     if (offsetParam !== undefined) {
       offset = Number(offsetParam);
-      if (!Number.isInteger(offset) || offset < 0) {
-        res.status(400).json({ error: "Invalid offset. Must be a non-negative integer." });
+      if (!Number.isInteger(offset) || offset < 0 || offset > 10_000) {
+        res.status(400).json({ error: "Invalid offset. Must be an integer between 0 and 10000." });
         return;
       }
     }
