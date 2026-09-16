@@ -495,6 +495,28 @@ describe("assertGitSensitiveAdapterWorkspaceValid", () => {
     }
   });
 
+  it("does not normalize non-line-ending origin whitespace", async () => {
+    const cwd = await createGitCheckout({ withRemote: true });
+    const input = buildWorkspaceValidationInput();
+    const repoUrl = "https://github.com/example/repo.git";
+
+    try {
+      for (const intendedRepoUrl of [` ${repoUrl}`, `${repoUrl} `]) {
+        await expectWorkspaceValidationFailure(
+          buildWorkspaceValidationInput({
+            resolvedWorkspace: buildResolvedWorkspace({ cwd, repoUrl: intendedRepoUrl }),
+            executionWorkspace: { ...input.executionWorkspace, baseCwd: cwd, cwd, repoUrl: intendedRepoUrl },
+            persistedExecutionWorkspace: { ...input.persistedExecutionWorkspace!, cwd, repoUrl: intendedRepoUrl },
+          }),
+          "git_origin_provenance_mismatch",
+          `expected origin \"${intendedRepoUrl}\"`,
+        );
+      }
+    } finally {
+      await fs.rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it("does not apply the git-sensitive workspace guard to non-local execution targets", async () => {
     const input = buildWorkspaceValidationInput();
 
