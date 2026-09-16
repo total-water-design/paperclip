@@ -12,6 +12,7 @@ import {
   heartbeatRuns,
   issueComments,
   issueDocuments,
+  issueRelations,
   issueThreadInteractions,
   issues,
   toolActionRequests,
@@ -1128,6 +1129,7 @@ describeEmbeddedPostgres("heartbeat stale queued-run invalidation", () => {
     const managerAgentId = randomUUID();
     const issueId = randomUUID();
     const interactionId = randomUUID();
+    const blockerIssueId = randomUUID();
 
     await db.insert(agents).values({
       id: managerAgentId,
@@ -1147,6 +1149,20 @@ describeEmbeddedPostgres("heartbeat stale queued-run invalidation", () => {
       status: "in_progress",
       priority: "high",
       assigneeAgentId: specialistAgentId,
+    });
+    await db.insert(issues).values({
+      id: blockerIssueId,
+      companyId,
+      title: "Unresolved dependency",
+      status: "in_progress",
+      priority: "high",
+      assigneeAgentId: specialistAgentId,
+    });
+    await db.insert(issueRelations).values({
+      companyId,
+      issueId: blockerIssueId,
+      relatedIssueId: issueId,
+      type: "blocks",
     });
     await db.insert(issueThreadInteractions).values({
       id: interactionId,
@@ -1185,6 +1201,84 @@ describeEmbeddedPostgres("heartbeat stale queued-run invalidation", () => {
     expect(run?.errorCode).not.toBe("issue_assignee_changed");
     expect(wakeup?.status).not.toBe("skipped");
     expect(wakeup?.error).toBeNull();
+    expect(issue?.assigneeAgentId).toBe(specialistAgentId);
+  });
+
+  it("wakes the addressed manager through an unresolved dependency with native interaction context", async () => {
+    const { companyId, agentId: specialistAgentId } = await seedCompanyAndAgent({ agentName: "Specialist" });
+    const managerAgentId = randomUUID();
+    const issueId = randomUUID();
+    const interactionId = randomUUID();
+    const blockerIssueId = randomUUID();
+
+    await db.insert(agents).values({
+      id: managerAgentId,
+      companyId,
+      name: "Manager",
+      role: "manager",
+      status: "active",
+      adapterType: "codex_local",
+      adapterConfig: {},
+      runtimeConfig: { heartbeat: { wakeOnDemand: true, maxConcurrentRuns: 1 } },
+      permissions: {},
+    });
+    await db.insert(issues).values([
+      {
+        id: issueId,
+        companyId,
+        title: "Specialist-owned task awaiting manager disposition",
+        status: "in_progress",
+        priority: "high",
+        assigneeAgentId: specialistAgentId,
+      },
+      {
+        id: blockerIssueId,
+        companyId,
+        title: "Unresolved dependency",
+        status: "in_progress",
+        priority: "high",
+        assigneeAgentId: specialistAgentId,
+      },
+    ]);
+    await db.insert(issueRelations).values({
+      companyId,
+      issueId: blockerIssueId,
+      relatedIssueId: issueId,
+      type: "blocks",
+    });
+    await db.insert(issueThreadInteractions).values({
+      id: interactionId,
+      companyId,
+      issueId,
+      kind: "request_confirmation",
+      status: "pending",
+      continuationPolicy: "wake_assignee",
+      createdByAgentId: specialistAgentId,
+      addresseeAgentId: managerAgentId,
+      effectiveResolverPolicy: "anyone",
+      payload: { version: 1, prompt: "Review the specialist evidence." },
+    });
+
+    const run = await heartbeat.wakeup(managerAgentId, {
+      source: "automation",
+      triggerDetail: "system",
+      reason: "interaction_pending",
+      payload: { issueId, interactionId, mutation: "interaction" },
+      contextSnapshot: {
+        issueId,
+        taskId: issueId,
+        interactionId,
+        wakeReason: "interaction_pending",
+        source: "issue.interaction.created",
+      },
+    });
+
+    expect(run).not.toBeNull();
+    await waitForCondition(async () => countExecuteCallsForRun(run!.id) === 1);
+    const issue = await db.select({ assigneeAgentId: issues.assigneeAgentId })
+      .from(issues).where(eq(issues.id, issueId)).then((rows) => rows[0] ?? null);
+
+    expect(run?.contextSnapshot).toMatchObject({ dependencyBlockedInteraction: true });
     expect(issue?.assigneeAgentId).toBe(specialistAgentId);
   });
 
