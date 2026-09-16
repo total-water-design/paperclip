@@ -119,7 +119,7 @@ function aggregateRuns(runs: readonly HeartbeatRun[] = []): DashboardRunActivity
 function aggregateStats(stats: readonly HeartbeatRunStats[] = []): DashboardRunActivityDay[] {
   const days = getLast14Days();
   const grouped = new Map<string, DashboardRunActivityDay>();
-  for (const day of days) grouped.set(day, { date: day, succeeded: 0, failed: 0, other: 0, total: 0 });
+  for (const day of days) grouped.set(day, emptyRunDay(day));
   for (const stat of stats) {
     const entry = grouped.get(stat.date);
     if (!entry) continue;
