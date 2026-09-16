@@ -177,6 +177,24 @@ describe("openapi routes", () => {
     expect(res.body.info.title).toBe("Paperclip API");
     expect(res.body.paths["/api/openapi.json"].get.summary).toBe("Get the generated OpenAPI document");
     expect(res.body.paths["/api/companies/{companyId}/agents"].get.summary).toBe("List agents in a company");
+    const heartbeatStatsQuery = res.body.paths[
+      "/api/companies/{companyId}/heartbeat-runs/stats"
+    ].get.parameters.find((parameter: { in: string; name: string }) => parameter.in === "query" && parameter.name === "agentId");
+    expect(heartbeatStatsQuery).toMatchObject({
+      name: "agentId",
+      in: "query",
+      required: false,
+      schema: { type: "string" },
+    });
+    const latestFailedLimitQuery = res.body.paths[
+      "/api/companies/{companyId}/heartbeat-runs/latest-failed"
+    ].get.parameters.find((parameter: { in: string; name: string }) => parameter.in === "query" && parameter.name === "limit");
+    expect(latestFailedLimitQuery).toMatchObject({
+      name: "limit",
+      in: "query",
+      required: false,
+      schema: { type: "integer", minimum: 1, maximum: 1000, default: 200 },
+    });
     expect(res.body.paths["/api/agents/{id}/keys"].post.summary).toBe("Create an agent API key");
     expect(res.body.components.securitySchemes).toMatchObject({
       BoardSessionAuth: { type: "apiKey", in: "cookie" },
