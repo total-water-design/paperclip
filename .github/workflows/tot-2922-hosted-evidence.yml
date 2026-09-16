@@ -1,0 +1,120 @@
+name: TOT-2922 hosted evidence
+
+on:
+  push:
+    branches:
+      - "task/**"
+    paths:
+      - ".github/workflows/tot-2922-hosted-evidence.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bounded-evidence:
+    # This is a disposable GitHub-hosted runner; it has no production routes or data.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      STAGING_ROOT: /var/lib/paperclip/staging/TOT-2922-a7d87139
+      EVIDENCE_DIR: ${{ github.workspace }}/tot-2922-raw-evidence
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: a7d871390ac7ce9a4843184a98b7198ac690b774
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Establish pinned package manager
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare pnpm@9.15.4 --activate
+          test "$(pnpm --version)" = "9.15.4"
+
+      - name: Capture preconditions and canonical empty staging root
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_DIR"
+          exec > >(tee "$EVIDENCE_DIR/preconditions.raw.txt") 2>&1
+          id
+          test "$(id -u)" = 0
+          test "$(id -g)" = 0
+          grep '^NoNewPrivs:[[:space:]]*0$' /proc/self/status
+          test "$$" -eq "$(awk '{print $1}' /proc/$$/stat)"
+          test -r "/proc/$$/status"
+          node --version
+          test "$(node --version | cut -d. -f1)" = "v24"
+          pnpm --version
+          actual_visudo_version="$(visudo -V | awk '/^Sudo version / {print $3; exit}')"
+          printf 'visudo=%s\n' "$actual_visudo_version"
+          dpkg --compare-versions "$actual_visudo_version" ge 1.9.15p5
+          test ! -e "$STAGING_ROOT"
+          install -d -o 0 -g 0 -m 0700 "$STAGING_ROOT"
+          realpath "$STAGING_ROOT"
+          stat -c '%n uid=%u gid=%g mode=%a type=%F' "$STAGING_ROOT"
+          ls -ladn "$STAGING_ROOT"
+          find "$STAGING_ROOT" -xdev -printf '%p uid=%u gid=%g mode=%m type=%y\n'
+          test -z "$(find "$STAGING_ROOT" -mindepth 1 -print -quit)"
+
+      - name: Install immutable tree dependencies
+        shell: bash
+        run: pnpm install --frozen-lockfile
+
+      - name: Run seven hot-restart continuity cases
+        shell: bash
+        run: |
+          set -euo pipefail
+          cases=(
+            'captures a hot-restart shutdown snapshot without interrupting running runs'
+            'snapshots and drains a server-stdio ACP run before embedded database shutdown'
+            'reports a selectively drained ACP run as lost when terminal persistence fails'
+            'drains only server-stdio runs and preserves detached CLI adoption in a mixed restart'
+            'adopts an old-server legacy snapshot written for a new instance-scoped marker'
+            'reports preflight live runs as lost when the shutdown snapshot is missing'
+            'reports a preflight run that finished before snapshot capture as finalized'
+          )
+          : > "$EVIDENCE_DIR/hot-restart-cases.raw.txt"
+          for case_name in "${cases[@]}"; do
+            printf '\n=== %s ===\n' "$case_name" | tee -a "$EVIDENCE_DIR/hot-restart-cases.raw.txt"
+            pnpm exec vitest run server/src/__tests__/heartbeat-process-recovery.test.ts \
+              -t "$case_name" --reporter=verbose 2>&1 | tee -a "$EVIDENCE_DIR/hot-restart-cases.raw.txt"
+          done
+          # Preserve the exact asserted classifications and raw test output together.
+          sed -n '1452,1901p' server/src/__tests__/heartbeat-process-recovery.test.ts \
+            > "$EVIDENCE_DIR/hot-restart-classifications.source.txt"
+
+      - name: Validate real sudoers grammar without installation
+        shell: bash
+        run: |
+          set -euo pipefail
+          visudo -c -f deploy/recovery/paperclip-recovery 2>&1 \
+            | tee "$EVIDENCE_DIR/visudo.raw.txt"
+
+      - name: Assert staging root stayed empty and remove it
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            realpath "$STAGING_ROOT"
+            stat -c '%n uid=%u gid=%g mode=%a type=%F' "$STAGING_ROOT"
+            ls -ladn "$STAGING_ROOT"
+            find "$STAGING_ROOT" -xdev -printf '%p uid=%u gid=%g mode=%m type=%y\n'
+            test -z "$(find "$STAGING_ROOT" -mindepth 1 -print -quit)"
+            rmdir "$STAGING_ROOT"
+          } | tee "$EVIDENCE_DIR/staging-final.raw.txt"
+
+      - name: Upload immutable raw evidence packet
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tot-2922-a7d87139-raw-evidence-${{ github.run_id }}
+          path: ${{ env.EVIDENCE_DIR }}
+          if-no-files-found: error
+          retention-days: 14
