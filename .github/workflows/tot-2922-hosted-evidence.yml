@@ -39,28 +39,26 @@ jobs:
       - name: Capture preconditions and canonical empty staging root
         shell: bash
         run: |
-          set -euo pipefail
+          set -uo pipefail
           mkdir -p "$EVIDENCE_DIR"
-          exec > >(tee "$EVIDENCE_DIR/preconditions.raw.txt") 2>&1
-          id
-          test "$(id -u)" = 0
-          test "$(id -g)" = 0
-          grep '^NoNewPrivs:[[:space:]]*0$' /proc/self/status
-          test "$$" -eq "$(awk '{print $1}' /proc/$$/stat)"
-          test -r "/proc/$$/status"
-          node --version
-          test "$(node --version | cut -d. -f1)" = "v24"
-          pnpm --version
-          actual_visudo_version="$(visudo -V | awk '/^Sudo version / {print $3; exit}')"
-          printf 'visudo=%s\n' "$actual_visudo_version"
-          dpkg --compare-versions "$actual_visudo_version" ge 1.9.15p5
-          test ! -e "$STAGING_ROOT"
-          install -d -o 0 -g 0 -m 0700 "$STAGING_ROOT"
-          realpath "$STAGING_ROOT"
-          stat -c '%n uid=%u gid=%g mode=%a type=%F' "$STAGING_ROOT"
-          ls -ladn "$STAGING_ROOT"
-          find "$STAGING_ROOT" -xdev -printf '%p uid=%u gid=%g mode=%m type=%y\n'
-          test -z "$(find "$STAGING_ROOT" -mindepth 1 -print -quit)"
+          : > "$EVIDENCE_DIR/preconditions.raw.txt"
+          failed=0
+          record() {
+            printf '\n=== %s ===\n' "$1" | tee -a "$EVIDENCE_DIR/preconditions.raw.txt"
+            shift
+            "$@" >> "$EVIDENCE_DIR/preconditions.raw.txt" 2>&1
+            status=$?
+            printf 'exit=%s\n' "$status" | tee -a "$EVIDENCE_DIR/preconditions.raw.txt"
+            test "$status" -eq 0 || failed=1
+          }
+          record identity bash -c 'id; test "$(id -u)" = 0; test "$(id -g)" = 0'
+          record no-new-privs grep '^NoNewPrivs:[[:space:]]*0$' /proc/self/status
+          record pid-proc bash -c 'test "$$" -eq "$(awk "{print \$1}" /proc/$$/stat)"; test -r "/proc/$$/status"'
+          record node bash -c 'node --version; test "$(node --version | cut -d. -f1)" = v24'
+          record pnpm bash -c 'pnpm --version; test "$(pnpm --version)" = 9.15.4'
+          record visudo-version bash -c 'actual="$(visudo -V | awk "/^Sudo version / {print \$3; exit}")"; printf "visudo=%s\\n" "$actual"; dpkg --compare-versions "$actual" ge 1.9.15p5'
+          record staging-root bash -c 'test ! -e "$1" && install -d -o 0 -g 0 -m 0700 "$1" && realpath "$1" && stat -c "%n uid=%u gid=%g mode=%a type=%F" "$1" && ls -ladn "$1" && find "$1" -xdev -printf "%p uid=%u gid=%g mode=%m type=%y\\n" && test -z "$(find "$1" -mindepth 1 -print -quit)"' _ "$STAGING_ROOT"
+          exit "$failed"
 
       - name: Install immutable tree dependencies
         shell: bash
@@ -101,14 +99,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          {
-            realpath "$STAGING_ROOT"
-            stat -c '%n uid=%u gid=%g mode=%a type=%F' "$STAGING_ROOT"
-            ls -ladn "$STAGING_ROOT"
-            find "$STAGING_ROOT" -xdev -printf '%p uid=%u gid=%g mode=%m type=%y\n'
-            test -z "$(find "$STAGING_ROOT" -mindepth 1 -print -quit)"
-            rmdir "$STAGING_ROOT"
-          } | tee "$EVIDENCE_DIR/staging-final.raw.txt"
+          if test -e "$STAGING_ROOT"; then
+            {
+              realpath "$STAGING_ROOT"
+              stat -c '%n uid=%u gid=%g mode=%a type=%F' "$STAGING_ROOT"
+              ls -ladn "$STAGING_ROOT"
+              find "$STAGING_ROOT" -xdev -printf '%p uid=%u gid=%g mode=%m type=%y\n'
+              test -z "$(find "$STAGING_ROOT" -mindepth 1 -print -quit)"
+              rmdir "$STAGING_ROOT"
+            } | tee "$EVIDENCE_DIR/staging-final.raw.txt"
+          else
+            printf 'staging root was not created; no rollback attempted\n' | tee "$EVIDENCE_DIR/staging-final.raw.txt"
+          fi
 
       - name: Upload immutable raw evidence packet
         if: always()
