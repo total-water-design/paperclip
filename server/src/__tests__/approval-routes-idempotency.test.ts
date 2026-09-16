@@ -6,6 +6,7 @@ const mockApprovalService = vi.hoisted(() => ({
   list: vi.fn(),
   getById: vi.fn(),
   create: vi.fn(),
+  createRestrictionFiling: vi.fn(),
   createOrReuseBoardApproval: vi.fn(),
   findRestrictionFilingDuplicate: vi.fn(),
   cancel: vi.fn(),
@@ -128,6 +129,7 @@ describe("approval routes idempotent retries", () => {
     mockApprovalService.list.mockReset();
     mockApprovalService.getById.mockReset();
     mockApprovalService.create.mockReset();
+    mockApprovalService.createRestrictionFiling.mockReset();
     mockApprovalService.createOrReuseBoardApproval.mockReset();
     mockApprovalService.findRestrictionFilingDuplicate.mockReset();
     mockApprovalService.cancel.mockReset();
@@ -150,6 +152,7 @@ describe("approval routes idempotent retries", () => {
       explanation: "Allowed by test mock.",
     });
     mockApprovalService.findRestrictionFilingDuplicate.mockResolvedValue(null);
+    mockApprovalService.createRestrictionFiling.mockResolvedValue({ approval: null, duplicate: null });
     mockSecretService.normalizeHireApprovalPayloadForPersistence.mockImplementation(async (_companyId: string, payload: Record<string, unknown>) => payload);
     mockHeartbeatService.wakeup.mockResolvedValue({ id: "wake-1" });
     mockIssueApprovalService.listIssuesForApproval.mockResolvedValue([{ id: "issue-1" }]);
@@ -464,7 +467,7 @@ describe("approval routes idempotent retries", () => {
   });
 
   it("rejects a repeated restriction filing and links the earlier approval", async () => {
-    mockApprovalService.findRestrictionFilingDuplicate.mockResolvedValue({ kind: "approval", approvalId: "04dda101" });
+    mockApprovalService.createRestrictionFiling.mockResolvedValue({ approval: null, duplicate: { kind: "approval", approvalId: "04dda101" } });
     const res = await request(await createApp())
       .post("/api/companies/company-1/approvals")
       .send({
@@ -482,6 +485,33 @@ describe("approval routes idempotent retries", () => {
     expect(res.status, JSON.stringify(res.body)).toBe(409);
     expect(res.body).toMatchObject({ code: "restriction_filing_duplicate", duplicate: { approvalId: "04dda101" } });
     expect(mockApprovalService.create).not.toHaveBeenCalled();
+    expect(mockApprovalService.createRestrictionFiling).toHaveBeenCalled();
+  });
+
+  it("rejects a repeated restricted Board filing inside the serialized create path", async () => {
+    mockApprovalService.createOrReuseBoardApproval.mockResolvedValue({
+      approval: null,
+      created: false,
+      duplicate: { kind: "board_comment", approvalId: "04dda101", commentId: "comment-1" },
+    });
+    const res = await request(await createAgentApp({ contextSnapshot: { agentRole: "ceo" } }))
+      .post("/api/companies/company-1/approvals")
+      .send({
+        type: "request_board_approval",
+        payload: {
+          title: "Approve production deployment blocked by permission restriction",
+          action: "deploy alpha",
+          restrictionEvidence: {
+            attemptedEndpoint: "POST /api/approvals",
+            httpStatus: 403,
+            observedAtUtc: "2026-09-16T14:00:00.000Z",
+          },
+        },
+      });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(409);
+    expect(res.body).toMatchObject({ code: "restriction_filing_duplicate", duplicate: { approvalId: "04dda101" } });
+    expect(mockApprovalService.createOrReuseBoardApproval).toHaveBeenCalledWith(expect.objectContaining({ restrictionFiling: true }));
   });
 
   it("reuses an equivalent pending deployment approval instead of creating another", async () => {

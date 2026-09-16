@@ -133,6 +133,13 @@ describe("Board approval governance", () => {
     })).toMatchObject({ allowed: true, asserted: true });
   });
 
+  it("does not mistake an ordinary dependency block for a restriction assertion", () => {
+    expect(validateRestrictionFiling({
+      title: "Approve the implementation strategy",
+      summary: "The work is blocked by TOT-5125.",
+    })).toMatchObject({ allowed: true, asserted: false });
+  });
+
   it("rejects SSH failure as evidence for the local Paperclip host", () => {
     expect(validateRestrictionFiling({
       title: "Access to 172.31.16.75 was restricted",

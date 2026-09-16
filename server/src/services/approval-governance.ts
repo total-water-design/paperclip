@@ -110,7 +110,11 @@ function proposedActionText(payload: Record<string, unknown>): string {
     .join("\n");
 }
 
-const RESTRICTION_ASSERTION_RE = /\b(?:restricted|restriction|denied|forbidden|blocked|not authorized|no permission|access denied|cannot access|sandbox(?:ed)?|ssh failure|permission denied)\b/i;
+// "blocked" alone is deliberately not a restriction assertion: ordinary
+// approval prose commonly describes a dependency as blocked.  Treat it as a
+// restriction only when it is tied to the host named below.  Other terms name
+// an actual capability/access restriction.
+const RESTRICTION_ASSERTION_RE = /\b(?:restricted|restriction|denied|forbidden|not authorized|no permission|access denied|cannot access|sandbox(?:ed)?|ssh failure|permission denied)\b/i;
 const HOST_ACCESS_RE = /\b172\.31\.16\.75\b/;
 
 export type RestrictionFilingDecision =
@@ -124,8 +128,12 @@ export type RestrictionFilingDecision =
  * execution filings without granting either request any extra authority.
  */
 export function validateRestrictionFiling(payload: Record<string, unknown>): RestrictionFilingDecision {
-  const text = payloadText(payload);
-  if (!RESTRICTION_ASSERTION_RE.test(text)) return { allowed: true, asserted: false };
+  const actionText = proposedActionText(payload);
+  const explicitlyAsserted = payload.restrictionAssertion === true || Boolean(payload.restrictionEvidence);
+  const hostRestriction = HOST_ACCESS_RE.test(actionText) && /\bblocked\b/i.test(actionText);
+  if (!explicitlyAsserted && !RESTRICTION_ASSERTION_RE.test(actionText) && !hostRestriction) {
+    return { allowed: true, asserted: false };
+  }
 
   const evidence = payload.restrictionEvidence;
   if (!evidence || typeof evidence !== "object" || Array.isArray(evidence)) {
@@ -155,7 +163,7 @@ export function validateRestrictionFiling(payload: Record<string, unknown>): Res
     };
   }
 
-  if (HOST_ACCESS_RE.test(text)) {
+  if (HOST_ACCESS_RE.test(actionText)) {
     const method = typeof record.observationMethod === "string" ? record.observationMethod : "";
     const sshAttempt = /\bssh\b/i.test(`${endpoint}\n${command}\n${failure}`);
     const allowedMethod = method === "local_filesystem_read" || method === "local_process_read" || method === "sandbox_path_denial";

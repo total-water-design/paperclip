@@ -18,6 +18,30 @@ export function approvalService(db: Db) {
   type ApprovalRecord = typeof approvals.$inferSelect;
   type ResolutionResult = { approval: ApprovalRecord; applied: boolean };
 
+  async function findRestrictionFilingDuplicateInDb(queryDb: any, companyId: string, payload: Record<string, unknown>, excludeApprovalId?: string) {
+    const fingerprint = restrictionActionFingerprint(payload);
+    const priorApprovals = await queryDb.select({ id: approvals.id, payload: approvals.payload })
+      .from(approvals)
+      .where(eq(approvals.companyId, companyId));
+    const matchingApproval = priorApprovals.find((approval: { id: string; payload: Record<string, unknown> }) =>
+      approval.id !== excludeApprovalId && restrictionActionFingerprint(approval.payload) === fingerprint,
+    );
+    if (matchingApproval) return { kind: "approval" as const, approvalId: matchingApproval.id };
+
+    const actionText = restrictionActionText(payload);
+    if (!actionText) return null;
+    const normalizedActionText = actionText.replace(/\s+/g, " ").trim();
+    const comments = await queryDb.select({ id: approvalComments.id, approvalId: approvalComments.approvalId, body: approvalComments.body, authorUserId: approvalComments.authorUserId })
+      .from(approvalComments)
+      .where(eq(approvalComments.companyId, companyId));
+    const matchingComment = comments.find((comment: { id: string; approvalId: string; body: string; authorUserId: string | null }) =>
+      comment.approvalId !== excludeApprovalId
+      && Boolean(comment.authorUserId)
+      && comment.body.toLowerCase().replace(/[^a-z0-9:_./-]+/gi, " ").replace(/\s+/g, " ").trim().includes(normalizedActionText),
+    );
+    return matchingComment ? { kind: "board_comment" as const, approvalId: matchingComment.approvalId, commentId: matchingComment.id } : null;
+  }
+
   async function createOrReuseBoardApproval(input: {
     companyId: string;
     data: Omit<typeof approvals.$inferInsert, "companyId">;
@@ -26,9 +50,16 @@ export function approvalService(db: Db) {
     linkedByUserId?: string | null;
     fingerprint: string;
     reuseApprovedAuthorization: boolean;
-  }): Promise<{ approval: ApprovalRecord; created: boolean }> {
+    restrictionFiling?: boolean;
+  }): Promise<{ approval: ApprovalRecord; created: boolean; duplicate?: undefined } | { approval: null; created: false; duplicate: Awaited<ReturnType<typeof findRestrictionFilingDuplicateInDb>> }> {
     const uniqueIssueIds = Array.from(new Set(input.issueIds)).sort();
     return db.transaction(async (tx) => {
+      if (input.restrictionFiling) {
+        const restrictionFingerprint = restrictionActionFingerprint(input.data.payload);
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`restriction-filing:${input.companyId}:${restrictionFingerprint}`}, 0))`);
+        const duplicate = await findRestrictionFilingDuplicateInDb(tx, input.companyId, input.data.payload);
+        if (duplicate) return { approval: null, created: false, duplicate };
+      }
       await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`board-approval:${input.companyId}:${input.fingerprint}`}, 0))`);
 
       const reusableStatuses = input.reuseApprovedAuthorization
@@ -174,31 +205,21 @@ export function approvalService(db: Db) {
         .where(eq(approvals.id, id))
         .then((rows) => rows[0] ?? null),
 
-    findRestrictionFilingDuplicate: async (companyId: string, payload: Record<string, unknown>, excludeApprovalId?: string) => {
-      const fingerprint = restrictionActionFingerprint(payload);
-      const priorApprovals = await db.select({ id: approvals.id, payload: approvals.payload })
-        .from(approvals)
-        .where(eq(approvals.companyId, companyId));
-      const matchingApproval = priorApprovals.find((approval) =>
-        approval.id !== excludeApprovalId && restrictionActionFingerprint(approval.payload) === fingerprint,
-      );
-      if (matchingApproval) return { kind: "approval" as const, approvalId: matchingApproval.id };
+    findRestrictionFilingDuplicate: (companyId: string, payload: Record<string, unknown>, excludeApprovalId?: string) =>
+      findRestrictionFilingDuplicateInDb(db, companyId, payload, excludeApprovalId),
 
-      // Board comments are a separate source of prior authorization context.
-      // Match the canonical requested action rather than a loose keyword so an
-      // unrelated comment cannot suppress a legitimate filing.
-      const actionText = restrictionActionText(payload);
-      if (!actionText) return null;
-      const comments = await db.select({ id: approvalComments.id, approvalId: approvalComments.approvalId, body: approvalComments.body, authorUserId: approvalComments.authorUserId })
-        .from(approvalComments)
-        .where(eq(approvalComments.companyId, companyId));
-      const matchingComment = comments.find((comment) =>
-        comment.approvalId !== excludeApprovalId
-        && Boolean(comment.authorUserId)
-        && comment.body.toLowerCase().replace(/[^a-z0-9:_./-]+/gi, " ").replace(/\s+/g, " ").trim().includes(actionText),
-      );
-      return matchingComment ? { kind: "board_comment" as const, approvalId: matchingComment.approvalId, commentId: matchingComment.id } : null;
-    },
+    // Duplicate detection and insertion share a transaction-scoped advisory
+    // lock.  A check outside this boundary would allow concurrent filings to
+    // observe no predecessor and both persist.
+    createRestrictionFiling: async (companyId: string, data: Omit<typeof approvals.$inferInsert, "companyId">) =>
+      db.transaction(async (tx) => {
+        const fingerprint = restrictionActionFingerprint(data.payload);
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`restriction-filing:${companyId}:${fingerprint}`}, 0))`);
+        const duplicate = await findRestrictionFilingDuplicateInDb(tx, companyId, data.payload);
+        if (duplicate) return { approval: null, duplicate };
+        const approval = await tx.insert(approvals).values({ ...data, companyId }).returning().then((rows) => rows[0]);
+        return { approval, duplicate: null };
+      }),
 
     findOpenHireApprovalForAgent: async (companyId: string, agentId: string) => {
       const rows = await db
