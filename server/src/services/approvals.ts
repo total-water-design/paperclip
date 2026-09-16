@@ -7,7 +7,7 @@ import { agentService } from "./agents.js";
 import { budgetService } from "./budgets.js";
 import { notifyHireApproved } from "./hire-hook.js";
 import { instanceSettingsService } from "./instance-settings.js";
-import { boardApprovalRequestIdentity } from "./approval-governance.js";
+import { boardApprovalRequestIdentity, restrictionActionFingerprint, restrictionActionText } from "./approval-governance.js";
 
 export function approvalService(db: Db) {
   const agentsSvc = agentService(db);
@@ -173,6 +173,32 @@ export function approvalService(db: Db) {
         .from(approvals)
         .where(eq(approvals.id, id))
         .then((rows) => rows[0] ?? null),
+
+    findRestrictionFilingDuplicate: async (companyId: string, payload: Record<string, unknown>, excludeApprovalId?: string) => {
+      const fingerprint = restrictionActionFingerprint(payload);
+      const priorApprovals = await db.select({ id: approvals.id, payload: approvals.payload })
+        .from(approvals)
+        .where(eq(approvals.companyId, companyId));
+      const matchingApproval = priorApprovals.find((approval) =>
+        approval.id !== excludeApprovalId && restrictionActionFingerprint(approval.payload) === fingerprint,
+      );
+      if (matchingApproval) return { kind: "approval" as const, approvalId: matchingApproval.id };
+
+      // Board comments are a separate source of prior authorization context.
+      // Match the canonical requested action rather than a loose keyword so an
+      // unrelated comment cannot suppress a legitimate filing.
+      const actionText = restrictionActionText(payload);
+      if (!actionText) return null;
+      const comments = await db.select({ id: approvalComments.id, approvalId: approvalComments.approvalId, body: approvalComments.body, authorUserId: approvalComments.authorUserId })
+        .from(approvalComments)
+        .where(eq(approvalComments.companyId, companyId));
+      const matchingComment = comments.find((comment) =>
+        comment.approvalId !== excludeApprovalId
+        && Boolean(comment.authorUserId)
+        && comment.body.toLowerCase().replace(/[^a-z0-9:_./-]+/gi, " ").replace(/\s+/g, " ").trim().includes(actionText),
+      );
+      return matchingComment ? { kind: "board_comment" as const, approvalId: matchingComment.approvalId, commentId: matchingComment.id } : null;
+    },
 
     findOpenHireApprovalForAgent: async (companyId: string, agentId: string) => {
       const rows = await db

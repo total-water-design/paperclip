@@ -7,6 +7,7 @@ const mockApprovalService = vi.hoisted(() => ({
   getById: vi.fn(),
   create: vi.fn(),
   createOrReuseBoardApproval: vi.fn(),
+  findRestrictionFilingDuplicate: vi.fn(),
   cancel: vi.fn(),
   approve: vi.fn(),
   reject: vi.fn(),
@@ -128,6 +129,7 @@ describe("approval routes idempotent retries", () => {
     mockApprovalService.getById.mockReset();
     mockApprovalService.create.mockReset();
     mockApprovalService.createOrReuseBoardApproval.mockReset();
+    mockApprovalService.findRestrictionFilingDuplicate.mockReset();
     mockApprovalService.cancel.mockReset();
     mockApprovalService.approve.mockReset();
     mockApprovalService.reject.mockReset();
@@ -147,6 +149,8 @@ describe("approval routes idempotent retries", () => {
       reason: "allow_test",
       explanation: "Allowed by test mock.",
     });
+    mockApprovalService.findRestrictionFilingDuplicate.mockResolvedValue(null);
+    mockSecretService.normalizeHireApprovalPayloadForPersistence.mockImplementation(async (_companyId: string, payload: Record<string, unknown>) => payload);
     mockHeartbeatService.wakeup.mockResolvedValue({ id: "wake-1" });
     mockIssueApprovalService.listIssuesForApproval.mockResolvedValue([{ id: "issue-1" }]);
     mockLogActivity.mockResolvedValue(undefined);
@@ -423,6 +427,61 @@ describe("approval routes idempotent retries", () => {
     expect(res.body).toMatchObject({ created: false, delegated: true, approval: null });
     expect(mockApprovalService.create).not.toHaveBeenCalled();
     expect(mockApprovalService.createOrReuseBoardApproval).not.toHaveBeenCalled();
+  });
+
+  it("rejects a restriction filing without exact capability evidence", async () => {
+    const res = await request(await createApp())
+      .post("/api/companies/company-1/approvals")
+      .send({
+        type: "hire_agent",
+        payload: { title: "Approval is blocked by an access restriction" },
+      });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(422);
+    expect(res.body).toMatchObject({ code: "restriction_evidence_required" });
+    expect(mockApprovalService.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects SSH failure as host-access evidence before filing an approval", async () => {
+    const res = await request(await createApp())
+      .post("/api/companies/company-1/approvals")
+      .send({
+        type: "hire_agent",
+        payload: {
+          title: "172.31.16.75 access is blocked",
+          restrictionEvidence: {
+            attemptedCommand: "ssh 172.31.16.75",
+            exactFailure: "Connection refused",
+            observedAtUtc: "2026-09-16T14:00:00.000Z",
+            observationMethod: "local_process_read",
+          },
+        },
+      });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(422);
+    expect(res.body).toMatchObject({ code: "host_access_evidence_invalid" });
+    expect(mockApprovalService.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects a repeated restriction filing and links the earlier approval", async () => {
+    mockApprovalService.findRestrictionFilingDuplicate.mockResolvedValue({ kind: "approval", approvalId: "04dda101" });
+    const res = await request(await createApp())
+      .post("/api/companies/company-1/approvals")
+      .send({
+        type: "hire_agent",
+        payload: {
+          title: "Approval 6083fda8 is blocked by a permission restriction",
+          action: "file charter exception",
+          restrictionEvidence: {
+            attemptedEndpoint: "POST /api/approvals",
+            httpStatus: 403,
+            observedAtUtc: "2026-09-16T14:00:00.000Z",
+          },
+        },
+      });
+    expect(res.status, JSON.stringify(res.body)).toBe(409);
+    expect(res.body).toMatchObject({ code: "restriction_filing_duplicate", duplicate: { approvalId: "04dda101" } });
+    expect(mockApprovalService.create).not.toHaveBeenCalled();
   });
 
   it("reuses an equivalent pending deployment approval instead of creating another", async () => {

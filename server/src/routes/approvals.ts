@@ -26,6 +26,7 @@ import { REVIEW_PATH_RECOVERY_INSTRUCTION } from "../services/recovery/review-pa
 import {
   boardApprovalRequestIdentity,
   classifyBoardApprovalRequest,
+  validateRestrictionFiling,
 } from "../services/approval-governance.js";
 
 function redactApprovalPayload<T extends { payload: Record<string, unknown> }>(approval: T): T {
@@ -253,6 +254,23 @@ export function approvalRoutes(
             { strictMode: strictSecretsMode },
           )
         : approvalInput.payload;
+
+    const restrictionFiling = validateRestrictionFiling(normalizedPayload);
+    if (!restrictionFiling.allowed) {
+      res.status(422).json({ error: restrictionFiling.message, code: restrictionFiling.code, details: restrictionFiling.details });
+      return;
+    }
+    if (restrictionFiling.asserted) {
+      const duplicate = await svc.findRestrictionFilingDuplicate(companyId, normalizedPayload);
+      if (duplicate) {
+        res.status(409).json({
+          error: "A prior approval or Board comment already records this requested action",
+          code: "restriction_filing_duplicate",
+          duplicate,
+        });
+        return;
+      }
+    }
 
     const actor = getActorInfo(req);
     const approvalData = {
@@ -633,6 +651,18 @@ export function approvalRoutes(
           )
         : req.body.payload
       : undefined;
+    const restrictionFiling = validateRestrictionFiling(normalizedPayload ?? existing.payload);
+    if (!restrictionFiling.allowed) {
+      res.status(422).json({ error: restrictionFiling.message, code: restrictionFiling.code, details: restrictionFiling.details });
+      return;
+    }
+    if (restrictionFiling.asserted) {
+      const duplicate = await svc.findRestrictionFilingDuplicate(existing.companyId, normalizedPayload ?? existing.payload, existing.id);
+      if (duplicate) {
+        res.status(409).json({ error: "A prior approval or Board comment already records this requested action", code: "restriction_filing_duplicate", duplicate });
+        return;
+      }
+    }
     const approval = await svc.resubmit(id, normalizedPayload);
     const actor = getActorInfo(req);
     await logActivity(db, {

@@ -110,6 +110,82 @@ function proposedActionText(payload: Record<string, unknown>): string {
     .join("\n");
 }
 
+const RESTRICTION_ASSERTION_RE = /\b(?:restricted|restriction|denied|forbidden|blocked|not authorized|no permission|access denied|cannot access|sandbox(?:ed)?|ssh failure|permission denied)\b/i;
+const HOST_ACCESS_RE = /\b172\.31\.16\.75\b/;
+
+export type RestrictionFilingDecision =
+  | { allowed: true; asserted: false }
+  | { allowed: true; asserted: true }
+  | { allowed: false; asserted: true; code: string; message: string; details: Record<string, unknown> };
+
+/**
+ * Validate a claimed restriction before it becomes an approval record.  This is
+ * deliberately payload-based so it covers both Board approvals and human
+ * execution filings without granting either request any extra authority.
+ */
+export function validateRestrictionFiling(payload: Record<string, unknown>): RestrictionFilingDecision {
+  const text = payloadText(payload);
+  if (!RESTRICTION_ASSERTION_RE.test(text)) return { allowed: true, asserted: false };
+
+  const evidence = payload.restrictionEvidence;
+  if (!evidence || typeof evidence !== "object" || Array.isArray(evidence)) {
+    return {
+      allowed: false,
+      asserted: true,
+      code: "restriction_evidence_required",
+      message: "Restriction filings require exact capability evidence",
+      details: { required: ["attemptedEndpoint or attemptedCommand", "httpStatus or exactFailure", "observedAtUtc"] },
+    };
+  }
+  const record = evidence as Record<string, unknown>;
+  const endpoint = typeof record.attemptedEndpoint === "string" ? record.attemptedEndpoint.trim() : "";
+  const command = typeof record.attemptedCommand === "string" ? record.attemptedCommand.trim() : "";
+  const status = record.httpStatus;
+  const failure = typeof record.exactFailure === "string" ? record.exactFailure.trim() : "";
+  const observedAt = typeof record.observedAtUtc === "string" ? record.observedAtUtc.trim() : "";
+  const utcTimestamp = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(observedAt)
+    && !Number.isNaN(Date.parse(observedAt));
+  if ((!endpoint && !command) || (typeof status !== "number" && !failure) || !utcTimestamp) {
+    return {
+      allowed: false,
+      asserted: true,
+      code: "restriction_evidence_incomplete",
+      message: "Restriction evidence must contain an exact attempt, HTTP status or exact failure, and a UTC timestamp",
+      details: { attemptedEndpoint: Boolean(endpoint), attemptedCommand: Boolean(command), httpStatus: typeof status === "number", exactFailure: Boolean(failure), observedAtUtc: utcTimestamp },
+    };
+  }
+
+  if (HOST_ACCESS_RE.test(text)) {
+    const method = typeof record.observationMethod === "string" ? record.observationMethod : "";
+    const sshAttempt = /\bssh\b/i.test(`${endpoint}\n${command}\n${failure}`);
+    const allowedMethod = method === "local_filesystem_read" || method === "local_process_read" || method === "sandbox_path_denial";
+    if (sshAttempt || !allowedMethod) {
+      return {
+        allowed: false,
+        asserted: true,
+        code: "host_access_evidence_invalid",
+        message: "SSH failure is not host-access evidence for 172.31.16.75",
+        details: {
+          requiredObservationMethods: ["local_filesystem_read", "local_process_read", "sandbox_path_denial"],
+          boundedObservation: "TWDS-Observe (TOT-5125)",
+        },
+      };
+    }
+  }
+  return { allowed: true, asserted: true };
+}
+
+export function restrictionActionFingerprint(payload: Record<string, unknown>): string {
+  return createHash("sha256").update(restrictionActionText(payload)).digest("hex");
+}
+
+export function restrictionActionText(payload: Record<string, unknown>): string {
+  return [payload.action, payload.recommendedAction, payload.title, payload.scope, payload.target, payload.environment]
+    .map(normalizedText)
+    .filter(Boolean)
+    .join("\n");
+}
+
 export function classifyBoardApprovalRequest(
   payload: Record<string, unknown>,
 ): BoardApprovalGovernanceDecision {

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   boardApprovalRequestIdentity,
   classifyBoardApprovalRequest,
+  validateRestrictionFiling,
 } from "../services/approval-governance.js";
 
 describe("Board approval governance", () => {
@@ -115,5 +116,41 @@ describe("Board approval governance", () => {
     });
     expect(first.exactIdentityEstablished).toBe(true);
     expect(repeated.fingerprint).toBe(first.fingerprint);
+  });
+
+  it("requires exact attempt, result, and UTC evidence for a restriction filing", () => {
+    expect(validateRestrictionFiling({ title: "Request blocked by permission restriction" })).toMatchObject({
+      allowed: false,
+      code: "restriction_evidence_required",
+    });
+    expect(validateRestrictionFiling({
+      title: "Request blocked by permission restriction",
+      restrictionEvidence: {
+        attemptedEndpoint: "POST /api/approvals",
+        httpStatus: 403,
+        observedAtUtc: "2026-09-16T14:00:00.000Z",
+      },
+    })).toMatchObject({ allowed: true, asserted: true });
+  });
+
+  it("rejects SSH failure as evidence for the local Paperclip host", () => {
+    expect(validateRestrictionFiling({
+      title: "Access to 172.31.16.75 was restricted",
+      restrictionEvidence: {
+        attemptedCommand: "ssh 172.31.16.75",
+        exactFailure: "Connection refused",
+        observedAtUtc: "2026-09-16T14:00:00.000Z",
+        observationMethod: "local_process_read",
+      },
+    })).toMatchObject({ allowed: false, code: "host_access_evidence_invalid" });
+    expect(validateRestrictionFiling({
+      title: "Access to 172.31.16.75 was restricted",
+      restrictionEvidence: {
+        attemptedCommand: "systemctl status paperclip",
+        exactFailure: "sandbox denied /run/systemd/private",
+        observedAtUtc: "2026-09-16T14:00:00.000Z",
+        observationMethod: "sandbox_path_denial",
+      },
+    })).toMatchObject({ allowed: true, asserted: true });
   });
 });
