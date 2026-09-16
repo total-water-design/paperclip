@@ -65,6 +65,19 @@ jobs:
           record pnpm "${root_env[@]}" bash -c 'pnpm --version; test "$(pnpm --version)" = 9.15.4'
           record visudo-version "${root_env[@]}" bash -c 'actual="$(visudo -V | awk "/^Sudo version / {print \$3; exit}")"; printf "visudo=%s\\n" "$actual"; dpkg --compare-versions "$actual" ge 1.9.15p5'
           record staging-root "${root_env[@]}" bash -c 'test ! -e "$1" && install -d -o 0 -g 0 -m 0700 "$1" && realpath "$1" && stat -c "%n uid=%u gid=%g mode=%a type=%F" "$1" && ls -ladn "$1" && find "$1" -xdev -printf "%p uid=%u gid=%g mode=%m type=%y\\n" && test -z "$(find "$1" -mindepth 1 -print -quit)"' _ "$STAGING_ROOT"
+          {
+            printf '## TOT-2922 preconditions (raw)\n\n```text\n'
+            cat "$EVIDENCE_DIR/preconditions.raw.txt"
+            printf '\n```\n'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if test "$failed" -ne 0; then
+            # The Actions artifact is the canonical full packet.  Repeat the
+            # small precondition transcript in a check annotation too, so
+            # read-only GitHub API access can identify an exact failed gate
+            # even when the artifact-storage redirect is unavailable.
+            compact="$(tr '\n' '|' < "$EVIDENCE_DIR/preconditions.raw.txt")"
+            printf '::error title=TOT-2922 preconditions raw::%s\n' "$compact"
+          fi
           exit "$failed"
 
       - name: Install immutable tree dependencies
