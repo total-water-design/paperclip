@@ -173,11 +173,18 @@ export function restoreRetainedRecord(requestJson: string, paths = resolveInstal
   const request = JSON.parse(requestJson) as { operation?: string; sha?: string; payloadPath?: string; source?: string; repo?: string; ref?: string; authorization?: { controllerAuthorizationId?: string } };
   if (request.operation !== "restore-retained-record/v1" || !/^[0-9a-f]{40}$/i.test(request.sha ?? "") || !request.authorization?.controllerAuthorizationId) throw new Error("restore_failed: invalid controller request");
   const manifest = readInstallManifest(paths); if (!manifest || request.source !== "git" || request.ref !== request.sha || !request.payloadPath || !request.repo) throw new Error("restore_failed: incomplete immutable record");
+  const canonicalPayload = path.resolve(paths.installsRoot, "git", request.sha.slice(0, 12));
+  if (path.resolve(request.payloadPath) !== canonicalPayload || canonicalPayload === path.resolve(manifest.payloadPath)) throw new Error("restore_failed: payload identity is not canonical");
+  const authRoot = path.join(paths.cliRoot, "controller-authorizations"); const authPath = path.join(authRoot, `${request.authorization.controllerAuthorizationId}.json`);
+  let authorization: { operation?: string; sha?: string; payloadPath?: string; source?: string; repo?: string; ref?: string };
+  try { const stat = fs.lstatSync(authPath); if (!stat.isFile() || stat.isSymbolicLink() || stat.mode & 0o077) throw new Error("unsafe authorization record"); authorization = JSON.parse(fs.readFileSync(authPath, "utf8")); } catch { throw new Error("restore_failed: authorization is not issued or has already been consumed"); }
+  if (JSON.stringify({ operation: authorization.operation, sha: authorization.sha, payloadPath: authorization.payloadPath, source: authorization.source, repo: authorization.repo, ref: authorization.ref }) !== JSON.stringify({ operation: request.operation, sha: request.sha, payloadPath: request.payloadPath, source: request.source, repo: request.repo, ref: request.ref })) throw new Error("restore_failed: authorization is not bound to this immutable request");
   if (!isBootableManagedPayload(manifest.payloadPath, paths) || !isBootableManagedPayload(request.payloadPath, paths)) throw new Error("restore_failed: active or retained payload is not bootable");
   if (manifest.previous.some((record) => record.sha?.toLowerCase() === request.sha!.toLowerCase())) throw new Error("restore_failed: retained SHA already exists");
   const record: InstallRecord = { source: "git", version: "retained", channel: "pinned", repo: request.repo, ref: request.ref, sha: request.sha, payloadPath: request.payloadPath, installedAt: new Date().toISOString() };
   const next: InstallManifest = { ...manifest, previous: [...manifest.previous, record] };
-  return { backupPath: writeInstallManifestWithBackupAtomic(next, paths), manifest: next };
+  const consumedPath = `${authPath}.consumed`; fs.renameSync(authPath, consumedPath);
+  try { return { backupPath: writeInstallManifestWithBackupAtomic(next, paths), manifest: next }; } catch (error) { fs.renameSync(consumedPath, authPath); throw error; }
 }
 
 async function defaultConfirm(message: string): Promise<boolean> {
@@ -214,6 +221,7 @@ export async function updateCommand(options: UpdateOptions, overrides: Partial<D
   if (options.restoreRetainedRecord) {
     if (options.rollback || options.canary || options.latest || options.version || options.check || options.discardUnsafePrevious) throw new Error("--restore-retained-record cannot be combined with update, rollback, repair, or check options.");
     if (mode !== "managed") throw new Error("--restore-retained-record is only available for managed installs.");
+    if (options.dryRun) { emit(options, { mode, action: "restore-retained-record/v1", dryRun: true }, "Dry-run refuses retained-record controller mutation."); return; }
     const restored = await withInstallStoreLock(async () => restoreRetainedRecord(options.restoreRetainedRecord!, paths), paths, { initialize: false });
     emit(options, { mode, action: "restore-retained-record/v1", previousCount: restored.manifest.previous.length, backupPath: restored.backupPath }, "Retained record appended; current and service were not changed.");
     return;
