@@ -35,6 +35,7 @@ const apiMocks = vi.hoisted(() => ({
   unarchiveFromInbox: vi.fn(),
   agentsList: vi.fn(),
   heartbeatRunsList: vi.fn(),
+  heartbeatRunsLatestFailed: vi.fn(),
   liveRunsForCompany: vi.fn(),
   experimentalSettings: vi.fn(),
   projectsList: vi.fn(),
@@ -87,6 +88,7 @@ vi.mock("../api/agents", () => ({
 vi.mock("../api/heartbeats", () => ({
   heartbeatsApi: {
     list: apiMocks.heartbeatRunsList,
+    latestFailed: apiMocks.heartbeatRunsLatestFailed,
     liveRunsForCompany: apiMocks.liveRunsForCompany,
   },
 }));
@@ -359,6 +361,7 @@ function resetInboxApiMocks() {
   apiMocks.unarchiveFromInbox.mockResolvedValue({ id: "issue-1", archivedAt: new Date() });
   apiMocks.agentsList.mockResolvedValue([]);
   apiMocks.heartbeatRunsList.mockResolvedValue([]);
+  apiMocks.heartbeatRunsLatestFailed.mockResolvedValue([]);
   apiMocks.liveRunsForCompany.mockResolvedValue([]);
   apiMocks.experimentalSettings.mockResolvedValue({ enableIsolatedWorkspaces: false });
   apiMocks.projectsList.mockResolvedValue([]);
@@ -416,7 +419,7 @@ describe("Inbox toolbar", () => {
     routerMock.location.pathname = "/inbox/mine";
     localStorage.setItem("paperclip:inbox:group-by", "none");
     apiMocks.approvalsList.mockResolvedValue([createApproval()]);
-    apiMocks.heartbeatRunsList.mockResolvedValue([createFailedRun()]);
+    apiMocks.heartbeatRunsLatestFailed.mockResolvedValue([createFailedRun()]);
     apiMocks.joinRequestsList.mockResolvedValue([createJoinRequest()]);
 
     const queryClient = new QueryClient({

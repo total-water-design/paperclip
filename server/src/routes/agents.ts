@@ -5282,7 +5282,16 @@ export function agentRoutes(
   router.get("/companies/:companyId/heartbeat-runs/latest-failed", async (req, res) => {
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);
-    const runs = await heartbeat.latestFailed(companyId);
+    const limitParam = req.query.limit as string | undefined;
+    let limit = 200;
+    if (limitParam !== undefined) {
+      limit = Number(limitParam);
+      if (!Number.isInteger(limit) || limit < 1 || limit > 1000) {
+        res.status(400).json({ error: "Invalid limit. Must be an integer between 1 and 1000." });
+        return;
+      }
+    }
+    const runs = await heartbeat.latestFailed(companyId, limit);
     res.json(await Promise.all(runs.map((run) => runRedactions.redactForRun(companyId, run.id, run))));
   });
 

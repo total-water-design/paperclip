@@ -473,7 +473,40 @@ describeEmbeddedPostgres("heartbeat list", () => {
     expect(only.stderrExcerpt ?? null).toBeNull();
 
     // latest-failed uses the bounded summary projection and never returns raw results.
-    expect(only.resultJson).toBeNull();
+    expect(only.resultJson).toEqual({ summary: "boom" });
+    expect(JSON.stringify(only.resultJson)).not.toContain(oversizedStdout.slice(0, 100));
+  });
+
+  it("latestFailed enforces its caller-supplied result bound", async () => {
+    const companyId = randomUUID();
+    const agent1 = randomUUID();
+    const agent2 = randomUUID();
+    await seedCompany(db, companyId);
+    await seedAgent(db, companyId, agent1);
+    await seedAgent(db, companyId, agent2);
+    await db.insert(heartbeatRuns).values([
+      {
+        id: randomUUID(),
+        companyId,
+        agentId: agent1,
+        invocationSource: "assignment",
+        status: "failed",
+        createdAt: new Date("2026-05-01T00:00:00Z"),
+      },
+      {
+        id: randomUUID(),
+        companyId,
+        agentId: agent2,
+        invocationSource: "assignment",
+        status: "timed_out",
+        createdAt: new Date("2026-05-02T00:00:00Z"),
+      },
+    ]);
+
+    const failed = await heartbeatService(db).latestFailed(companyId, 1);
+
+    expect(failed).toHaveLength(1);
+    expect(failed[0]?.agentId).toBe(agent2);
   });
 
 });

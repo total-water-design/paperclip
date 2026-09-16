@@ -19736,41 +19736,69 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       return rows.map((row) => ({ ...row, count: Number(row.count) }));
     },
 
-    latestFailed: async (companyId: string) => {
+    latestFailed: async (companyId: string, limit = 200) => {
       const latestRows = await db.execute(sql`
-        SELECT DISTINCT ON (agent_id) id, status
-        FROM heartbeat_runs
-        WHERE company_id = ${companyId}
-        ORDER BY agent_id, created_at DESC, id DESC
+        WITH latest_per_agent AS (
+          SELECT DISTINCT ON (agent_id) id, status, created_at
+          FROM heartbeat_runs
+          WHERE company_id = ${companyId}
+          ORDER BY agent_id, created_at DESC, id DESC
+        )
+        SELECT id
+        FROM latest_per_agent
+        WHERE status IN ('failed', 'timed_out')
+        ORDER BY created_at DESC, id DESC
+        LIMIT ${limit}
       `);
-      // Filter to only those whose most recent run was a failure.
       // db.execute may return rows as a plain array (postgres-js) or wrapped in
-      // { rows: [] } (node-postgres); normalise before filtering.
+      // { rows: [] } (node-postgres); normalise before selecting their bounded
+      // summaries through the same path as list().
       const rawRows: Array<Record<string, unknown>> = Array.isArray(latestRows)
         ? (latestRows as Array<Record<string, unknown>>)
         : ((latestRows as { rows?: Array<Record<string, unknown>> }).rows ?? []);
-      const failedIds = rawRows
-        .filter((r) => r.status === "failed" || r.status === "timed_out")
-        .map((r) => r.id as string);
+      const failedIds = rawRows.map((r) => r.id as string);
 
       if (failedIds.length === 0) {
         return [];
       }
 
-      // Re-select the failed run ids through the SAME typed projection + summarization
-      // path that list() uses, so latestFailed() returns the same bounded,
-      // encoding-safe, correctly-shaped objects.
+      const safeForLegacyEncoding = await hasUnsafeTextProjectionDatabase();
+      // Re-select the bounded failed ids through the same typed projection and
+      // summarization path as list(), never returning raw result JSON.
       const rows = await db
-        .select({ ...heartbeatRunSummaryListColumns, ...heartbeatRunListContextColumns })
+        .select(
+          safeForLegacyEncoding
+            ? {
+                ...heartbeatRunListColumns,
+                error: sql<string | null>`NULL`.as("error"),
+                ...heartbeatRunListContextColumns,
+              }
+            : {
+                ...heartbeatRunListColumns,
+                ...heartbeatRunListContextColumns,
+                ...heartbeatRunListResultColumns,
+              },
+        )
         .from(heartbeatRuns)
         .where(and(eq(heartbeatRuns.companyId, companyId), inArray(heartbeatRuns.id, failedIds)))
-        .orderBy(desc(heartbeatRuns.createdAt), desc(heartbeatRuns.id));
+        .orderBy(desc(heartbeatRuns.createdAt), desc(heartbeatRuns.id))
+        .limit(limit);
       return rows.map((row) => {
         const {
           contextIssueId, contextTaskId, contextTaskKey, contextCommentId,
           contextWakeCommentId, contextWakeReason, contextWakeSource, contextWakeTriggerDetail,
+          resultSummary, resultResult, resultMessage, resultError,
+          resultTotalCostUsd, resultCostUsd, resultCostUsdCamel,
           ...rest
-        } = row;
+        } = row as typeof row & {
+          resultSummary?: string | null;
+          resultResult?: string | null;
+          resultMessage?: string | null;
+          resultError?: string | null;
+          resultTotalCostUsd?: string | null;
+          resultCostUsd?: string | null;
+          resultCostUsdCamel?: string | null;
+        };
         return {
           ...rest,
           contextSnapshot: summarizeHeartbeatRunContextSnapshot({
@@ -19779,7 +19807,17 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
             wakeReason: contextWakeReason, wakeSource: contextWakeSource,
             wakeTriggerDetail: contextWakeTriggerDetail,
           }),
-          resultJson: null,
+          resultJson: safeForLegacyEncoding
+            ? null
+            : summarizeHeartbeatRunListResultJson({
+                summary: resultSummary,
+                result: resultResult,
+                message: resultMessage,
+                error: resultError,
+                totalCostUsd: resultTotalCostUsd,
+                costUsd: resultCostUsd,
+                costUsdCamel: resultCostUsdCamel,
+              }),
         };
       });
     },
