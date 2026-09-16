@@ -19,7 +19,6 @@ jobs:
     env:
       STAGING_ROOT: /var/lib/paperclip/staging/TOT-2922-a7d87139
       EVIDENCE_DIR: ${{ github.workspace }}/tot-2922-raw-evidence
-      COREPACK_HOME: ${{ runner.temp }}/tot-2922-corepack
     steps:
       - uses: actions/checkout@v4
         with:
@@ -33,6 +32,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          export COREPACK_HOME="${RUNNER_TEMP:?}/tot-2922-corepack"
           corepack enable
           corepack prepare pnpm@9.15.4 --activate
           test "$(pnpm --version)" = "9.15.4"
@@ -41,6 +41,7 @@ jobs:
         shell: bash
         run: |
           set -uo pipefail
+          export COREPACK_HOME="${RUNNER_TEMP:?}/tot-2922-corepack"
           mkdir -p "$EVIDENCE_DIR"
           : > "$EVIDENCE_DIR/preconditions.raw.txt"
           # Hosted runners start as the unprivileged `runner` account.  The
@@ -68,12 +69,16 @@ jobs:
 
       - name: Install immutable tree dependencies
         shell: bash
-        run: pnpm install --frozen-lockfile
+        run: |
+          set -euo pipefail
+          export COREPACK_HOME="${RUNNER_TEMP:?}/tot-2922-corepack"
+          pnpm install --frozen-lockfile
 
       - name: Run seven hot-restart continuity cases
         shell: bash
         run: |
           set -euo pipefail
+          export COREPACK_HOME="${RUNNER_TEMP:?}/tot-2922-corepack"
           cases=(
             'captures a hot-restart shutdown snapshot without interrupting running runs'
             'snapshots and drains a server-stdio ACP run before embedded database shutdown'
