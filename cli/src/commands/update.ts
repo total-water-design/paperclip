@@ -5,7 +5,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import * as p from "@clack/prompts";
 import pc from "picocolors";
-import { buildNextManifest, flipCurrentAtomic, isBootableManagedPayload, isManagedExecutable, pruneInstallPayloads, readInstallManifest, resolveInstallStorePaths, withInstallStoreLock, writeInstallManifestAtomic, type InstallChannel, type InstallManifest, type InstallRecord, type InstallStorePaths } from "../install-store.js";
+import { buildNextManifest, flipCurrentAtomic, isBootableManagedPayload, isManagedExecutable, pruneInstallPayloads, readInstallManifest, resolveInstallStorePaths, withInstallStoreLock, writeInstallManifestAtomic, writeInstallManifestWithBackupAtomic, type InstallChannel, type InstallManifest, type InstallRecord, type InstallStorePaths } from "../install-store.js";
 import { dbBackupCommand } from "./db-backup.js";
 import { installGitPayload, installNpmPayload, PUBLIC_NPM_REGISTRY, resolveGitHubRef, resolvePublishedVersion, type CommandRunner } from "./install.js";
 import { resolvePaperclipInstanceId, resolvePaperclipInstanceRoot } from "../config/home.js";
@@ -16,7 +16,7 @@ import { packageVersion } from "../version.js";
 
 const execFileAsync = promisify(execFile);
 export type InstallMode = "managed" | "global-npm" | "npx" | "source" | "unknown";
-export type UpdateOptions = { canary?: boolean; latest?: boolean; version?: string; rollback?: boolean; discardUnsafePrevious?: string; check?: boolean; dryRun?: boolean; json?: boolean; yes?: boolean; backup?: boolean };
+export type UpdateOptions = { canary?: boolean; latest?: boolean; version?: string; rollback?: boolean; discardUnsafePrevious?: string; restoreRetainedRecord?: string; check?: boolean; dryRun?: boolean; json?: boolean; yes?: boolean; backup?: boolean };
 type Dependencies = { executablePath: string; runCommand: CommandRunner; backup: () => Promise<void>; confirm: (message: string) => Promise<boolean>; now: () => Date; paths: InstallStorePaths; restartActiveService: (expectedVersion: string) => Promise<boolean>; hasInstanceData: () => boolean };
 
 const DATABASE_UNREACHABLE_CODES = new Set(["ECONNREFUSED", "EHOSTUNREACH", "ENETUNREACH", "ETIMEDOUT"]);
@@ -169,6 +169,17 @@ function discardUnsafePrevious(
   return { manifest: next, removed: target };
 }
 
+export function restoreRetainedRecord(requestJson: string, paths = resolveInstallStorePaths()): { backupPath: string; manifest: InstallManifest } {
+  const request = JSON.parse(requestJson) as { operation?: string; sha?: string; payloadPath?: string; source?: string; repo?: string; ref?: string; authorization?: { controllerAuthorizationId?: string } };
+  if (request.operation !== "restore-retained-record/v1" || !/^[0-9a-f]{40}$/i.test(request.sha ?? "") || !request.authorization?.controllerAuthorizationId) throw new Error("restore_failed: invalid controller request");
+  const manifest = readInstallManifest(paths); if (!manifest || request.source !== "git" || request.ref !== request.sha || !request.payloadPath || !request.repo) throw new Error("restore_failed: incomplete immutable record");
+  if (!isBootableManagedPayload(manifest.payloadPath, paths) || !isBootableManagedPayload(request.payloadPath, paths)) throw new Error("restore_failed: active or retained payload is not bootable");
+  if (manifest.previous.some((record) => record.sha?.toLowerCase() === request.sha!.toLowerCase())) throw new Error("restore_failed: retained SHA already exists");
+  const record: InstallRecord = { source: "git", version: "retained", channel: "pinned", repo: request.repo, ref: request.ref, sha: request.sha, payloadPath: request.payloadPath, installedAt: new Date().toISOString() };
+  const next: InstallManifest = { ...manifest, previous: [...manifest.previous, record] };
+  return { backupPath: writeInstallManifestWithBackupAtomic(next, paths), manifest: next };
+}
+
 async function defaultConfirm(message: string): Promise<boolean> {
   if (!process.stdin.isTTY || !process.stdout.isTTY) return false;
   const answer = await p.confirm({ message, initialValue: false });
@@ -200,6 +211,13 @@ export async function updateCommand(options: UpdateOptions, overrides: Partial<D
   const runCommand = overrides.runCommand ?? execFileAsync;
   const mode = detectInstallMode(executablePath, paths);
   const manifest = readInstallManifest(paths);
+  if (options.restoreRetainedRecord) {
+    if (options.rollback || options.canary || options.latest || options.version || options.check || options.discardUnsafePrevious) throw new Error("--restore-retained-record cannot be combined with update, rollback, repair, or check options.");
+    if (mode !== "managed") throw new Error("--restore-retained-record is only available for managed installs.");
+    const restored = await withInstallStoreLock(async () => restoreRetainedRecord(options.restoreRetainedRecord!, paths), paths, { initialize: false });
+    emit(options, { mode, action: "restore-retained-record/v1", previousCount: restored.manifest.previous.length, backupPath: restored.backupPath }, "Retained record appended; current and service were not changed.");
+    return;
+  }
   if (options.discardUnsafePrevious) {
     if (options.rollback || options.canary || options.latest || options.version || options.check) {
       throw new Error("--discard-unsafe-previous cannot be combined with update, rollback, or check options.");

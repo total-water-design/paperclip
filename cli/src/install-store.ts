@@ -244,6 +244,26 @@ export function writeInstallManifestAtomic(
   }
 }
 
+/** Append-only controller writer: preserves an exact backup until validation. */
+export function writeInstallManifestWithBackupAtomic(manifest: InstallManifest, paths = resolveInstallStorePaths()): string {
+  ensurePrivateDirectory(paths.cliRoot);
+  const original = fs.readFileSync(paths.manifestPath);
+  const backupPath = path.join(paths.cliRoot, `install.json.controller-backup-${Date.now()}`);
+  const temporaryPath = `${paths.manifestPath}.controller-tmp-${process.pid}-${Date.now()}`;
+  try {
+    fs.writeFileSync(backupPath, original, { mode: fs.statSync(paths.manifestPath).mode & 0o777, flag: "wx" });
+    const backupFd = fs.openSync(backupPath, "r"); fs.fsyncSync(backupFd); fs.closeSync(backupFd);
+    fs.writeFileSync(temporaryPath, `${JSON.stringify(manifest, null, 2)}\n`, { mode: fs.statSync(paths.manifestPath).mode & 0o777, flag: "wx" });
+    const tempFd = fs.openSync(temporaryPath, "r"); fs.fsyncSync(tempFd); fs.closeSync(tempFd);
+    fs.renameSync(temporaryPath, paths.manifestPath);
+    const directoryFd = fs.openSync(paths.cliRoot, "r"); fs.fsyncSync(directoryFd); fs.closeSync(directoryFd);
+    return backupPath;
+  } catch (error) {
+    try { fs.writeFileSync(temporaryPath, original, { mode: fs.statSync(paths.manifestPath).mode & 0o777, flag: "w" }); fs.renameSync(temporaryPath, paths.manifestPath); } catch { /* preserve original error */ }
+    throw error;
+  } finally { fs.rmSync(temporaryPath, { force: true }); }
+}
+
 function assertPayloadPath(payloadPath: string, paths: InstallStorePaths): void {
   const relative = path.relative(paths.installsRoot, path.resolve(payloadPath));
   if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {

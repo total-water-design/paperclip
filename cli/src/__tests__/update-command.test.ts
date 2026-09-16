@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flipCurrentAtomic, initializeInstallStore, payloadPathFor, readInstallManifest, resolveInstallStorePaths, writeInstallManifestAtomic, type InstallManifest, type InstallRecord } from "../install-store.js";
 import type { CommandRunner } from "../commands/install.js";
-import { compareVersions, detectInstallMode, resolveUpdateRequest, rollbackManagedInstall, updateCommand } from "../commands/update.js";
+import { compareVersions, detectInstallMode, resolveUpdateRequest, restoreRetainedRecord, rollbackManagedInstall, updateCommand } from "../commands/update.js";
 
 let root: string;
 let previousHome: string | undefined;
@@ -36,6 +36,21 @@ afterEach(() => {
 });
 
 describe("update command", () => {
+  it("appends an authorized immutable retained record without changing current", () => {
+    const paths = resolveInstallStorePaths(); initializeInstallStore(paths);
+    const active = payloadPathFor(paths, "npm", "active"); const executable = createPayload(active, "1.0.0"); flipCurrentAtomic(active, paths);
+    const sha = "72b50614011b457093cd5e3be189a4ca7a9aab75"; const retained = payloadPathFor(paths, "git", sha.slice(0, 12)); createPayload(retained, "1.0.0");
+    writeInstallManifestAtomic({ schemaVersion: 1, ...record(active, "1.0.0"), previous: [] }, paths); const currentBefore = fs.readlinkSync(paths.currentPath);
+    const result = restoreRetainedRecord(JSON.stringify({ operation: "restore-retained-record/v1", sha, payloadPath: retained, source: "git", repo: "paperclipai/paperclip", ref: sha, authorization: { controllerAuthorizationId: "single-use" } }), paths);
+    expect(fs.readlinkSync(paths.currentPath)).toBe(currentBefore); expect(result.manifest.previous).toHaveLength(1); expect(readInstallManifest(paths)?.previous[0]?.sha).toBe(sha); expect(fs.existsSync(result.backupPath)).toBe(true);
+  });
+  it("refuses duplicate and malformed retained-record requests without mutation", () => {
+    const paths = resolveInstallStorePaths(); initializeInstallStore(paths); const active = payloadPathFor(paths, "npm", "active"); createPayload(active, "1.0.0"); flipCurrentAtomic(active, paths);
+    const sha = "72b50614011b457093cd5e3be189a4ca7a9aab75"; const retained = payloadPathFor(paths, "git", sha.slice(0, 12)); createPayload(retained, "1.0.0");
+    const manifest: InstallManifest = { schemaVersion: 1, ...record(active, "1.0.0"), previous: [{ source: "git", version: "1.0.0", channel: "pinned", repo: "paperclipai/paperclip", ref: sha, sha, payloadPath: retained, installedAt: "2026-01-01T00:00:00Z" }] }; writeInstallManifestAtomic(manifest, paths); const before = fs.readFileSync(paths.manifestPath, "utf8");
+    expect(() => restoreRetainedRecord(JSON.stringify({ operation: "restore-retained-record/v1", sha, payloadPath: retained, source: "git", repo: "paperclipai/paperclip", ref: sha, authorization: { controllerAuthorizationId: "single-use" } }), paths)).toThrow("already exists");
+    expect(() => restoreRetainedRecord("{}", paths)).toThrow("invalid controller request"); expect(fs.readFileSync(paths.manifestPath, "utf8")).toBe(before);
+  });
   it("orders SemVer prerelease identifiers numerically", () => {
     expect(compareVersions("1.0.0-canary.10", "1.0.0-canary.2")).toBeGreaterThan(0);
     expect(compareVersions("1.0.0-1", "1.0.0-alpha")).toBeLessThan(0);

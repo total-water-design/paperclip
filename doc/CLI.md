@@ -169,6 +169,7 @@ paperclipai update
 paperclipai update --latest|--canary|--version <version>
 paperclipai update --rollback
 paperclipai update --discard-unsafe-previous <full-40-character-git-sha> [--dry-run] [--json]
+paperclipai update --restore-retained-record '<authorized-request-json>' [--json]
 paperclipai upgrade
 paperclipai uninstall
 ```

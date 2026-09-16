@@ -84,6 +84,7 @@ program
   .option("--version <version>", "Install an exact published version")
   .option("--rollback", "Flip back to the retained previous managed payload")
   .option("--discard-unsafe-previous <sha>", "Remove one non-bootable retained git payload record without changing current or restarting services")
+  .option("--restore-retained-record <request-json>", "Append one authorized immutable retained-record request without changing current or services")
   .option("--check", "Check for an available update without applying it")
   .option("--dry-run", "Print the action without changing anything")
   .option("--json", "Print machine-readable output")

@@ -210,6 +210,7 @@ the active manifest head fields, activation authority, or service state:
 ```sh
 paperclipai update --discard-unsafe-previous <full-40-character-git-sha> --dry-run --json
 paperclipai update --discard-unsafe-previous <full-40-character-git-sha> --json
+paperclipai update --restore-retained-record '<authorized-request-json>' --json
 ```
 
 This is deliberately narrower than rollback or update: it takes the managed
