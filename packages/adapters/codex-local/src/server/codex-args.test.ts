@@ -1,5 +1,6 @@
+import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
-import { buildCodexExecArgs } from "./codex-args.js";
+import { buildCodexExecArgs, buildManagedNetworkProxyConfig } from "./codex-args.js";
 
 describe("buildCodexExecArgs", () => {
   it("rewrites the legacy bare gpt-5.6 alias to gpt-5.6-sol and applies fast mode", () => {
@@ -156,6 +157,75 @@ describe("buildCodexExecArgs", () => {
       "-",
     ]);
   });
+
+  it("pins task shell commands to Codex's managed domain proxy", () => {
+    const result = buildCodexExecArgs({}, { taskNetworkAllowlist: ["totalwaterdesign.com"] });
+
+    expect(result.args).toEqual([
+      "exec",
+      "--json",
+      "--sandbox",
+      "workspace-write",
+      "-c",
+      "sandbox_workspace_write.network_access=true",
+      "-c",
+      'features.network_proxy={enabled=true,enable_socks5=false,allow_upstream_proxy=true,domains={"totalwaterdesign.com"="allow"}}',
+      "-",
+    ]);
+  });
+
+  it("preserves an empty commissioned task allowlist as fail-closed", () => {
+    const result = buildCodexExecArgs({}, { taskNetworkAllowlist: [] });
+    expect(result.args).toContain(
+      'features.network_proxy={enabled=true,enable_socks5=false,allow_upstream_proxy=true,domains={}}',
+    );
+  });
+
+  it("rejects sandbox bypass under commissioned network confinement", () => {
+    expect(() => buildCodexExecArgs(
+      { dangerouslyBypassApprovalsAndSandbox: true },
+      { taskNetworkAllowlist: ["totalwaterdesign.com"] },
+    )).toThrow("cannot be combined");
+    expect(() => buildCodexExecArgs(
+      { extraArgs: ["--dangerously-bypass-approvals-and-sandbox"] },
+      { taskNetworkAllowlist: [] },
+    )).toThrow("cannot be combined");
+    expect(() => buildCodexExecArgs(
+      { extraArgs: ["--sandbox", "danger-full-access"] },
+      { taskNetworkAllowlist: ["totalwaterdesign.com"] },
+    )).toThrow("cannot be combined");
+    expect(() => buildCodexExecArgs(
+      { extraArgs: ["-c", "features.network_proxy=false"] },
+      { taskNetworkAllowlist: ["totalwaterdesign.com"] },
+    )).toThrow("cannot be combined");
+    for (const extraArgs of [
+      ["-cfeatures.network_proxy=false"],
+      ["--config=features.network_proxy=false"],
+      ["--disable", "network_proxy"],
+      ["--disable=network_proxy"],
+      ["--enable", "network_proxy"],
+      ["-sdanger-full-access"],
+      ["-s=danger-full-access"],
+    ]) {
+      expect(() => buildCodexExecArgs(
+        { extraArgs },
+        { taskNetworkAllowlist: ["totalwaterdesign.com"] },
+      )).toThrow("cannot be combined");
+    }
+  });
+
+  it.runIf(Boolean(process.env.PAPERCLIP_TEST_CODEX_COMMAND))(
+    "loads the production managed-network value in the real Codex CLI",
+    () => {
+      const result = spawnSync(
+        process.env.PAPERCLIP_TEST_CODEX_COMMAND!,
+        ["-c", buildManagedNetworkProxyConfig(["totalwaterdesign.com"]), "features", "list"],
+        { encoding: "utf8" },
+      );
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toMatch(/^network_proxy\s+experimental\s+true$/m);
+    },
+  );
 
   it("does not add a second --skip-git-repo-check when extraArgs already carry it", () => {
     const result = buildCodexExecArgs(
