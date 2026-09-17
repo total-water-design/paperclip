@@ -1807,7 +1807,7 @@ function AgentOverview({
           <IssueStatusChart issues={assignedIssues} />
         </ChartCard>
         <ChartCard title="Success Rate" subtitle="Last 14 days">
-          <SuccessRateChart runs={runs} />
+          <SuccessRateChart stats={runStats} />
         </ChartCard>
       </div>
 
