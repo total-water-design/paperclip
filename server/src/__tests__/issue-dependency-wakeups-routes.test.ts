@@ -123,6 +123,10 @@ async function createApp() {
     limit: vi.fn(async () => [{ id: "11111111-1111-4111-8111-111111111111" }]),
     then: async (resolve: (rows: unknown[]) => unknown) => resolve(emptyRows),
   };
+  // The route records successful handoffs with a deterministic ordering before
+  // it limits the result. Keep the lightweight query double chainable so the
+  // route reaches its intended 200 response instead of failing on the stub.
+  Object.assign(whereResult, { orderBy: vi.fn(() => whereResult) });
   const query: Record<string, unknown> = {};
   query.innerJoin = vi.fn(() => query);
   query.where = vi.fn(() => whereResult);
