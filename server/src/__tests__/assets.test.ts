@@ -270,7 +270,7 @@ describe("POST /api/companies/:companyId/assets/images", () => {
     );
 
     expect(res.status).toBe(422);
-    expect(res.body.error).toBe("File is larger than the 64 MB limit");
+    expect(res.body.error).toBe("File is larger than the 10 MB limit");
   });
 });
 
@@ -374,7 +374,7 @@ describe("POST /api/companies/:companyId/logo", () => {
     );
 
     expect(res.status).toBe(422);
-    expect(res.body.error).toBe("Image is larger than the 64 MB limit");
+    expect(res.body.error).toBe("Image is larger than the 10 MB limit");
   });
 
   it("rejects unsupported image types", async () => {
