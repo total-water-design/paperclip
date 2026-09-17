@@ -1,6 +1,7 @@
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "@playwright/test";
+import { chromiumLaunchOptions } from "../playwright-shared";
 
 const testDir = dirname(fileURLToPath(import.meta.url));
 const snapshotDir = process.env.STORYBOOK_VISUAL_SNAPSHOT_DIR
@@ -31,6 +32,7 @@ export default defineConfig({
   snapshotPathTemplate: `${snapshotDir}/{arg}{ext}`,
   use: {
     browserName: "chromium",
+    launchOptions: chromiumLaunchOptions,
     viewport: { width: 1200, height: 800 },
     deviceScaleFactor: 1,
     // JS-driven tickers/timers key off prefers-reduced-motion for
