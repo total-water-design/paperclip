@@ -630,6 +630,15 @@ export const stalledReviewDecisionSchema = z.object({
 
 export type StalledReviewDecision = z.infer<typeof stalledReviewDecisionSchema>;
 
+export const reconcileLostReviewDecisionSchema = z.object({
+  candidate: z.string().regex(/^[0-9a-f]{40}$/),
+  stageId: z.string().guid(),
+  approvingUserId: z.string().trim().min(1).max(255),
+  evidenceCommentId: z.string().guid(),
+}).strict();
+
+export type ReconcileLostReviewDecision = z.infer<typeof reconcileLostReviewDecisionSchema>;
+
 export const checkoutIssueSchema = z.object({
   agentId: z.string().guid(),
   expectedStatuses: z.array(z.enum(ISSUE_STATUSES)).nonempty(),

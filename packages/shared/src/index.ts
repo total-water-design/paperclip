@@ -1808,6 +1808,7 @@ export {
   issueBlockedInboxStateSchema,
   updateIssueSchema,
   stalledReviewDecisionSchema,
+  reconcileLostReviewDecisionSchema,
   issueExecutionPolicySchema,
   issueExecutionStateSchema,
   resolveIssueRecoveryActionSchema,
