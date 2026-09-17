@@ -2,7 +2,7 @@ queue_rules:
   - name: paperclip-prs
     update_method: rebase
     merge_conditions:
-      - check-success=Summary
+      - check-success=ci / verify
       - check-success=Gitar
       - "#approved-reviews-by>=1"
       - "#changes-requested-reviews-by=0"
@@ -19,7 +19,7 @@ merge_protections:
     if:
       - base=master
     success_conditions:
-      - check-success=Summary
+      - check-success=ci / verify
       - check-success=Gitar
       - "#approved-reviews-by>=1"
       - "#changes-requested-reviews-by=0"
@@ -38,7 +38,7 @@ pull_request_rules:
     conditions:
       - base=master
       - -draft
-      - check-success=Summary
+      - check-success=ci / verify
       - check-success=Gitar
       - "#approved-reviews-by>=1"
       - "#changes-requested-reviews-by=0"
