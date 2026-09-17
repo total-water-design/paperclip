@@ -92,6 +92,15 @@ export function accessService(db: Db) {
     return authorization.decide(input);
   }
 
+  /**
+   * Reporting-chain predicate for operations whose authority must remain
+   * manager-scoped even when their companion permission can be directly
+   * granted for other purposes.
+   */
+  async function isManagerOf(companyId: string, managerAgentId: string, assigneeAgentId: string) {
+    return authorization.isManagerOf(companyId, managerAgentId, assigneeAgentId);
+  }
+
   async function listMembers(companyId: string) {
     return db
       .select()
@@ -782,6 +791,7 @@ export function accessService(db: Db) {
   return {
     isInstanceAdmin,
     decide,
+    isManagerOf,
     canUser,
     hasPermission,
     getMembership,
