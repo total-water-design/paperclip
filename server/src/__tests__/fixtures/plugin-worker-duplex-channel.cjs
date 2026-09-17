@@ -227,6 +227,14 @@ rl.on("line", (line) => {
       return;
     }
 
+    if (directive.emitFramesAfterFirstWrite === true) {
+      // The test drives the first bound write after openDuplexChannel resolves.
+      // Do not also schedule the normal post-open emission: setImmediate can run
+      // before the host has bound the open reply, which is precisely the race
+      // these tests must not depend on.
+      return;
+    }
+
     // Emit the scripted data and the exit after the open reply, so the host
     // binds the route first. Each frame echoes the exact pair; a test overrides
     // `sid` or `rid` to force a mismatch.
