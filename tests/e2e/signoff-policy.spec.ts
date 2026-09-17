@@ -468,6 +468,58 @@ test.describe("Signoff execution policy", () => {
     expect(step5Issue.executionState.lastDecisionOutcome).toBe("approved");
   });
 
+  test("active human approver submits the Properties decision form without browser errors", async ({ page }) => {
+    const browserErrors: string[] = [];
+    page.on("pageerror", (error) => browserErrors.push(`pageerror: ${error.message}`));
+    page.on("console", (message) => {
+      if (message.type() === "error") browserErrors.push(`console: ${message.text()}`);
+    });
+
+    const issue = await createIssueWithPolicy(ctx, "Human approval decision", [
+      { type: "approval", participants: [{ type: "user", userId: "local-board" }] },
+    ]);
+
+    const routeToApproval = await agentCheckoutAndPatch(
+      ctx.boardRequest,
+      ctx.executor,
+      issue.id,
+      ["in_progress"],
+      { status: "done", comment: "Ready for human approval." },
+    );
+    expect(routeToApproval.ok()).toBe(true);
+    const pendingIssue = await routeToApproval.json();
+    expect(pendingIssue.status).toBe("in_review");
+    expect(pendingIssue.executionState).toMatchObject({
+      status: "pending",
+      currentStageType: "approval",
+      currentParticipant: { type: "user", userId: "local-board" },
+    });
+
+    await page.goto(`/${ctx.companyPrefix}/issues/${issue.identifier}`);
+    await expect(page.getByTestId("execution-gate-self")).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText("Approval pending with you")).toBeVisible();
+
+    await page.getByTestId("execution-gate-comment").fill("Approved from the browser.");
+    const decisionResponse = page.waitForResponse((response) =>
+      response.url().includes(`/api/issues/${issue.id}`)
+      && response.request().method() === "PATCH"
+      && response.status() === 200,
+    );
+    await page.getByTestId("execution-gate-approve").click();
+    await decisionResponse;
+    await expect(page.getByTestId("execution-gate-self")).toHaveCount(0);
+
+    const result = await ctx.boardRequest.get(`${BASE_URL}/api/issues/${issue.id}`);
+    expect(result.ok()).toBe(true);
+    const completedIssue = await result.json();
+    expect(completedIssue.status).toBe("done");
+    expect(completedIssue.executionState).toMatchObject({
+      status: "completed",
+      lastDecisionOutcome: "approved",
+    });
+    expect(browserErrors).toEqual([]);
+  });
+
   test("changes requested: reviewer bounces back to executor", async () => {
     const issue = await createIssueWithPolicy(ctx, "Signoff changes requested");
     const issueId = issue.id;
