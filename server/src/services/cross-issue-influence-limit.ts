@@ -1,6 +1,6 @@
 import { and, count, eq } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
-import { activityLog, heartbeatRuns } from "@paperclipai/db";
+import { activityLog, heartbeatRuns, issues } from "@paperclipai/db";
 import { isUuidLike, issueWriteDenialResponse } from "@paperclipai/shared";
 import { forbidden } from "../errors.js";
 import { logger } from "../middleware/logger.js";
@@ -41,6 +41,22 @@ function readRunSourceIssueId(contextSnapshot: unknown) {
     if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
   }
   return null;
+}
+
+async function readCheckoutSourceIssueId(
+  tx: Parameters<Parameters<Db["transaction"]>[0]>[0],
+  input: { companyId: string; runId: string; agentId: string },
+) {
+  const matches = await tx
+    .select({ id: issues.id })
+    .from(issues)
+    .where(and(
+      eq(issues.companyId, input.companyId),
+      eq(issues.assigneeAgentId, input.agentId),
+      eq(issues.checkoutRunId, input.runId),
+    ))
+    .limit(2);
+  return matches.length === 1 ? matches[0]!.id : null;
 }
 
 export function evaluateCrossIssueInfluenceLimit(input: {
@@ -109,7 +125,8 @@ export async function observeCrossIssueInfluence(
       throw crossIssueInfluenceRunContextError();
     }
 
-    const sourceIssueId = readRunSourceIssueId(run.contextSnapshot);
+    const sourceIssueId = readRunSourceIssueId(run.contextSnapshot)
+      ?? await readCheckoutSourceIssueId(tx, input);
     if (!sourceIssueId) throw crossIssueInfluenceRunContextError();
     if (
       sourceIssueId === input.targetIssueId ||

@@ -80,6 +80,11 @@ const mockBudgetService = vi.hoisted(() => ({
 
 const mockHeartbeatService = vi.hoisted(() => ({
   cancelActiveForAgent: vi.fn(),
+  getRun: vi.fn(),
+  getRunLogAccess: vi.fn(),
+  listEvents: vi.fn(),
+  readLog: vi.fn(),
+  wakeup: vi.fn(),
 }));
 
 const mockIssueApprovalService = vi.hoisted(() => ({
@@ -340,6 +345,11 @@ function resetMockDefaults() {
   mockAccessService.ensureMembership.mockImplementation(async () => undefined);
   mockAccessService.setPrincipalPermission.mockImplementation(async () => undefined);
   mockHeartbeatService.cancelActiveForAgent.mockImplementation(async () => undefined);
+  mockHeartbeatService.getRun.mockImplementation(async () => null);
+  mockHeartbeatService.getRunLogAccess.mockImplementation(async () => null);
+  mockHeartbeatService.listEvents.mockImplementation(async () => []);
+  mockHeartbeatService.readLog.mockImplementation(async () => ({ content: "", offset: 0, nextOffset: 0, eof: true }));
+  mockHeartbeatService.wakeup.mockImplementation(async () => null);
   mockLogActivity.mockImplementation(async () => undefined);
 }
 
@@ -437,6 +447,71 @@ describe.sequential("agent cross-tenant route authorization", () => {
     expect(res.status).toBe(403);
     expect(res.body.error).toContain("Board access required");
     expect(mockAgentService.clearError).not.toHaveBeenCalled();
+  });
+
+  it("binds the COS timer fixture to its own non-production run and redacts its run projection", async () => {
+    const parentRunId = "77777777-7777-4777-8777-777777777777";
+    const fixtureRunId = "88888888-8888-4888-8888-888888888888";
+    const parentRun = {
+      id: parentRunId,
+      companyId,
+      agentId,
+      status: "running",
+      invocationSource: "timer",
+      createdAt: new Date(),
+      startedAt: new Date(),
+      finishedAt: null,
+      contextSnapshot: {},
+      resultJson: { secret: "must-not-leak" },
+    };
+    const fixtureRun = {
+      ...parentRun,
+      id: fixtureRunId,
+      status: "queued",
+      contextSnapshot: { cosTimerFixtureParentRunId: parentRunId, cosTimerFixture: true },
+    };
+    mockHeartbeatService.getRun.mockImplementation(async (id: string) =>
+      id === parentRunId ? parentRun : id === fixtureRunId ? fixtureRun : null,
+    );
+    mockHeartbeatService.wakeup.mockResolvedValue(fixtureRun);
+
+    const app = await createApp({ type: "agent", agentId, companyId, runId: parentRunId, source: "agent_jwt" });
+    const wake = await requestApp(app, (baseUrl) =>
+      request(baseUrl).post(`/api/agents/${agentId}/cos-timer-fixture-wake`).send({ idempotencyKey: "fixture-1" }),
+    );
+    expect(wake.status).toBe(202);
+    expect(wake.body).toEqual(expect.objectContaining({ id: fixtureRunId, agentId, invocationSource: "timer" }));
+    expect(wake.body).not.toHaveProperty("contextSnapshot");
+    expect(wake.body).not.toHaveProperty("resultJson");
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(agentId, expect.objectContaining({
+      source: "timer",
+      reason: "cos_timer_fixture",
+      contextSnapshot: { cosTimerFixtureParentRunId: parentRunId, cosTimerFixture: true },
+    }));
+
+    const returned = await requestApp(app, (baseUrl) =>
+      request(baseUrl).get(`/api/agents/${agentId}/cos-timer-fixture-runs/${fixtureRunId}`),
+    );
+    expect(returned.status).toBe(200);
+    expect(returned.body).not.toHaveProperty("resultJson");
+
+    const arbitrary = await requestApp(app, (baseUrl) =>
+      request(baseUrl).get(`/api/agents/${agentId}/cos-timer-fixture-runs/99999999-9999-4999-8999-999999999999`),
+    );
+    expect(arbitrary.status).toBe(404);
+
+    const crossAgent = await requestApp(app, (baseUrl) =>
+      request(baseUrl).post("/api/agents/99999999-9999-4999-8999-999999999999/cos-timer-fixture-wake").send({}),
+    );
+    expect(crossAgent.status).toBe(403);
+
+    vi.stubEnv("NODE_ENV", "production");
+    const production = await requestApp(app, (baseUrl) =>
+      request(baseUrl).post(`/api/agents/${agentId}/cos-timer-fixture-wake`).send({}),
+    );
+    vi.unstubAllEnvs();
+    expect(production.status).toBe(403);
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledTimes(1);
   });
 
   it("preserves board resume access", async () => {

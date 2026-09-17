@@ -2081,6 +2081,91 @@ describe("sandbox adapter execution targets", () => {
     }
   });
 
+  it("rejects an explicit mismatched run header before an issue comment reaches the host API", async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), "paperclip-execution-target-run-id-mismatch-"));
+    cleanupDirs.push(rootDir);
+    const remoteCwd = path.join(rootDir, "workspace");
+    const runtimeRootDir = path.join(remoteCwd, ".paperclip-runtime", "codex");
+    await mkdir(runtimeRootDir, { recursive: true });
+
+    const hostRunIds: Array<string | undefined> = [];
+    const apiServer = createServer((req, res) => {
+      hostRunIds.push(typeof req.headers["x-paperclip-run-id"] === "string" ? req.headers["x-paperclip-run-id"] : undefined);
+      res.writeHead(201, { "content-type": "application/json" });
+      res.end(JSON.stringify({ persisted: true }));
+    });
+    await new Promise<void>((resolve, reject) => {
+      apiServer.once("error", reject);
+      apiServer.listen(0, "127.0.0.1", () => resolve());
+    });
+    const address = apiServer.address();
+    if (!address || typeof address === "string") throw new Error("Expected the test API server to listen on TCP.");
+
+    const bridge = await startAdapterExecutionTargetPaperclipBridge({
+      runId: "11111111-1111-4111-8111-111111111111",
+      target: {
+        kind: "remote",
+        transport: "sandbox",
+        providerKey: "e2b",
+        environmentId: "env-1",
+        leaseId: "lease-1",
+        remoteCwd,
+        runner: createLocalSandboxRunner(),
+        timeoutMs: 30_000,
+      },
+      runtimeRootDir,
+      adapterKey: "codex",
+      hostApiToken: "real-run-jwt",
+      hostApiUrl: `http://127.0.0.1:${address.port}`,
+    });
+    try {
+      const mismatch = await fetch(`${bridge!.env.PAPERCLIP_API_URL}/api/issues/issue-1/comments`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${bridge!.env.PAPERCLIP_API_KEY}`,
+          "content-type": "application/json",
+          "x-paperclip-run-id": "22222222-2222-4222-8222-222222222222",
+        },
+        body: JSON.stringify({ body: "must not persist" }),
+      });
+
+      expect(mismatch.status).toBe(422);
+      await expect(mismatch.json()).resolves.toEqual({
+        error: "X-Paperclip-Run-Id does not match the authenticated run",
+        code: "run_id_mismatch",
+      });
+      expect(hostRunIds).toEqual([]);
+
+      const matching = await fetch(`${bridge!.env.PAPERCLIP_API_URL}/api/issues/issue-1/comments`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${bridge!.env.PAPERCLIP_API_KEY}`,
+          "content-type": "application/json",
+          "x-paperclip-run-id": "11111111-1111-4111-8111-111111111111",
+        },
+        body: JSON.stringify({ body: "matching run" }),
+      });
+      expect(matching.status).toBe(201);
+
+      const noHeader = await fetch(`${bridge!.env.PAPERCLIP_API_URL}/api/issues/issue-1/comments`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${bridge!.env.PAPERCLIP_API_KEY}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ body: "implicit run" }),
+      });
+      expect(noHeader.status).toBe(201);
+      expect(hostRunIds).toEqual([
+        "11111111-1111-4111-8111-111111111111",
+        "11111111-1111-4111-8111-111111111111",
+      ]);
+    } finally {
+      await bridge?.stop();
+      await new Promise<void>((resolve) => apiServer.close(() => resolve()));
+    }
+  });
+
   it("creates a sandbox run log tail factory when bridge streaming is enabled", async () => {
     const rootDir = await mkdtemp(path.join(os.tmpdir(), "paperclip-execution-target-bridge-stream-"));
     cleanupDirs.push(rootDir);
