@@ -19,17 +19,23 @@ export function approvalService(db: Db) {
   type ResolutionResult = { approval: ApprovalRecord; applied: boolean };
 
   async function findRestrictionFilingDuplicateInDb(queryDb: any, companyId: string, payload: Record<string, unknown>, excludeApprovalId?: string) {
+    // A restriction assertion without a requested action still receives
+    // evidence validation at the route boundary, but it has no action identity
+    // to deduplicate.  Never compare sha256("") here: many unrelated legacy
+    // approvals have no action fields and would otherwise collide.
+    const actionText = restrictionActionText(payload);
+    if (!actionText) return null;
     const fingerprint = restrictionActionFingerprint(payload);
     const priorApprovals = await queryDb.select({ id: approvals.id, payload: approvals.payload })
       .from(approvals)
       .where(eq(approvals.companyId, companyId));
     const matchingApproval = priorApprovals.find((approval: { id: string; payload: Record<string, unknown> }) =>
-      approval.id !== excludeApprovalId && restrictionActionFingerprint(approval.payload) === fingerprint,
+      approval.id !== excludeApprovalId
+      && Boolean(restrictionActionText(approval.payload))
+      && restrictionActionFingerprint(approval.payload) === fingerprint,
     );
     if (matchingApproval) return { kind: "approval" as const, approvalId: matchingApproval.id };
 
-    const actionText = restrictionActionText(payload);
-    if (!actionText) return null;
     const normalizedActionText = actionText.replace(/\s+/g, " ").trim();
     const comments = await queryDb.select({ id: approvalComments.id, approvalId: approvalComments.approvalId, body: approvalComments.body, authorUserId: approvalComments.authorUserId })
       .from(approvalComments)

@@ -123,6 +123,26 @@ describeEmbeddedPostgres("approval service semantic reuse", () => {
     expect(await db.select().from(approvals)).toHaveLength(1);
   });
 
+  it("does not deduplicate an evidence-only filing against unrelated empty-action approvals", async () => {
+    const { company, agent } = await seed();
+    await db.insert(approvals).values({
+      companyId: company.id,
+      type: "hire_agent",
+      requestedByAgentId: agent.id,
+      status: "approved",
+      payload: { name: "Unrelated approval without an action field" },
+    });
+
+    await expect(approvalService(db).findRestrictionFilingDuplicate(company.id, {
+      restrictionAssertion: true,
+      restrictionEvidence: {
+        attemptedEndpoint: "POST /api/approvals",
+        httpStatus: 403,
+        observedAtUtc: "2026-09-16T14:00:00.000Z",
+      },
+    })).resolves.toBeNull();
+  });
+
   it("matches a prior Board comment for a multi-field requested action", async () => {
     const { company, agent } = await seed();
     const prior = await db.insert(approvals).values({
