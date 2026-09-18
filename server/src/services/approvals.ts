@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { approvalComments, approvals, issueApprovals, issues } from "@paperclipai/db";
 import { notFound, unprocessable } from "../errors.js";
@@ -25,25 +25,23 @@ export function approvalService(db: Db) {
     // approvals have no action fields and would otherwise collide.
     const actionText = restrictionActionText(payload);
     if (!actionText) return null;
-    const fingerprint = restrictionActionFingerprint(payload);
-    const priorApprovals = await queryDb.select({ id: approvals.id, payload: approvals.payload })
+    const matchingApproval = await queryDb.select({ id: approvals.id })
       .from(approvals)
-      .where(eq(approvals.companyId, companyId));
-    const matchingApproval = priorApprovals.find((approval: { id: string; payload: Record<string, unknown> }) =>
-      approval.id !== excludeApprovalId
-      && Boolean(restrictionActionText(approval.payload))
-      && restrictionActionFingerprint(approval.payload) === fingerprint,
-    );
+      .where(and(eq(approvals.companyId, companyId), eq(approvals.restrictionActionKey, actionText)))
+      .then((rows: Array<{ id: string }>) => rows.find((approval) => approval.id !== excludeApprovalId) ?? null);
     if (matchingApproval) return { kind: "approval" as const, approvalId: matchingApproval.id };
 
     const normalizedActionText = actionText.replace(/\s+/g, " ").trim();
     const comments = await queryDb.select({ id: approvalComments.id, approvalId: approvalComments.approvalId, body: approvalComments.body, authorUserId: approvalComments.authorUserId })
       .from(approvalComments)
-      .where(eq(approvalComments.companyId, companyId));
+      .where(and(
+        eq(approvalComments.companyId, companyId),
+        isNotNull(approvalComments.authorUserId),
+        sql`lower(regexp_replace(regexp_replace(${approvalComments.body}, '[^a-z0-9:_./-]+', ' ', 'g'), '\\s+', ' ', 'g')) like ${`%${normalizedActionText}%`}`,
+      ));
     const matchingComment = comments.find((comment: { id: string; approvalId: string; body: string; authorUserId: string | null }) =>
       comment.approvalId !== excludeApprovalId
-      && Boolean(comment.authorUserId)
-      && comment.body.toLowerCase().replace(/[^a-z0-9:_./-]+/gi, " ").replace(/\s+/g, " ").trim().includes(normalizedActionText),
+      && Boolean(comment.authorUserId),
     );
     return matchingComment ? { kind: "board_comment" as const, approvalId: matchingComment.approvalId, commentId: matchingComment.id } : null;
   }
@@ -61,6 +59,7 @@ export function approvalService(db: Db) {
     const uniqueIssueIds = Array.from(new Set(input.issueIds)).sort();
     return db.transaction(async (tx) => {
       if (input.restrictionFiling) {
+        const restrictionActionKey = restrictionActionText(input.data.payload);
         const restrictionFingerprint = restrictionActionFingerprint(input.data.payload);
         await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`restriction-filing:${input.companyId}:${restrictionFingerprint}`}, 0))`);
         const duplicate = await findRestrictionFilingDuplicateInDb(tx, input.companyId, input.data.payload);
@@ -113,7 +112,7 @@ export function approvalService(db: Db) {
 
       const approval = await tx
         .insert(approvals)
-        .values({ ...input.data, companyId: input.companyId })
+        .values({ ...input.data, companyId: input.companyId, restrictionActionKey: input.restrictionFiling ? restrictionActionText(input.data.payload) || null : null })
         .returning()
         .then((rows) => rows[0]);
       if (uniqueIssueIds.length > 0) {
@@ -219,11 +218,12 @@ export function approvalService(db: Db) {
     // observe no predecessor and both persist.
     createRestrictionFiling: async (companyId: string, data: Omit<typeof approvals.$inferInsert, "companyId">) =>
       db.transaction(async (tx) => {
+        const restrictionActionKey = restrictionActionText(data.payload);
         const fingerprint = restrictionActionFingerprint(data.payload);
         await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`restriction-filing:${companyId}:${fingerprint}`}, 0))`);
         const duplicate = await findRestrictionFilingDuplicateInDb(tx, companyId, data.payload);
         if (duplicate) return { approval: null, duplicate };
-        const approval = await tx.insert(approvals).values({ ...data, companyId }).returning().then((rows) => rows[0]);
+        const approval = await tx.insert(approvals).values({ ...data, companyId, restrictionActionKey: restrictionActionKey || null }).returning().then((rows) => rows[0]);
         return { approval, duplicate: null };
       }),
 
