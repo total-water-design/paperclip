@@ -156,7 +156,7 @@ describeEmbeddedPostgres("approval service semantic reuse", () => {
       companyId: company.id,
       approvalId: prior.id,
       authorUserId: "board-user",
-      body: "The Board already considered: file charter exception approve exception charter-42 alpha.",
+      body: "The Board already considered: File charter exception Approve exception charter-42 alpha.",
     });
 
     await expect(approvalService(db).findRestrictionFilingDuplicate(company.id, {
@@ -165,6 +165,30 @@ describeEmbeddedPostgres("approval service semantic reuse", () => {
       scope: "charter-42",
       environment: "alpha",
     })).resolves.toMatchObject({ kind: "board_comment", approvalId: prior.id });
+  });
+
+  it("treats underscores in Board-comment action text literally", async () => {
+    const { company, agent } = await seed();
+    const prior = await db.insert(approvals).values({
+      companyId: company.id,
+      type: "hire_agent",
+      requestedByAgentId: agent.id,
+      status: "approved",
+      payload: { title: "Earlier charter filing" },
+    }).returning().then((rows) => rows[0]!);
+    await db.insert(approvalComments).values({
+      companyId: company.id,
+      approvalId: prior.id,
+      authorUserId: "board-user",
+      body: "The Board already considered action charter_exception.",
+    });
+
+    await expect(approvalService(db).findRestrictionFilingDuplicate(company.id, {
+      action: "charter_exception",
+    })).resolves.toMatchObject({ kind: "board_comment", approvalId: prior.id });
+    await expect(approvalService(db).findRestrictionFilingDuplicate(company.id, {
+      action: "charterXexception",
+    })).resolves.toBeNull();
   });
 
   it("reuses a legacy pending request with the same issue and action title", async () => {

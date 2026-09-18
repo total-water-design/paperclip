@@ -32,12 +32,13 @@ export function approvalService(db: Db) {
     if (matchingApproval) return { kind: "approval" as const, approvalId: matchingApproval.id };
 
     const normalizedActionText = actionText.replace(/\s+/g, " ").trim();
+    const likeNeedle = `%${normalizedActionText.replace(/[\\%_]/g, "\\$&")}%`;
     const comments = await queryDb.select({ id: approvalComments.id, approvalId: approvalComments.approvalId, body: approvalComments.body, authorUserId: approvalComments.authorUserId })
       .from(approvalComments)
       .where(and(
         eq(approvalComments.companyId, companyId),
         isNotNull(approvalComments.authorUserId),
-        sql`lower(regexp_replace(regexp_replace(${approvalComments.body}, '[^a-z0-9:_./-]+', ' ', 'g'), '\\s+', ' ', 'g')) like ${`%${normalizedActionText}%`}`,
+        sql`regexp_replace(regexp_replace(lower(${approvalComments.body}), '[^a-z0-9:_./-]+', ' ', 'g'), '\\s+', ' ', 'g') like ${likeNeedle} escape '\\'`,
       ));
     const matchingComment = comments.find((comment: { id: string; approvalId: string; body: string; authorUserId: string | null }) =>
       comment.approvalId !== excludeApprovalId
