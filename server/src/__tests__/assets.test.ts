@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import express from "express";
 import request from "supertest";
-import { MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
+import { formatAttachmentSize, MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
 import type { StorageService } from "../storage/types.js";
 
 const { createAssetMock, getAssetByIdMock, logActivityMock } = vi.hoisted(() => ({
@@ -270,7 +270,7 @@ describe("POST /api/companies/:companyId/assets/images", () => {
     );
 
     expect(res.status).toBe(422);
-    expect(res.body.error).toBe("File is larger than the 10 MB limit");
+    expect(res.body.error).toBe(`File is larger than the ${formatAttachmentSize(MAX_ATTACHMENT_BYTES)} limit`);
   });
 });
 
@@ -374,7 +374,7 @@ describe("POST /api/companies/:companyId/logo", () => {
     );
 
     expect(res.status).toBe(422);
-    expect(res.body.error).toBe("Image is larger than the 10 MB limit");
+    expect(res.body.error).toBe(`Image is larger than the ${formatAttachmentSize(MAX_ATTACHMENT_BYTES)} limit`);
   });
 
   it("rejects unsupported image types", async () => {

@@ -120,7 +120,7 @@ vi.mock("../services/issue-dependency-wakeups.js", async () => {
 async function createApp() {
   const emptyRows: unknown[] = [];
   const whereResult = {
-    limit: vi.fn(async () => emptyRows),
+    limit: vi.fn(async () => [{ id: "11111111-1111-4111-8111-111111111111" }]),
     then: async (resolve: (rows: unknown[]) => unknown) => resolve(emptyRows),
   };
   const query: Record<string, unknown> = {};
@@ -294,10 +294,10 @@ describe("issue dependency wakeups in issue routes", () => {
       .send({
         status: "blocked",
         blockedByIssueIds: [childIssueId],
-        unblockDescriptor: { owner: "board", action: "Review the restored dependency" },
+        unblockDescriptor: { owner: { agentId: "11111111-1111-4111-8111-111111111111" }, action: "Review the restored dependency" },
       });
 
-    expect(res.status).toBe(200);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
     await vi.waitFor(() => {
       expect(mockWakeup).toHaveBeenCalledWith(
         "agent-2",
@@ -641,7 +641,7 @@ describe("issue dependency wakeups in issue routes", () => {
       .send({
         status: "blocked",
         blockedByIssueIds: [childIssueId],
-        unblockDescriptor: { owner: "board", action: "Review the restored dependency" },
+        unblockDescriptor: { owner: { agentId: "11111111-1111-4111-8111-111111111111" }, action: "Review the restored dependency" },
       });
 
     expect(res.status).toBe(200);

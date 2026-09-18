@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   agents,
+  approvalComments,
   approvals,
   companies,
   createDb,
@@ -29,6 +30,7 @@ describeEmbeddedPostgres("approval service semantic reuse", () => {
 
   afterEach(async () => {
     await db.delete(issueApprovals);
+    await db.delete(approvalComments);
     await db.delete(approvals);
     await db.delete(issues);
     await db.delete(agents);
@@ -94,6 +96,99 @@ describeEmbeddedPostgres("approval service semantic reuse", () => {
     expect(new Set(results.map((result) => result.approval.id))).toHaveLength(1);
     expect(await db.select().from(approvals)).toHaveLength(1);
     expect(await db.select().from(issueApprovals)).toHaveLength(1);
+  });
+
+  it("serializes concurrent restriction filings so only one can be persisted", async () => {
+    const { company, agent } = await seed();
+    const payload = {
+      title: "Capability restriction blocks charter filing",
+      action: "file charter exception",
+      restrictionEvidence: {
+        attemptedEndpoint: "POST /api/approvals",
+        httpStatus: 403,
+        observedAtUtc: "2026-09-16T14:00:00.000Z",
+      },
+    };
+    const results = await Promise.all(Array.from({ length: 4 }, () =>
+      approvalService(db).createRestrictionFiling(company.id, {
+        type: "hire_agent",
+        requestedByAgentId: agent.id,
+        status: "pending",
+        payload,
+      }),
+    ));
+
+    expect(results.filter((result) => result.approval)).toHaveLength(1);
+    expect(results.filter((result) => result.duplicate)).toHaveLength(3);
+    expect(await db.select().from(approvals)).toHaveLength(1);
+  });
+
+  it("does not deduplicate an evidence-only filing against unrelated empty-action approvals", async () => {
+    const { company, agent } = await seed();
+    await db.insert(approvals).values({
+      companyId: company.id,
+      type: "hire_agent",
+      requestedByAgentId: agent.id,
+      status: "approved",
+      payload: { name: "Unrelated approval without an action field" },
+    });
+
+    await expect(approvalService(db).findRestrictionFilingDuplicate(company.id, {
+      restrictionAssertion: true,
+      restrictionEvidence: {
+        attemptedEndpoint: "POST /api/approvals",
+        httpStatus: 403,
+        observedAtUtc: "2026-09-16T14:00:00.000Z",
+      },
+    })).resolves.toBeNull();
+  });
+
+  it("matches a prior Board comment for a multi-field requested action", async () => {
+    const { company, agent } = await seed();
+    const prior = await db.insert(approvals).values({
+      companyId: company.id,
+      type: "hire_agent",
+      requestedByAgentId: agent.id,
+      status: "approved",
+      payload: { title: "Earlier charter filing" },
+    }).returning().then((rows) => rows[0]!);
+    await db.insert(approvalComments).values({
+      companyId: company.id,
+      approvalId: prior.id,
+      authorUserId: "board-user",
+      body: "The Board already considered: File charter exception Approve exception charter-42 alpha.",
+    });
+
+    await expect(approvalService(db).findRestrictionFilingDuplicate(company.id, {
+      action: "file charter exception",
+      title: "Approve exception",
+      scope: "charter-42",
+      environment: "alpha",
+    })).resolves.toMatchObject({ kind: "board_comment", approvalId: prior.id });
+  });
+
+  it("treats underscores in Board-comment action text literally", async () => {
+    const { company, agent } = await seed();
+    const prior = await db.insert(approvals).values({
+      companyId: company.id,
+      type: "hire_agent",
+      requestedByAgentId: agent.id,
+      status: "approved",
+      payload: { title: "Earlier charter filing" },
+    }).returning().then((rows) => rows[0]!);
+    await db.insert(approvalComments).values({
+      companyId: company.id,
+      approvalId: prior.id,
+      authorUserId: "board-user",
+      body: "The Board already considered action charter_exception.",
+    });
+
+    await expect(approvalService(db).findRestrictionFilingDuplicate(company.id, {
+      action: "charter_exception",
+    })).resolves.toMatchObject({ kind: "board_comment", approvalId: prior.id });
+    await expect(approvalService(db).findRestrictionFilingDuplicate(company.id, {
+      action: "charterXexception",
+    })).resolves.toBeNull();
   });
 
   it("reuses a legacy pending request with the same issue and action title", async () => {

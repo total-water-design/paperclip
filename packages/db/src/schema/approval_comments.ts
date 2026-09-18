@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import { pgTable, uuid, text, timestamp, index } from "drizzle-orm/pg-core";
 import { companies } from "./companies.js";
 import { approvals } from "./approvals.js";
@@ -17,6 +18,9 @@ export const approvalComments = pgTable(
   },
   (table) => ({
     companyIdx: index("approval_comments_company_idx").on(table.companyId),
+    companyBoardAuthorIdx: index("approval_comments_company_board_author_idx")
+      .on(table.companyId, table.authorUserId)
+      .where(sql`${table.authorUserId} is not null`),
     approvalIdx: index("approval_comments_approval_idx").on(table.approvalId),
     approvalCreatedIdx: index("approval_comments_approval_created_idx").on(
       table.approvalId,

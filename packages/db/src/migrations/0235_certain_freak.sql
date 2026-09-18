@@ -1,0 +1,1 @@
+CREATE INDEX "approval_comments_company_board_author_idx" ON "approval_comments" USING btree ("company_id","author_user_id") WHERE "approval_comments"."author_user_id" is not null;

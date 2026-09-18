@@ -26,6 +26,7 @@ import { REVIEW_PATH_RECOVERY_INSTRUCTION } from "../services/recovery/review-pa
 import {
   boardApprovalRequestIdentity,
   classifyBoardApprovalRequest,
+  validateRestrictionFiling,
 } from "../services/approval-governance.js";
 
 function redactApprovalPayload<T extends { payload: Record<string, unknown> }>(approval: T): T {
@@ -254,6 +255,12 @@ export function approvalRoutes(
           )
         : approvalInput.payload;
 
+    const restrictionFiling = validateRestrictionFiling(normalizedPayload);
+    if (!restrictionFiling.allowed) {
+      res.status(422).json({ error: restrictionFiling.message, code: restrictionFiling.code, details: restrictionFiling.details });
+      return;
+    }
+
     const actor = getActorInfo(req);
     const approvalData = {
       ...approvalInput,
@@ -335,7 +342,18 @@ export function approvalRoutes(
         linkedByUserId: actor.actorType === "user" ? actor.actorId : null,
         fingerprint: identity.fingerprint,
         reuseApprovedAuthorization: identity.exactIdentityEstablished,
+        restrictionFiling: restrictionFiling.asserted,
       });
+
+      if (!result.approval) {
+        res.status(409).json({
+          error: "A prior approval or Board comment already records this requested action",
+          code: "restriction_filing_duplicate",
+          duplicate: result.duplicate,
+        });
+        return;
+      }
+      const approval = result.approval;
 
       await logActivity(db, {
         companyId,
@@ -344,9 +362,9 @@ export function approvalRoutes(
         agentId: actor.agentId,
         action: result.created ? "approval.created" : "approval.reused",
         entityType: "approval",
-        entityId: result.approval.id,
+        entityId: approval.id,
         details: {
-          type: result.approval.type,
+          type: approval.type,
           issueIds: uniqueIssueIds,
           governanceReason: governance.reasonCode,
           exactIdentityEstablished: identity.exactIdentityEstablished,
@@ -354,7 +372,7 @@ export function approvalRoutes(
       });
 
       res.status(result.created ? 201 : 200).json({
-        ...redactApprovalPayload(result.approval),
+        ...redactApprovalPayload(approval),
         created: result.created,
         reused: !result.created,
         governance,
@@ -362,7 +380,18 @@ export function approvalRoutes(
       return;
     }
 
-    const approval = await svc.create(companyId, approvalData);
+    const filing = restrictionFiling.asserted
+      ? await svc.createRestrictionFiling(companyId, approvalData)
+      : { approval: await svc.create(companyId, approvalData), duplicate: null };
+    if (filing.duplicate) {
+      res.status(409).json({
+        error: "A prior approval or Board comment already records this requested action",
+        code: "restriction_filing_duplicate",
+        duplicate: filing.duplicate,
+      });
+      return;
+    }
+    const approval = filing.approval!;
 
     if (uniqueIssueIds.length > 0) {
       await issueApprovalsSvc.linkManyForApproval(approval.id, uniqueIssueIds, {
@@ -633,6 +662,18 @@ export function approvalRoutes(
           )
         : req.body.payload
       : undefined;
+    const restrictionFiling = validateRestrictionFiling(normalizedPayload ?? existing.payload);
+    if (!restrictionFiling.allowed) {
+      res.status(422).json({ error: restrictionFiling.message, code: restrictionFiling.code, details: restrictionFiling.details });
+      return;
+    }
+    if (restrictionFiling.asserted) {
+      const duplicate = await svc.findRestrictionFilingDuplicate(existing.companyId, normalizedPayload ?? existing.payload, existing.id);
+      if (duplicate) {
+        res.status(409).json({ error: "A prior approval or Board comment already records this requested action", code: "restriction_filing_duplicate", duplicate });
+        return;
+      }
+    }
     const approval = await svc.resubmit(id, normalizedPayload);
     const actor = getActorInfo(req);
     await logActivity(db, {
