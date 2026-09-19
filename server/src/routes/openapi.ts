@@ -341,6 +341,15 @@ function applyNumberChecks(jsonSchema: JsonSchema, checks: ReadonlyArray<unknown
 }
 
 function zodToOpenApiSchema(schema: z.ZodTypeAny): JsonSchema {
+  const originalDef = zodDef(schema);
+  // `.default()` is optional at the HTTP boundary, but its value remains part
+  // of the public contract. Preserve it before unwrapping to the input type.
+  if (originalDef.type === "default") {
+    return {
+      ...zodToOpenApiSchema(originalDef.innerType as z.ZodTypeAny),
+      default: originalDef.defaultValue,
+    };
+  }
   const unwrapped = unwrapSchema(schema);
   const def = zodDef(unwrapped);
   const typeName = def.type;
@@ -4548,6 +4557,30 @@ registry.registerPath({
   summary: "List heartbeat runs for a company",
   request: { params: z.object({ companyId: z.string() }) },
   responses: { 200: r.ok(), 401: r.unauthorized },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/companies/{companyId}/heartbeat-runs/stats",
+  tags: ["runs"],
+  summary: "Get daily heartbeat-run statistics for a company",
+  request: {
+    params: z.object({ companyId: z.string() }),
+    query: z.object({ agentId: z.string().optional() }),
+  },
+  responses: { 200: r.ok(), 401: r.unauthorized },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/companies/{companyId}/heartbeat-runs/latest-failed",
+  tags: ["runs"],
+  summary: "List the latest failed heartbeat runs for a company",
+  request: {
+    params: z.object({ companyId: z.string() }),
+    query: z.object({ limit: z.number().int().min(1).max(1000).default(200) }),
+  },
+  responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized },
 });
 
 registry.registerPath({

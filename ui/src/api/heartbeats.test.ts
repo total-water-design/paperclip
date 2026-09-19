@@ -27,6 +27,20 @@ describe("heartbeatsApi.list", () => {
 
     expect(mockApi.get).toHaveBeenCalledWith("/companies/company-1/heartbeat-runs?agentId=agent-1&limit=25");
   });
+
+  it("sends an explicit offset for subsequent pages", async () => {
+    await heartbeatsApi.list("company-1", "agent-1", 25, { offset: 25 });
+
+    expect(mockApi.get).toHaveBeenCalledWith("/companies/company-1/heartbeat-runs?agentId=agent-1&limit=25&offset=25");
+  });
+
+  it("uses bounded aggregate endpoints for stats and latest failures", async () => {
+    await heartbeatsApi.stats("company-1", "agent-1");
+    await heartbeatsApi.latestFailed("company-1");
+
+    expect(mockApi.get).toHaveBeenNthCalledWith(1, "/companies/company-1/heartbeat-runs/stats?agentId=agent-1");
+    expect(mockApi.get).toHaveBeenNthCalledWith(2, "/companies/company-1/heartbeat-runs/latest-failed");
+  });
 });
 
 describe("heartbeatsApi.liveRunsForCompany", () => {

@@ -81,6 +81,13 @@ export interface WatchdogDecisionInput {
 
 export interface HeartbeatRunListOptions {
   summary?: boolean;
+  offset?: number;
+}
+
+export interface HeartbeatRunStats {
+  date: string;
+  status: string;
+  count: number;
 }
 
 export const heartbeatsApi = {
@@ -89,9 +96,16 @@ export const heartbeatsApi = {
     if (agentId) searchParams.set("agentId", agentId);
     if (limit) searchParams.set("limit", String(limit));
     if (options.summary) searchParams.set("summary", "true");
+    if (options.offset !== undefined) searchParams.set("offset", String(options.offset));
     const qs = searchParams.toString();
     return api.get<HeartbeatRun[]>(`/companies/${companyId}/heartbeat-runs${qs ? `?${qs}` : ""}`);
   },
+  stats: (companyId: string, agentId?: string) =>
+    api.get<HeartbeatRunStats[]>(`/companies/${companyId}/heartbeat-runs/stats${agentId ? `?agentId=${encodeURIComponent(agentId)}` : ""}`),
+  latestFailed: (companyId: string, limit?: number) =>
+    api.get<HeartbeatRun[]>(
+      `/companies/${companyId}/heartbeat-runs/latest-failed${limit ? `?limit=${encodeURIComponent(String(limit))}` : ""}`,
+    ),
   get: (runId: string) => api.get<HeartbeatRun>(`/heartbeat-runs/${runId}`),
   events: (runId: string, afterSeq = 0, limit = 200) =>
     api.get<HeartbeatRunEvent[]>(
