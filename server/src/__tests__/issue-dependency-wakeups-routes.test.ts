@@ -120,13 +120,9 @@ vi.mock("../services/issue-dependency-wakeups.js", async () => {
 async function createApp() {
   const emptyRows: unknown[] = [];
   const whereResult = {
-    limit: vi.fn(async () => [{ id: "11111111-1111-4111-8111-111111111111" }]),
+    limit: vi.fn(async () => emptyRows),
     then: async (resolve: (rows: unknown[]) => unknown) => resolve(emptyRows),
   };
-  // The route records successful handoffs with a deterministic ordering before
-  // it limits the result. Keep the lightweight query double chainable so the
-  // route reaches its intended 200 response instead of failing on the stub.
-  Object.assign(whereResult, { orderBy: vi.fn(() => whereResult) });
   const query: Record<string, unknown> = {};
   query.innerJoin = vi.fn(() => query);
   query.where = vi.fn(() => whereResult);
@@ -246,7 +242,7 @@ describe("issue dependency wakeups in issue routes", () => {
     });
   });
 
-  it("wakes an assigned blocked issue when blockers are applied after the blocker is already done", async () => {
+  it("rejects a blocked transition when every proposed blocker is already done", async () => {
     const parentIssueId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     const childIssueId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
     mockIssueService.getById.mockResolvedValue({
@@ -298,26 +294,11 @@ describe("issue dependency wakeups in issue routes", () => {
       .send({
         status: "blocked",
         blockedByIssueIds: [childIssueId],
-        unblockDescriptor: { owner: { agentId: "11111111-1111-4111-8111-111111111111" }, action: "Review the restored dependency" },
+        unblockDescriptor: { owner: "board", action: "Review the restored dependency" },
       });
 
-    expect(res.status, JSON.stringify(res.body)).toBe(200);
-    await vi.waitFor(() => {
-      expect(mockWakeup).toHaveBeenCalledWith(
-        "agent-2",
-        expect.objectContaining({
-          reason: "issue_blockers_resolved",
-          payload: expect.objectContaining({
-            issueId: parentIssueId,
-            resolvedBlockerIssueId: childIssueId,
-            mutation: "blocked_dependency_restored",
-          }),
-          contextSnapshot: expect.objectContaining({
-            source: "issue.blockers_restored",
-          }),
-        }),
-      );
-    });
+    expect(res.status).toBe(422);
+    expect(mockWakeup).not.toHaveBeenCalled();
   });
 
   it("wakes the parent when all direct children become terminal", async () => {
@@ -611,7 +592,7 @@ describe("issue dependency wakeups in issue routes", () => {
     expect(mockWakeup).not.toHaveBeenCalledWith("agent-release", expect.anything());
   });
 
-  it("restores a blocked-and-ready dependent under the new blocked cycle key", async () => {
+  it("does not create a blocked cycle key when every proposed blocker is already done", async () => {
     const parentIssueId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     const childIssueId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
     const blockedTransitionAt = new Date("2026-08-03T18:00:00.000Z");
@@ -645,34 +626,12 @@ describe("issue dependency wakeups in issue routes", () => {
       .send({
         status: "blocked",
         blockedByIssueIds: [childIssueId],
-        unblockDescriptor: { owner: { agentId: "11111111-1111-4111-8111-111111111111" }, action: "Review the restored dependency" },
+        unblockDescriptor: { owner: "board", action: "Review the restored dependency" },
       });
 
-    expect(res.status).toBe(200);
-    await vi.waitFor(() => {
-      expect(mockFindExistingIssueBlockersResolvedWakeForReadyState).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.objectContaining({
-          dependentIssueId: parentIssueId,
-          blockerIssueIds: [childIssueId],
-          blockedTransitionAt,
-        }),
-      );
-      expect(mockWakeup).toHaveBeenCalledWith(
-        "agent-2",
-        expect.objectContaining({
-          reason: "issue_blockers_resolved",
-          idempotencyKey: buildIssueBlockersResolvedWakeStateKey({
-            dependentIssueId: parentIssueId,
-            blockerIssueIds: [childIssueId],
-            blockedTransitionAt,
-          }),
-          payload: expect.objectContaining({
-            mutation: "blocked_dependency_restored",
-          }),
-        }),
-      );
-    });
+    expect(res.status).toBe(422);
+    expect(mockFindExistingIssueBlockersResolvedWakeForReadyState).not.toHaveBeenCalled();
+    expect(mockWakeup).not.toHaveBeenCalled();
   });
 
   it("does not emit a dependency wake when an unresolved or cancelled blocker remains", async () => {

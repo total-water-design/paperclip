@@ -50,6 +50,11 @@
 //     scripted data and exit in one stdout write. The host then reads the open
 //     reply and the notifications in one batch, so a test proves the host holds
 //     and replays a frame that arrives before the route binds.
+//   - `emitFramesAfterFirstWrite`: when true, the fixture emits its scripted data
+//     and exit only after the first bound host write. This is an explicit test
+//     handshake for scenarios that need the route bound before the frames arrive;
+//     it avoids relying on event-loop timing between the open reply and a later
+//     stdout write.
 const readline = require("node:readline");
 
 function send(message) {
@@ -171,6 +176,9 @@ rl.on("line", (line) => {
         typeof directive.writeReplyDelayMs === "number" ? directive.writeReplyDelayMs : 0,
       emitAfterCloseChunk:
         typeof directive.emitAfterCloseChunk === "string" ? directive.emitAfterCloseChunk : null,
+      directive,
+      emitFramesAfterFirstWrite: directive.emitFramesAfterFirstWrite === true,
+      emittedFramesAfterFirstWrite: false,
     });
 
     if (mode === "no-open-reply") {
@@ -219,6 +227,14 @@ rl.on("line", (line) => {
       return;
     }
 
+    if (directive.emitFramesAfterFirstWrite === true) {
+      // The test drives the first bound write after openDuplexChannel resolves.
+      // Do not also schedule the normal post-open emission: setImmediate can run
+      // before the host has bound the open reply, which is precisely the race
+      // these tests must not depend on.
+      return;
+    }
+
     // Emit the scripted data and the exit after the open reply, so the host
     // binds the route first. Each frame echoes the exact pair; a test overrides
     // `sid` or `rid` to force a mismatch.
@@ -256,6 +272,10 @@ rl.on("line", (line) => {
           chunk: echoBytes.toString("base64"),
         },
       });
+    }
+    if (entry.emitFramesAfterFirstWrite && !entry.emittedFramesAfterFirstWrite) {
+      entry.emittedFramesAfterFirstWrite = true;
+      process.stdout.write(scriptedFrameLines(entry.directive, entry.hostRouteId, entry.workerSessionId));
     }
     const replyWrite = () => send({ jsonrpc: "2.0", id: message.id, result: null });
     if (entry.writeReplyDelayMs > 0) {

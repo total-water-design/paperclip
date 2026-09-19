@@ -68,6 +68,7 @@ import {
   toolMcpGateways,
   toolMcpGatewayTokens,
   toolConnections,
+  toolActionRequests,
   toolProfiles,
   workspaceOperations,
 } from "@paperclipai/db";
@@ -177,6 +178,7 @@ import {
   isVerifiedIssueTreeControlInteractionWake,
   issueTreeControlService,
 } from "./issue-tree-control.js";
+import { issueThreadInteractionAttentionAgentAllowed } from "./issue-thread-interaction-resolution.js";
 import {
   continuationSummaryParksExecutor,
   getIssueContinuationSummaryDocument,
@@ -4268,12 +4270,68 @@ function shouldRequireIssueCommentForWake(
   );
 }
 
-function allowsIssueInteractionWake(
-  contextSnapshot: Record<string, unknown> | null | undefined,
+async function allowsIssueInteractionWake(
+  dbOrTx: Pick<Db, "select">,
+  input: {
+    companyId: string;
+    issueId: string;
+    agentId: string;
+    contextSnapshot: Record<string, unknown> | null | undefined;
+  },
 ) {
+  const { contextSnapshot } = input;
   const wakeReason = readNonEmptyString(contextSnapshot?.wakeReason);
-  if (!wakeReason || !ISSUE_TREE_CONTROL_INTERACTION_WAKE_REASONS.has(wakeReason)) return false;
-  return Boolean(deriveCommentId(contextSnapshot, null));
+  if (!wakeReason) return false;
+
+  if (ISSUE_TREE_CONTROL_INTERACTION_WAKE_REASONS.has(wakeReason)) {
+    return Boolean(deriveCommentId(contextSnapshot, null));
+  }
+
+  // Native attention wakes do not have a comment ID. Re-read the interaction
+  // instead of trusting the queued context so the stale-run exception cannot
+  // bypass resolver-policy, addressee, or governed-action gates.
+  if (wakeReason !== "interaction_pending") return false;
+  const interactionId = readNonEmptyString(contextSnapshot?.interactionId);
+  if (!interactionId) return false;
+
+  const interaction = await dbOrTx
+    .select({
+      id: issueThreadInteractions.id,
+      status: issueThreadInteractions.status,
+      createdByAgentId: issueThreadInteractions.createdByAgentId,
+      createdByUserId: issueThreadInteractions.createdByUserId,
+      sourceRunId: issueThreadInteractions.sourceRunId,
+      addresseeAgentId: issueThreadInteractions.addresseeAgentId,
+      effectiveResolverPolicy: issueThreadInteractions.effectiveResolverPolicy,
+      resolverPolicyProvenance: issueThreadInteractions.resolverPolicyProvenance,
+    })
+    .from(issueThreadInteractions)
+    .where(and(
+      eq(issueThreadInteractions.id, interactionId),
+      eq(issueThreadInteractions.companyId, input.companyId),
+      eq(issueThreadInteractions.issueId, input.issueId),
+      eq(issueThreadInteractions.status, "pending"),
+      eq(issueThreadInteractions.addresseeAgentId, input.agentId),
+    ))
+    .then((rows) => rows[0] ?? null);
+  if (!interaction) return false;
+
+  const governedAction = await dbOrTx
+    .select({ id: toolActionRequests.id })
+    .from(toolActionRequests)
+    .where(and(
+      eq(toolActionRequests.companyId, input.companyId),
+      eq(toolActionRequests.issueId, input.issueId),
+      eq(toolActionRequests.interactionId, interaction.id),
+    ))
+    .limit(1)
+    .then((rows) => Boolean(rows[0]));
+
+  return issueThreadInteractionAttentionAgentAllowed({
+    agentId: input.agentId,
+    interaction,
+    governedAction,
+  });
 }
 
 async function listUnresolvedBlockerSummaries(
@@ -12737,7 +12795,13 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       const dependencyReadiness = await issuesSvc.listDependencyReadiness(run.companyId, [issueId]);
       const readiness = dependencyReadiness.get(issueId);
       const unresolvedBlockerCount = readiness?.unresolvedBlockerCount ?? 0;
-      if (unresolvedBlockerCount > 0 && !allowsIssueInteractionWake(context)) {
+      const interactionWake = await allowsIssueInteractionWake(db, {
+        companyId: run.companyId,
+        issueId,
+        agentId: run.agentId,
+        contextSnapshot: context,
+      });
+      if (unresolvedBlockerCount > 0 && !interactionWake) {
         await cancelQueuedRunForBlockedDependencies(run, issueId, readiness?.unresolvedBlockerIssueIds ?? []);
         logger.info({ runId: run.id, issueId, unresolvedBlockerCount }, "claimQueuedRun: cancelled blocked queued run");
         return null;
@@ -12924,7 +12988,12 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     }
 
     const wakeCommentId = deriveCommentId(context, null);
-    const isInteractionWake = allowsIssueInteractionWake(context);
+    const isInteractionWake = await allowsIssueInteractionWake(db, {
+      companyId: run.companyId,
+      issueId,
+      agentId: run.agentId,
+      contextSnapshot: context,
+    });
     const resumeIntent = context.resumeIntent === true || context.followUpRequested === true;
     const wakeReason = readNonEmptyString(context.wakeReason);
     const retryReason = readNonEmptyString(context.retryReason) ?? run.scheduledRetryReason ?? null;
@@ -18567,7 +18636,12 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         const blockedInteractionWake =
           dependencyReadiness &&
           !dependencyReadiness.isDependencyReady &&
-          allowsIssueInteractionWake(enrichedContextSnapshot);
+          await allowsIssueInteractionWake(tx, {
+            companyId: issue.companyId,
+            issueId: issue.id,
+            agentId,
+            contextSnapshot: enrichedContextSnapshot,
+          });
 
         if (blockedInteractionWake) {
           enrichedContextSnapshot.dependencyBlockedInteraction = true;

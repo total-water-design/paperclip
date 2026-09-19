@@ -12,7 +12,11 @@ import {
   heartbeatRuns,
   issueComments,
   issueDocuments,
+  issueRelations,
+  issueThreadInteractions,
   issues,
+  toolActionRequests,
+  toolInvocations,
 } from "@paperclipai/db";
 import { ISSUE_CONTINUATION_SUMMARY_DOCUMENT_KEY } from "@paperclipai/shared";
 import {
@@ -1117,6 +1121,304 @@ describeEmbeddedPostgres("heartbeat stale queued-run invalidation", () => {
     expect(run?.resultJson).toMatchObject({ stopReason: "issue_assignee_changed" });
     expect(wakeup?.status).toBe("skipped");
     expect(wakeup?.error).toContain("assignee changed");
+    expect(countExecuteCallsForRun(runId)).toBe(0);
+  });
+
+  it("starts a manager-addressed native interaction wake without reassigning the specialist-owned issue", async () => {
+    const { companyId, agentId: specialistAgentId } = await seedCompanyAndAgent({ agentName: "Specialist" });
+    const managerAgentId = randomUUID();
+    const issueId = randomUUID();
+    const interactionId = randomUUID();
+    const blockerIssueId = randomUUID();
+
+    await db.insert(agents).values({
+      id: managerAgentId,
+      companyId,
+      name: "Manager",
+      role: "manager",
+      status: "active",
+      adapterType: "codex_local",
+      adapterConfig: {},
+      runtimeConfig: { heartbeat: { wakeOnDemand: true, maxConcurrentRuns: 1 } },
+      permissions: {},
+    });
+    await db.insert(issues).values({
+      id: issueId,
+      companyId,
+      title: "Specialist-owned task awaiting manager disposition",
+      status: "in_progress",
+      priority: "high",
+      assigneeAgentId: specialistAgentId,
+    });
+    await db.insert(issues).values({
+      id: blockerIssueId,
+      companyId,
+      title: "Unresolved dependency",
+      status: "in_progress",
+      priority: "high",
+      assigneeAgentId: specialistAgentId,
+    });
+    await db.insert(issueRelations).values({
+      companyId,
+      issueId: blockerIssueId,
+      relatedIssueId: issueId,
+      type: "blocks",
+    });
+    await db.insert(issueThreadInteractions).values({
+      id: interactionId,
+      companyId,
+      issueId,
+      kind: "request_confirmation",
+      status: "pending",
+      continuationPolicy: "wake_assignee",
+      createdByAgentId: specialistAgentId,
+      addresseeAgentId: managerAgentId,
+      effectiveResolverPolicy: "anyone",
+      payload: { version: 1, prompt: "Review the specialist evidence." },
+    });
+    const { runId, wakeupRequestId } = await seedQueuedRun({
+      companyId,
+      agentId: managerAgentId,
+      issueId,
+      wakeReason: "interaction_pending",
+      contextExtras: { interactionId },
+      invocationSource: "automation",
+    });
+
+    await heartbeat.resumeQueuedRuns();
+    await waitForCondition(async () => countExecuteCallsForRun(runId) === 1);
+
+    const [run, wakeup, issue] = await Promise.all([
+      db.select({ status: heartbeatRuns.status, errorCode: heartbeatRuns.errorCode })
+        .from(heartbeatRuns).where(eq(heartbeatRuns.id, runId)).then((rows) => rows[0] ?? null),
+      db.select({ status: agentWakeupRequests.status, error: agentWakeupRequests.error })
+        .from(agentWakeupRequests).where(eq(agentWakeupRequests.id, wakeupRequestId)).then((rows) => rows[0] ?? null),
+      db.select({ assigneeAgentId: issues.assigneeAgentId }).from(issues)
+        .where(eq(issues.id, issueId)).then((rows) => rows[0] ?? null),
+    ]);
+
+    expect(run?.status).not.toBe("cancelled");
+    expect(run?.errorCode).not.toBe("issue_assignee_changed");
+    expect(wakeup?.status).not.toBe("skipped");
+    expect(wakeup?.error).toBeNull();
+    expect(issue?.assigneeAgentId).toBe(specialistAgentId);
+  });
+
+  it("wakes the addressed manager through an unresolved dependency with native interaction context", async () => {
+    const { companyId, agentId: specialistAgentId } = await seedCompanyAndAgent({ agentName: "Specialist" });
+    const managerAgentId = randomUUID();
+    const issueId = randomUUID();
+    const interactionId = randomUUID();
+    const blockerIssueId = randomUUID();
+
+    await db.insert(agents).values({
+      id: managerAgentId,
+      companyId,
+      name: "Manager",
+      role: "manager",
+      status: "active",
+      adapterType: "codex_local",
+      adapterConfig: {},
+      runtimeConfig: { heartbeat: { wakeOnDemand: true, maxConcurrentRuns: 1 } },
+      permissions: {},
+    });
+    await db.insert(issues).values([
+      {
+        id: issueId,
+        companyId,
+        title: "Specialist-owned task awaiting manager disposition",
+        status: "in_progress",
+        priority: "high",
+        assigneeAgentId: specialistAgentId,
+      },
+      {
+        id: blockerIssueId,
+        companyId,
+        title: "Unresolved dependency",
+        status: "in_progress",
+        priority: "high",
+        assigneeAgentId: specialistAgentId,
+      },
+    ]);
+    await db.insert(issueRelations).values({
+      companyId,
+      issueId: blockerIssueId,
+      relatedIssueId: issueId,
+      type: "blocks",
+    });
+    await db.insert(issueThreadInteractions).values({
+      id: interactionId,
+      companyId,
+      issueId,
+      kind: "request_confirmation",
+      status: "pending",
+      continuationPolicy: "wake_assignee",
+      createdByAgentId: specialistAgentId,
+      addresseeAgentId: managerAgentId,
+      effectiveResolverPolicy: "anyone",
+      payload: { version: 1, prompt: "Review the specialist evidence." },
+    });
+
+    const run = await heartbeat.wakeup(managerAgentId, {
+      source: "automation",
+      triggerDetail: "system",
+      reason: "interaction_pending",
+      payload: { issueId, interactionId, mutation: "interaction" },
+      contextSnapshot: {
+        issueId,
+        taskId: issueId,
+        interactionId,
+        wakeReason: "interaction_pending",
+        source: "issue.interaction.created",
+      },
+    });
+
+    expect(run).not.toBeNull();
+    await waitForCondition(async () => countExecuteCallsForRun(run!.id) === 1);
+    const issue = await db.select({ assigneeAgentId: issues.assigneeAgentId })
+      .from(issues).where(eq(issues.id, issueId)).then((rows) => rows[0] ?? null);
+
+    expect(run?.contextSnapshot).toMatchObject({ dependencyBlockedInteraction: true });
+    expect(issue?.assigneeAgentId).toBe(specialistAgentId);
+  });
+
+  it.each([
+    { name: "a stale interaction", status: "accepted", policy: "anyone", addressee: "manager", creator: "specialist" },
+    { name: "a human-only interaction", status: "pending", policy: "human_only", addressee: "manager", creator: "specialist" },
+    { name: "a mismatched addressee", status: "pending", policy: "anyone", addressee: "specialist", creator: "specialist" },
+    { name: "an unsatisfied not-creator predicate", status: "pending", policy: "not_creator", addressee: "manager", creator: "manager" },
+  ] as const)("does not bypass reassignment staleness for $name", async ({ status, policy, addressee, creator }) => {
+    const { companyId, agentId: specialistAgentId } = await seedCompanyAndAgent({ agentName: "Specialist" });
+    const managerAgentId = randomUUID();
+    const issueId = randomUUID();
+    const interactionId = randomUUID();
+
+    await db.insert(agents).values({
+      id: managerAgentId,
+      companyId,
+      name: "Manager",
+      role: "manager",
+      status: "active",
+      adapterType: "codex_local",
+      adapterConfig: {},
+      runtimeConfig: { heartbeat: { wakeOnDemand: true, maxConcurrentRuns: 1 } },
+      permissions: {},
+    });
+    await db.insert(issues).values({
+      id: issueId,
+      companyId,
+      title: "Protected specialist-owned task",
+      status: "in_progress",
+      priority: "high",
+      assigneeAgentId: specialistAgentId,
+    });
+    await db.insert(issueThreadInteractions).values({
+      id: interactionId,
+      companyId,
+      issueId,
+      kind: "request_confirmation",
+      status,
+      continuationPolicy: "wake_assignee",
+      createdByAgentId: creator === "manager" ? managerAgentId : specialistAgentId,
+      addresseeAgentId: addressee === "manager" ? managerAgentId : specialistAgentId,
+      effectiveResolverPolicy: policy,
+      payload: { version: 1, prompt: "Review the specialist evidence." },
+    });
+    const { runId } = await seedQueuedRun({
+      companyId,
+      agentId: managerAgentId,
+      issueId,
+      wakeReason: "interaction_pending",
+      contextExtras: { interactionId },
+      invocationSource: "automation",
+    });
+
+    await heartbeat.resumeQueuedRuns();
+    await waitForCondition(async () => {
+      const run = await db.select({ status: heartbeatRuns.status }).from(heartbeatRuns)
+        .where(eq(heartbeatRuns.id, runId)).then((rows) => rows[0] ?? null);
+      return run?.status === "cancelled";
+    });
+
+    const run = await db.select({ status: heartbeatRuns.status, errorCode: heartbeatRuns.errorCode })
+      .from(heartbeatRuns).where(eq(heartbeatRuns.id, runId)).then((rows) => rows[0] ?? null);
+    expect(run).toMatchObject({ status: "cancelled", errorCode: "issue_assignee_changed" });
+    expect(countExecuteCallsForRun(runId)).toBe(0);
+  });
+
+  it("does not bypass reassignment staleness for a governed tool action interaction", async () => {
+    const { companyId, agentId: specialistAgentId } = await seedCompanyAndAgent({ agentName: "Specialist" });
+    const managerAgentId = randomUUID();
+    const issueId = randomUUID();
+    const interactionId = randomUUID();
+    const invocationId = randomUUID();
+
+    await db.insert(agents).values({
+      id: managerAgentId,
+      companyId,
+      name: "Manager",
+      role: "manager",
+      status: "active",
+      adapterType: "codex_local",
+      adapterConfig: {},
+      runtimeConfig: { heartbeat: { wakeOnDemand: true, maxConcurrentRuns: 1 } },
+      permissions: {},
+    });
+    await db.insert(issues).values({
+      id: issueId,
+      companyId,
+      title: "Specialist-owned governed action",
+      status: "in_progress",
+      priority: "high",
+      assigneeAgentId: specialistAgentId,
+    });
+    await db.insert(issueThreadInteractions).values({
+      id: interactionId,
+      companyId,
+      issueId,
+      kind: "request_confirmation",
+      status: "pending",
+      continuationPolicy: "wake_assignee",
+      createdByAgentId: specialistAgentId,
+      addresseeAgentId: managerAgentId,
+      effectiveResolverPolicy: "anyone",
+      payload: { version: 1, prompt: "Approve the governed action." },
+    });
+    await db.insert(toolInvocations).values({
+      id: invocationId,
+      companyId,
+      issueId,
+      agentId: specialistAgentId,
+      actorType: "agent",
+      toolName: "protected.write",
+    });
+    await db.insert(toolActionRequests).values({
+      companyId,
+      invocationId,
+      issueId,
+      interactionId,
+      canonicalArgumentsHash: "test-hash",
+      canonicalArgumentsSummary: { kind: "object", entries: [] },
+    });
+    const { runId } = await seedQueuedRun({
+      companyId,
+      agentId: managerAgentId,
+      issueId,
+      wakeReason: "interaction_pending",
+      contextExtras: { interactionId },
+      invocationSource: "automation",
+    });
+
+    await heartbeat.resumeQueuedRuns();
+    await waitForCondition(async () => {
+      const run = await db.select({ status: heartbeatRuns.status }).from(heartbeatRuns)
+        .where(eq(heartbeatRuns.id, runId)).then((rows) => rows[0] ?? null);
+      return run?.status === "cancelled";
+    });
+
+    const run = await db.select({ status: heartbeatRuns.status, errorCode: heartbeatRuns.errorCode })
+      .from(heartbeatRuns).where(eq(heartbeatRuns.id, runId)).then((rows) => rows[0] ?? null);
+    expect(run).toMatchObject({ status: "cancelled", errorCode: "issue_assignee_changed" });
     expect(countExecuteCallsForRun(runId)).toBe(0);
   });
 
