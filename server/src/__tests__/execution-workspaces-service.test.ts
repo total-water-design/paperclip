@@ -1084,7 +1084,8 @@ describeEmbeddedPostgres("executionWorkspaceService.getCloseReadiness", () => {
 
     expect(sweep).toMatchObject({ archived: 0, cleanupFailed: 1 });
     expect(workspace?.status).toBe("cleanup_failed");
-    expect(workspace?.cleanupReason).toContain("git worktree changed after delivery was verified");
+    expect(workspace?.cleanupReason).toContain("git worktree remove");
+    expect(workspace?.cleanupReason).toContain("contains modified or untracked files");
     await expect(fs.readFile(path.join(seeded.worktreePath, "late-work.txt"), "utf8"))
       .resolves.toBe("not delivered\n");
   });

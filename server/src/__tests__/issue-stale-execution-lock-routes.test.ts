@@ -500,6 +500,9 @@ describeEmbeddedPostgres("stale issue execution lock routes", () => {
       runtimeConfig: {},
       permissions: {},
     });
+    await db.update(heartbeatRuns)
+      .set({ agentId: otherAgentId, contextSnapshot: { issueId } })
+      .where(eq(heartbeatRuns.id, currentRunId));
     await db.insert(issues).values({
       id: issueId,
       companyId,
@@ -517,6 +520,7 @@ describeEmbeddedPostgres("stale issue execution lock routes", () => {
 
     const res = await request(createApp(agentActor(companyId, otherAgentId, currentRunId)))
       .post(`/api/issues/${issueId}/checkout`)
+      .set("X-Paperclip-Run-Id", currentRunId)
       .send({
         agentId: otherAgentId,
         expectedStatuses: ["todo", "backlog", "blocked", "in_review"],

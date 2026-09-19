@@ -1,0 +1,48 @@
+queue_rules:
+  - name: paperclip-prs
+    update_method: rebase
+    merge_conditions:
+      - check-success=ci / verify
+      - check-success=Gitar
+      - "#approved-reviews-by>=1"
+      - "#changes-requested-reviews-by=0"
+      - "#review-threads-unresolved=0"
+
+merge_protections_settings:
+  # A qualifying PR is eligible for Mergify handling without a user comment or
+  # the GitHub merge-queue checkbox. The required evidence remains explicit.
+  auto_merge_conditions:
+    - base=master
+
+merge_protections:
+  - name: clean Paperclip integration candidate
+    if:
+      - base=master
+    success_conditions:
+      - check-success=ci / verify
+      - check-success=Gitar
+      - "#approved-reviews-by>=1"
+      - "#changes-requested-reviews-by=0"
+      - "#review-threads-unresolved=0"
+
+pull_request_rules:
+  - name: rebase stale Paperclip candidates
+    conditions:
+      - base=master
+      - -draft
+      - "#commits-behind>0"
+    actions:
+      rebase:
+
+  - name: automatically queue clean Paperclip candidates
+    conditions:
+      - base=master
+      - -draft
+      - check-success=ci / verify
+      - check-success=Gitar
+      - "#approved-reviews-by>=1"
+      - "#changes-requested-reviews-by=0"
+      - "#review-threads-unresolved=0"
+    actions:
+      queue:
+        name: paperclip-prs

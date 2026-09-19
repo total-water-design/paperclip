@@ -203,6 +203,26 @@ describe("plugin worker manager duplex channel route", () => {
     }
   });
 
+  it("carries a transport-close exit through a pre-bind stdout batch", async () => {
+    const handle = makeDuplexHandle();
+    try {
+      await handle.start();
+      const session = await handle.openDuplexChannel(
+        duplexOpenInput({
+          workerSessionId: "ws-A",
+          // The worker writes the open reply and exit in one stdout batch. The
+          // exit is buffered before the host binds the pair, then replayed.
+          batchWithOpenReply: true,
+          transportClosed: true,
+        }),
+      );
+      await expect(session.wait()).resolves.toEqual({ exitCode: null, transportClosed: true });
+      await session.close();
+    } finally {
+      await handle.stop().catch(() => undefined);
+    }
+  });
+
   it("isolates a throwing listener during the buffered replay so every buffered chunk routes", async () => {
     const handle = makeDuplexHandle();
     try {
@@ -368,6 +388,9 @@ describe("plugin worker manager duplex channel route", () => {
       await handle.start();
       const session = await handle.openDuplexChannel(
         duplexOpenInput({
+          // The fixture emits after a bound write, so this test exercises the
+          // post-bind buffering bound without relying on stdout scheduling.
+          emitFramesAfterFirstWrite: true,
           data: [
             { chunk: "aaaaa" }, // total 5 → buffered
             { chunk: "bbbbb" }, // total 10 → buffered
@@ -377,6 +400,7 @@ describe("plugin worker manager duplex channel route", () => {
       );
       // No listener attaches, so the data buffers. The cumulative bytes pass the
       // bound and the route ends. The login wait resolves with a null exit code.
+      session.write(new Uint8Array([0]));
       await expect(session.wait()).resolves.toEqual({ exitCode: null });
     } finally {
       await handle.stop().catch(() => undefined);
