@@ -28,6 +28,7 @@ import {
   startEmbeddedPostgresTestDatabase,
 } from "./helpers/embedded-postgres.js";
 import {
+  ISSUE_TERMINAL_WORKSPACE_CLEANUP_REASON,
   EXECUTION_WORKSPACE_LIFECYCLE_GENERATION_METADATA_KEY,
   EXECUTION_WORKSPACE_REOPEN_PENDING_METADATA_KEY,
   EXECUTION_WORKSPACE_REOPEN_PENDING_SINCE_METADATA_KEY,
@@ -1084,8 +1085,13 @@ describeEmbeddedPostgres("executionWorkspaceService.getCloseReadiness", () => {
 
     expect(sweep).toMatchObject({ archived: 0, cleanupFailed: 1 });
     expect(workspace?.status).toBe("cleanup_failed");
-    expect(workspace?.cleanupReason).toContain("git worktree remove");
-    expect(workspace?.cleanupReason).toContain("contains modified or untracked files");
+    // The integrity guard runs before `git worktree remove`; removing a dirty
+    // worktree would destroy post-delivery changes. Keep this assertion bound to
+    // that guard rather than to a removal command that must not be reached.
+    expect(workspace?.cleanupReason).toContain(ISSUE_TERMINAL_WORKSPACE_CLEANUP_REASON);
+    expect(workspace?.cleanupReason).toContain(
+      "Refusing terminal workspace cleanup because the git worktree changed after delivery was verified",
+    );
     await expect(fs.readFile(path.join(seeded.worktreePath, "late-work.txt"), "utf8"))
       .resolves.toBe("not delivered\n");
   });
