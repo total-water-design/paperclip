@@ -12,6 +12,7 @@ const mockHeartbeatService = vi.hoisted(() => ({
   getRunIssueSummary: vi.fn(),
   getActiveRunIssueSummaryForAgent: vi.fn(),
   getRunLogAccess: vi.fn(),
+  latestFailed: vi.fn(),
   readLog: vi.fn(),
   wakeup: vi.fn(),
 }));
@@ -223,6 +224,7 @@ describe("agent live run routes", () => {
       issueId: "issue-1",
     });
     mockHeartbeatService.getActiveRunIssueSummaryForAgent.mockResolvedValue(null);
+    mockHeartbeatService.latestFailed.mockResolvedValue([]);
     mockHeartbeatService.buildRunOutputSilence.mockResolvedValue(null);
     mockHeartbeatService.getRunLogAccess.mockResolvedValue({
       id: "run-1",
@@ -245,6 +247,26 @@ describe("agent live run routes", () => {
       invocationSource: "on_demand",
       triggerDetail: "manual",
     });
+  });
+
+  it("defaults latest-failed to 200 and rejects out-of-range or non-integer limits", async () => {
+    const app = await createApp();
+    const path = "/api/companies/company-1/heartbeat-runs/latest-failed";
+
+    const defaultResponse = await requestApp(app, (baseUrl) => request(baseUrl).get(path));
+    expect(defaultResponse.status, JSON.stringify(defaultResponse.body)).toBe(200);
+    expect(mockHeartbeatService.latestFailed).toHaveBeenLastCalledWith("company-1", 200);
+
+    for (const limit of ["0", "1001", "1.5", "not-a-number"]) {
+      const response = await requestApp(
+        await createApp(),
+        (baseUrl) => request(baseUrl).get(`${path}?limit=${limit}`),
+      );
+      expect(response.status, JSON.stringify(response.body)).toBe(400);
+      expect(response.body).toEqual({ error: "Invalid limit. Must be an integer between 1 and 1000." });
+    }
+
+    expect(mockHeartbeatService.latestFailed).toHaveBeenCalledTimes(1);
   });
 
   it("returns a compact active run payload for issue polling", async () => {

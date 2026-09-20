@@ -4,8 +4,9 @@ import type { ReactNode } from "react";
 import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 import type { HeartbeatRun } from "@paperclipai/shared";
+import type { HeartbeatRunStats } from "../api/heartbeats";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { RunActivityChart, SuccessRateChart } from "./ActivityCharts";
+import { getLast14Days, RunActivityChart, SuccessRateChart } from "./ActivityCharts";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -132,4 +133,85 @@ describe("ActivityCharts", () => {
     const dayCell = container.querySelector("[title*='recovered: 4']");
     expect(dayCell).not.toBeNull();
   });
+  describe("stats prop path", () => {
+    function chartDays() {
+      const days = getLast14Days();
+      return { today: days[13]!, yesterday: days[12]!, twoDaysAgo: days[11]!, fiveDaysAgo: days[8]! };
+    }
+    function hasTitle(prefix: string) {
+      return Array.from(container.querySelectorAll("[title]")).some((element) =>
+        element.getAttribute("title")?.startsWith(prefix),
+      );
+    }
+    function hasTitleText(text: string) {
+      return Array.from(container.querySelectorAll("[title]")).some((element) =>
+        element.getAttribute("title")?.includes(text),
+      );
+    }
+    function makeStats(overrides: Partial<HeartbeatRunStats>[]): HeartbeatRunStats[] {
+      return overrides.map((o) => ({ date: chartDays().today, status: "succeeded", count: 1, ...o }));
+    }
+
+    it("RunActivityChart renders stats across two UTC days", () => {
+      const { today, yesterday } = chartDays();
+      const stats = makeStats([
+        { date: yesterday, status: "succeeded", count: 3 },
+        { date: yesterday, status: "failed", count: 1 },
+        { date: today, status: "succeeded", count: 2 },
+        { date: today, status: "timed_out", count: 1 },
+        { date: today, status: "other", count: 5 },
+      ]);
+
+      render(<RunActivityChart stats={stats} />);
+
+      expect(container.textContent).not.toContain("No runs yet");
+      // Apr 19 total = 4 runs, Apr 20 total = 8 runs
+      expect(hasTitle(`${yesterday}: 4 runs`)).toBe(true);
+      expect(hasTitle(`${today}: 8 runs`)).toBe(true);
+    });
+
+    it("SuccessRateChart renders stats and shows correct success ratio tooltip", () => {
+      const { twoDaysAgo } = chartDays();
+      const stats = makeStats([
+        { date: twoDaysAgo, status: "succeeded", count: 8 },
+        { date: twoDaysAgo, status: "failed", count: 2 },
+      ]);
+
+      render(<SuccessRateChart stats={stats} />);
+
+      expect(container.textContent).not.toContain("No runs yet");
+      // 8/10 = 80% success
+      expect(hasTitleText("80% (8/10)")).toBe(true);
+    });
+
+    it("drops rows outside the 14-day window", () => {
+      const stats = makeStats([
+        // Too old — not in window
+        { date: "2026-03-01", status: "succeeded", count: 99 },
+        // In window
+        { date: "2026-04-20", status: "succeeded", count: 1 },
+      ]);
+
+      render(<RunActivityChart stats={stats} />);
+
+      expect(hasTitle("2026-03-01: 99 runs")).toBe(false);
+      expect(container.textContent).not.toContain("No runs yet");
+    });
+
+    it("dedupes succeeded and failed+timed_out into correct buckets", () => {
+      const { fiveDaysAgo } = chartDays();
+      const stats = makeStats([
+        { date: fiveDaysAgo, status: "succeeded", count: 4 },
+        { date: fiveDaysAgo, status: "failed", count: 1 },
+        { date: fiveDaysAgo, status: "timed_out", count: 2 },
+        { date: fiveDaysAgo, status: "other", count: 3 },
+      ]);
+
+      render(<RunActivityChart stats={stats} />);
+
+      // total = 4+1+2+3 = 10
+      expect(hasTitle(`${fiveDaysAgo}: 10 runs`)).toBe(true);
+    });
+  });
+
 });

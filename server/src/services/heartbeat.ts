@@ -19625,7 +19625,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       companyId: string,
       agentId?: string,
       limit?: number,
-      options: { summary?: boolean } = {},
+      options: { summary?: boolean; offset?: number } = {},
     ) => {
       const safeForLegacyEncoding = await hasUnsafeTextProjectionDatabase();
       const summary = options.summary === true;
@@ -19654,9 +19654,15 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
             ? and(eq(heartbeatRuns.companyId, companyId), eq(heartbeatRuns.agentId, agentId))
             : eq(heartbeatRuns.companyId, companyId),
         )
-        .orderBy(desc(heartbeatRuns.createdAt));
+        .orderBy(desc(heartbeatRuns.createdAt), desc(heartbeatRuns.id))
+        .$dynamic();
 
-      const rows = limit ? await query.limit(limit) : await query;
+      let pagedQuery = query;
+      if (limit !== undefined) pagedQuery = pagedQuery.limit(limit);
+      if (options.offset !== undefined && options.offset > 0) {
+        pagedQuery = pagedQuery.offset(options.offset);
+      }
+      const rows = await pagedQuery;
       return rows.map((row) => {
         const {
           contextIssueId,
@@ -19698,6 +19704,110 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
             wakeTriggerDetail: contextWakeTriggerDetail,
           }),
           resultJson: safeForLegacyEncoding || summary
+            ? null
+            : summarizeHeartbeatRunListResultJson({
+                summary: resultSummary,
+                result: resultResult,
+                message: resultMessage,
+                error: resultError,
+                totalCostUsd: resultTotalCostUsd,
+                costUsd: resultCostUsd,
+                costUsdCamel: resultCostUsdCamel,
+              }),
+        };
+      });
+    },
+
+    stats: async (companyId: string, agentId?: string) => {
+      const now = new Date();
+      const since = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - 13));
+      const condition = agentId
+        ? and(eq(heartbeatRuns.companyId, companyId), eq(heartbeatRuns.agentId, agentId), gt(heartbeatRuns.createdAt, since))
+        : and(eq(heartbeatRuns.companyId, companyId), gt(heartbeatRuns.createdAt, since));
+      const rows = await db
+        .select({
+          date: sql<string>`DATE(${heartbeatRuns.createdAt} AT TIME ZONE 'UTC')`.as("date"),
+          status: heartbeatRuns.status,
+          count: sql<number>`count(*)`.as("count"),
+        })
+        .from(heartbeatRuns)
+        .where(condition)
+        .groupBy(sql`DATE(${heartbeatRuns.createdAt} AT TIME ZONE 'UTC')`, heartbeatRuns.status);
+      return rows.map((row) => ({ ...row, count: Number(row.count) }));
+    },
+
+    latestFailed: async (companyId: string, limit = 200) => {
+      const latestRows = await db.execute(sql`
+        WITH latest_per_agent AS (
+          SELECT DISTINCT ON (agent_id) id, status, created_at
+          FROM heartbeat_runs
+          WHERE company_id = ${companyId}
+          ORDER BY agent_id, created_at DESC, id DESC
+        )
+        SELECT id
+        FROM latest_per_agent
+        WHERE status IN ('failed', 'timed_out')
+        ORDER BY created_at DESC, id DESC
+        LIMIT ${limit}
+      `);
+      // db.execute may return rows as a plain array (postgres-js) or wrapped in
+      // { rows: [] } (node-postgres); normalise before selecting their bounded
+      // summaries through the same path as list().
+      const rawRows: Array<Record<string, unknown>> = Array.isArray(latestRows)
+        ? (latestRows as Array<Record<string, unknown>>)
+        : ((latestRows as { rows?: Array<Record<string, unknown>> }).rows ?? []);
+      const failedIds = rawRows.map((r) => r.id as string);
+
+      if (failedIds.length === 0) {
+        return [];
+      }
+
+      const safeForLegacyEncoding = await hasUnsafeTextProjectionDatabase();
+      // Re-select the bounded failed ids through the same typed projection and
+      // summarization path as list(), never returning raw result JSON.
+      const rows = await db
+        .select(
+          safeForLegacyEncoding
+            ? {
+                ...heartbeatRunListColumns,
+                error: sql<string | null>`NULL`.as("error"),
+                ...heartbeatRunListContextColumns,
+              }
+            : {
+                ...heartbeatRunListColumns,
+                ...heartbeatRunListContextColumns,
+                ...heartbeatRunListResultColumns,
+              },
+        )
+        .from(heartbeatRuns)
+        .where(and(eq(heartbeatRuns.companyId, companyId), inArray(heartbeatRuns.id, failedIds)))
+        .orderBy(desc(heartbeatRuns.createdAt), desc(heartbeatRuns.id))
+        .limit(limit);
+      return rows.map((row) => {
+        const {
+          contextIssueId, contextTaskId, contextTaskKey, contextCommentId,
+          contextWakeCommentId, contextWakeReason, contextWakeSource, contextWakeTriggerDetail,
+          resultSummary, resultResult, resultMessage, resultError,
+          resultTotalCostUsd, resultCostUsd, resultCostUsdCamel,
+          ...rest
+        } = row as typeof row & {
+          resultSummary?: string | null;
+          resultResult?: string | null;
+          resultMessage?: string | null;
+          resultError?: string | null;
+          resultTotalCostUsd?: string | null;
+          resultCostUsd?: string | null;
+          resultCostUsdCamel?: string | null;
+        };
+        return {
+          ...rest,
+          contextSnapshot: summarizeHeartbeatRunContextSnapshot({
+            issueId: contextIssueId, taskId: contextTaskId, taskKey: contextTaskKey,
+            commentId: contextCommentId, wakeCommentId: contextWakeCommentId,
+            wakeReason: contextWakeReason, wakeSource: contextWakeSource,
+            wakeTriggerDetail: contextWakeTriggerDetail,
+          }),
+          resultJson: safeForLegacyEncoding
             ? null
             : summarizeHeartbeatRunListResultJson({
                 summary: resultSummary,
