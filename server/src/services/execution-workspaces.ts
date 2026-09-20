@@ -791,6 +791,7 @@ async function inspectGitCloseReadiness(workspace: ExecutionWorkspace, context?:
   agentId?: string | null;
   runId?: string | null;
   requestId?: string;
+  forceFreshStatus?: boolean;
 }): Promise<{
   git: ExecutionWorkspaceCloseGitReadiness | null;
   warnings: string[];
@@ -868,7 +869,9 @@ async function inspectGitCloseReadiness(workspace: ExecutionWorkspace, context?:
           `workspace:${workspace.id}`,
           ...(workspace.sourceIssueId ? [`issue:${workspace.sourceIssueId}`] : []),
         ],
-        cacheTtlMs: 60_000,
+        // Terminal cleanup is destructive: after an assessment hook has run,
+        // its final status check must not reuse a pre-hook clean result.
+        cacheTtlMs: context?.forceFreshStatus ? 0 : 60_000,
         context: {
           workspaceId: workspace.id,
           issueIdentifiers: context?.issueIdentifiers,
@@ -1467,7 +1470,7 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
     }
 
     const [current, currentHeadSha, currentBranchName] = await Promise.all([
-      inspectGitCloseReadiness(toExecutionWorkspace(workspace)),
+      inspectGitCloseReadiness(toExecutionWorkspace(workspace), { forceFreshStatus: true }),
       readGitStdout(["rev-parse", "HEAD"], workspacePath).catch(() => null),
       readGitStdout(["symbolic-ref", "--quiet", "--short", "HEAD"], workspacePath).catch(() => null),
     ]);
