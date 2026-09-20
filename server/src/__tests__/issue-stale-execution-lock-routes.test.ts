@@ -517,7 +517,6 @@ describeEmbeddedPostgres("stale issue execution lock routes", () => {
       executionAgentNameKey: null,
       executionLockedAt: null,
     });
-
     const res = await request(createApp(agentActor(companyId, otherAgentId, currentRunId)))
       .post(`/api/issues/${issueId}/checkout`)
       .set("X-Paperclip-Run-Id", currentRunId)

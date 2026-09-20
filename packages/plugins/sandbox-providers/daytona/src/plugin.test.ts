@@ -2700,7 +2700,12 @@ describe("Daytona sandbox provider plugin", () => {
 
       const sandbox = createMockSandbox({ id: "lease-a" });
       let resolveUpload!: () => void;
+      let markUploadStarted!: () => void;
+      const uploadStarted = new Promise<void>((resolve) => {
+        markUploadStarted = resolve;
+      });
       sandbox.fs.uploadFiles.mockImplementation(async () => {
+        markUploadStarted();
         await new Promise<void>((resolve) => {
           resolveUpload = resolve;
         });
@@ -2720,8 +2725,9 @@ describe("Daytona sandbox provider plugin", () => {
           },
         ],
       });
-      // Let syncIn register on the activity gate and reach the hung upload.
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      // Wait for the mocked upload itself, rather than assuming one timer turn
+      // is enough for syncIn to reach the activity gate under loaded CI.
+      await uploadStarted;
 
       const cancelPromise = plugin.definition.onEnvironmentCancelInteractiveSetup?.({
         driverKey: "daytona",

@@ -198,7 +198,11 @@ function sendMutatingRequest(app: express.Express, name: string) {
       return requestApp(app, (baseUrl) =>
         request(baseUrl)
           .post("/api/adapters/install")
-          .send({ packageName: EXTERNAL_PACKAGE_NAME }),
+          // This authorization fixture verifies route access and the mocked
+          // adapter load. Use the local-path mode so it never depends on a
+          // host `npm` executable after another suite has populated the
+          // module cache with the real child-process binding.
+          .send({ packageName: "/tmp/paperclip-adapter-route-authz-local", isLocalPath: true }),
       );
     case "disable":
       return requestApp(app, (baseUrl) =>
@@ -249,7 +253,10 @@ describe.sequential("adapter management route authorization", () => {
     vi.doMock("../routes/authz.js", async () => vi.importActual("../routes/authz.js"));
 
     const [routes, middleware, registry] = await Promise.all([
-      vi.importActual<typeof import("../routes/adapters.js")>("../routes/adapters.js"),
+      // Import through Vitest so the child-process and plugin-store doubles
+      // registered above remain active. importActual bypasses those doubles
+      // and makes the authorization test invoke the runner's real `npm`.
+      import("../routes/adapters.js"),
       vi.importActual<typeof import("../middleware/index.js")>("../middleware/index.js"),
       vi.importActual<typeof import("../adapters/registry.js")>("../adapters/registry.js"),
     ]);
